@@ -23,6 +23,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\MSSP.Log\MSSP.Log.csproj" />
+    <ProjectReference Include="..\MSSP.LsmTree\MSSP.LsmTree.csproj" />
   </ItemGroup>
 
   <ItemGroup>
