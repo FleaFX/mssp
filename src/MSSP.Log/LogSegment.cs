@@ -1,6 +1,6 @@
 using System.Buffers;
 
-namespace Log;
+namespace MSSP.Log;
 
 class LogSegment<TRecord> : ILog<TRecord>, IDisposable where TRecord : ILogRecord<TRecord> {
     readonly int _segmentSize;

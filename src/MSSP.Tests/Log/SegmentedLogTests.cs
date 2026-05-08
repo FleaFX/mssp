@@ -1,7 +1,8 @@
-﻿using FluentAssertions;
+using FluentAssertions;
+using Log;
 using Log.Extensions;
 
-namespace Log; 
+namespace MSSP.Log; 
 
 public class SegmentedLogTests {
     readonly SegmentedLog<TestLogRecord> _segmentedLog;

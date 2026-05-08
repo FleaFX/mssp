@@ -22,7 +22,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Log\Log.csproj" />
+    <ProjectReference Include="..\MSSP.Log\MSSP.Log.csproj" />
   </ItemGroup>
 
   <ItemGroup>

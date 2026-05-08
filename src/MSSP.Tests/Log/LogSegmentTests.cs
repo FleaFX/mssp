@@ -1,7 +1,7 @@
-﻿using FluentAssertions;
+using FluentAssertions;
 using Log.Extensions;
 
-namespace Log;
+namespace MSSP.Log;
 
 public class LogSegmentTests : IDisposable {
     readonly LogSegment<TestLogRecord> _logSegment;

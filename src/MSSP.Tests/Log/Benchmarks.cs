@@ -1,7 +1,7 @@
-﻿using BenchmarkDotNet.Attributes;
+using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Running;
 
-namespace Log;
+namespace MSSP.Log;
 
 public class Benchmarks {
 #if RELEASE

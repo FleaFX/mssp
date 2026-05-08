@@ -1,4 +1,4 @@
-namespace Log.Extensions;
+namespace MSSP.Log.Extensions;
 
 static class ExtensionsForRange {
     /// <summary>

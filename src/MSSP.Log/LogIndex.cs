@@ -1,8 +1,8 @@
 using System.Buffers;
-using Log.Extensions;
-using AsyncEnumerable = Log.Extensions.AsyncEnumerable;
+using MSSP.Log.Extensions;
+using AsyncEnumerable = MSSP.Log.Extensions.AsyncEnumerable;
 
-namespace Log;
+namespace MSSP.Log;
 
 class LogIndex : IDisposable, IAsyncEnumerable<Index> {
     readonly Index[] _table;

@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/Solution Items/">
+    <File Path="../.editorconfig" />
+  </Folder>
+  <Project Path="MSSP.Tests/MSSP.Tests.csproj" />
+  <Project Path="MSSP.Log/MSSP.Log.csproj" />
+</Solution>

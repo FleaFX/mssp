@@ -1,4 +1,4 @@
-﻿namespace Log;
+namespace MSSP.Log;
 
 /// <summary>
 /// Marker interface for log records.

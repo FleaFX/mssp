@@ -1,4 +1,4 @@
-﻿namespace Log;
+namespace MSSP.Log;
 
 /// <summary>
 /// Provides log structured record storage.

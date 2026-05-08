@@ -1,4 +1,4 @@
-﻿namespace Log;
+namespace MSSP.Log;
 
 class TestLogRecord : ILogRecord<TestLogRecord> {
     readonly byte[] _payload;

@@ -1,6 +1,6 @@
 using System.Buffers;
 
-namespace Log;
+namespace MSSP.Log;
 
 delegate LogSegment<TRecord> SegmentFactory<TRecord>(int segmentSize) where TRecord : ILogRecord<TRecord>;
 

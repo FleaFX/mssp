@@ -2,7 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using FluentAssertions;
 
-namespace Log;
+namespace MSSP.Log;
 
 public class AsyncEnumerableTests {
     [Fact]

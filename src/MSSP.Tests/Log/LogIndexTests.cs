@@ -2,7 +2,7 @@ using System.Diagnostics.CodeAnalysis;
 using FluentAssertions;
 using Log.Extensions;
 
-namespace Log;
+namespace MSSP.Log;
 
 public class LogIndexTests {
     [Fact]

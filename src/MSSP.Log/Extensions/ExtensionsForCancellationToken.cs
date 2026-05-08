@@ -1,6 +1,6 @@
 using System.Runtime.CompilerServices;
 
-namespace Log.Extensions;
+namespace MSSP.Log.Extensions;
 
 static class ExtensionsForCancellationToken {
     /// <summary>
