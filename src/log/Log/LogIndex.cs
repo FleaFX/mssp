@@ -75,8 +75,7 @@ class LogIndex : IDisposable, IAsyncEnumerable<Index> {
     /// <param name="cancellationToken">A <see cref="T:System.Threading.CancellationToken" /> that may be used to cancel the asynchronous iteration.</param>
     /// <returns>An enumerator that can be used to iterate asynchronously through the collection.</returns>
     async IAsyncEnumerator<Index> IAsyncEnumerable<Index>.GetAsyncEnumerator(CancellationToken cancellationToken) {
-        // iterate the entire index table, or break when cancellation is requested (dealt with in the WaitFor method)
-        for (var i = 0; i < _table.Length; i++) {
+        for (var i = 0; ; i++) {
             var value = await WaitFor(new Index(i), cancellationToken);
             if (value.Equals(default)) yield break;
             yield return value;
@@ -101,5 +100,5 @@ class LogIndex : IDisposable, IAsyncEnumerable<Index> {
                     , cancellationToken)
                 .Where(head => head.Value >= index.Value)
                 .Select(ix => _table[ix])
-                .FirstOrDefaultAsync(CancellationToken.None);
+                .FirstOrDefaultAsync(cancellationToken);
 }
