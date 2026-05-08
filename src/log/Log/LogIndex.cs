@@ -1,4 +1,4 @@
-﻿using System.Buffers;
+using System.Buffers;
 using Log.Extensions;
 using AsyncEnumerable = Log.Extensions.AsyncEnumerable;
 
@@ -30,10 +30,10 @@ class LogIndex : IDisposable, IAsyncEnumerable<Index> {
     }
 
     /// <summary>
-    /// Gets the head for the requested <paramref name="index"/>.
+    /// Gets the byte offset at the requested <paramref name="index"/> position.
     /// </summary>
-    /// <param name="index">The index to get the head position of.</param>
-    /// <returns>A <see cref="int"/>.</returns>
+    /// <param name="index">The position to retrieve.</param>
+    /// <returns>The byte offset stored at <paramref name="index"/>.</returns>
     public Index this[Index index] => _range.Contains(index) ? _table[index] : throw new IndexOutOfRangeException();
 
     /// <summary>
@@ -66,14 +66,10 @@ class LogIndex : IDisposable, IAsyncEnumerable<Index> {
     /// <param name="to">Optional <see cref="Index"/> to truncate to. This will be the last index in the table. If omitted, the entire table will be emptied.</param>
     public void Truncate(Index to = default) => _range = new Range(0, to);
 
-    /// <summary>
-    /// Performs application-defined tasks associated with freeing, releasing, or resetting unmanaged resources.
-    /// </summary>
+    /// <inheritdoc/>
     public void Dispose() => ArrayPool<Index>.Shared.Return(_table, true);
 
-    /// <summary>Returns an enumerator that iterates asynchronously through the collection.</summary>
-    /// <param name="cancellationToken">A <see cref="T:System.Threading.CancellationToken" /> that may be used to cancel the asynchronous iteration.</param>
-    /// <returns>An enumerator that can be used to iterate asynchronously through the collection.</returns>
+    /// <inheritdoc/>
     async IAsyncEnumerator<Index> IAsyncEnumerable<Index>.GetAsyncEnumerator(CancellationToken cancellationToken) {
         for (var i = 0; ; i++) {
             var value = await WaitFor(new Index(i), cancellationToken);

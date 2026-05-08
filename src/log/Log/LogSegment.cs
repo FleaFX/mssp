@@ -1,4 +1,4 @@
-﻿using System.Buffers;
+using System.Buffers;
 
 namespace Log;
 
@@ -20,11 +20,7 @@ class LogSegment<TRecord> : ILog<TRecord>, IDisposable where TRecord : ILogRecor
         _lock = new object();
     }
 
-    /// <summary>
-    /// Appends the given <paramref name="record"/> to the log.
-    /// </summary>
-    /// <param name="record">The record to append to the log.</param>
-    /// <param name="cancellationToken">A <see cref="T:System.Threading.CancellationToken" /> that may be used to cancel the asynchronous operation.</param>
+    /// <inheritdoc/>
     public ValueTask<bool> TryAppendAsync(TRecord record, CancellationToken cancellationToken = new()) =>
       ValueTask.FromResult(TryAppendCore(record));
 
@@ -48,11 +44,7 @@ class LogSegment<TRecord> : ILog<TRecord>, IDisposable where TRecord : ILogRecor
     /// </summary>
     public void Complete() => _completed = true;
 
-    /// <summary>
-    /// Returns an enumerator that iterates asynchronously through the collection.
-    /// </summary>
-    /// <param name="cancellationToken">A <see cref="T:System.Threading.CancellationToken" /> that may be used to cancel the asynchronous iteration.</param>
-    /// <returns>An enumerator that can be used to iterate asynchronously through the collection.</returns>
+    /// <inheritdoc/>
     async IAsyncEnumerator<TRecord> IAsyncEnumerable<TRecord>.GetAsyncEnumerator(CancellationToken cancellationToken) {
         var previous = Index.Start;
         await foreach (var index in _index.WithCancellation(!_completed ? cancellationToken : new CancellationToken(true))) {
@@ -61,9 +53,7 @@ class LogSegment<TRecord> : ILog<TRecord>, IDisposable where TRecord : ILogRecor
         }
     }
 
-    /// <summary>
-    /// Performs application-defined tasks associated with freeing, releasing, or resetting unmanaged resources.
-    /// </summary>
+    /// <inheritdoc/>
     public void Dispose() {
         _table.Dispose();
         _index.Dispose();

@@ -37,6 +37,7 @@ class SegmentedLog<TRecord>(int segmentSize = 0x100_0000) : ILog<TRecord>, IDisp
         return segment;
     }
 
+    /// <inheritdoc/>
     IAsyncEnumerator<TRecord> IAsyncEnumerable<TRecord>.GetAsyncEnumerator(CancellationToken cancellationToken) => (
             from index in _index
             from record in _segments.Memory.Span[index]
