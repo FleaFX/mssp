@@ -1,4 +1,4 @@
-﻿using System.Runtime.CompilerServices;
+using System.Runtime.CompilerServices;
 
 namespace Log.Extensions; 
 
@@ -20,16 +20,17 @@ static class AsyncEnumerable {
             // create a delegate that passes the event args to the TaskCompletionSource and attach it to the event
             var @delegate = typeof(Action<object, TEventArgs>).GetMethod("Invoke")!
                 .CreateDelegate<TDelegate>(new Action<object, TEventArgs>((_, args) => {
-                    if (!taskCompletionSource.Task.IsCompleted)
-                        taskCompletionSource.SetResult(args);
+                    taskCompletionSource.TrySetResult(args);
                 }));
             addHandler(@delegate);
-            
-            // now wait for the TaskCompletionSource to be signaled and yield the result
-            yield return await taskCompletionSource.Task.WaitAsync(cancellationToken);
 
-            // clean up the event handler before the next iteration
-            removeHandler(@delegate);
+            // now wait for the TaskCompletionSource to be signaled and yield the result
+            try {
+                yield return await taskCompletionSource.Task.WaitAsync(cancellationToken);
+            } finally {
+                // clean up the event handler before the next iteration
+                removeHandler(@delegate);
+            }
         };
     }
 }

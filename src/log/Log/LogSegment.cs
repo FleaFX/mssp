@@ -7,7 +7,7 @@ class LogSegment<TRecord> : ILog<TRecord>, IDisposable where TRecord : ILogRecor
     readonly IMemoryOwner<byte> _table;
     readonly LogIndex _index;
     readonly object _lock;
-    bool _completed;
+    volatile bool _completed;
 
     /// <summary>
     /// Initializes a new <see cref="LogSegment{TRecord}"/>.
@@ -54,7 +54,7 @@ class LogSegment<TRecord> : ILog<TRecord>, IDisposable where TRecord : ILogRecor
     }
 
     /// <inheritdoc/>
-    public void Dispose() {
+    public virtual void Dispose() {
         _table.Dispose();
         _index.Dispose();
     }

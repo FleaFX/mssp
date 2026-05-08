@@ -26,5 +26,33 @@ public class LogSegmentTests : IDisposable {
         (await _logSegment.EnumerateAsync()).Should().BeEquivalentTo(new[] { new TestLogRecord(new byte[] { 1, 2, 3, 4, 5, 6 }) });
     }
 
+    [Fact]
+    public async Task TryAppend_ReturnsFalse_AfterCompleteCalledFromAnotherThread() {
+        var segment = new LogSegment<TestLogRecord>(1024);
+
+        var completeTask = Task.Run(() => segment.Complete());
+        await completeTask;
+
+        (await segment.TryAppendAsync(new TestLogRecord(new byte[] { 1, 2, 3 })))
+            .Should().BeFalse("Complete() must be visible across threads");
+
+        segment.Dispose();
+    }
+
+    [Fact]
+    public async Task Enumerate_CompletesWithoutHanging_WhenCompleteCalledFromAnotherThread() {
+        var segment = new LogSegment<TestLogRecord>(1024);
+        await segment.TryAppendAsync(new TestLogRecord(new byte[] { 1, 2, 3 }));
+
+        // Complete() is called from a concurrent task; the enumerator must see _completed = true
+        // and terminate rather than waiting indefinitely for new entries
+        var completeTask = Task.Run(() => segment.Complete());
+        var enumerateTask = segment.EnumerateAsync();
+
+        await Task.WhenAll(completeTask, enumerateTask).WaitAsync(TimeSpan.FromSeconds(2));
+
+        segment.Dispose();
+    }
+
     public void Dispose() => _logSegment.Dispose();
 }

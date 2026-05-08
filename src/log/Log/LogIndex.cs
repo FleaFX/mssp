@@ -95,6 +95,6 @@ class LogIndex : IDisposable, IAsyncEnumerable<Index> {
                     , h => IndexAdvanced -= h
                     , cancellationToken)
                 .Where(head => head.Value >= index.Value)
-                .Select(ix => _table[ix])
+                .Select(_ => _table[index])
                 .FirstOrDefaultAsync(cancellationToken);
 }

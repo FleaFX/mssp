@@ -19,6 +19,25 @@ public class SegmentedLogTests {
     }
 
     [Fact]
+    public async Task Dispose_DisposesAllSegments() {
+        var disposed = new List<bool>();
+
+        LogSegment<TestLogRecord> TrackingFactory(int size) {
+            var i = disposed.Count;
+            disposed.Add(false);
+            return new TrackingLogSegment(size, () => disposed[i] = true);
+        }
+
+        var log = new SegmentedLog<TestLogRecord>(10, TrackingFactory);
+        await log.TryAppendAsync(new TestLogRecord(new byte[] { 1, 2, 3, 4, 5, 6 }));
+        await log.TryAppendAsync(new TestLogRecord(new byte[] { 7, 8, 9, 10, 11, 12 })); // forces a second segment
+
+        log.Dispose();
+
+        disposed.Should().AllSatisfy(d => d.Should().BeTrue("every segment created should be disposed"));
+    }
+
+    [Fact]
     public async Task AppendNewSegment() {
         (await _segmentedLog.TryAppendAsync(new TestLogRecord(new byte[] { 1, 2, 3, 4, 5, 6 }))).Should().BeTrue();
 

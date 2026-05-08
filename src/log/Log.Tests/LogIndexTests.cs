@@ -1,4 +1,5 @@
-﻿using FluentAssertions;
+using System.Diagnostics.CodeAnalysis;
+using FluentAssertions;
 using Log.Extensions;
 
 namespace Log;
@@ -56,6 +57,31 @@ public class LogIndexTests {
         index.Length.Should().Be(4);
         index.Head.Should().Be(new Index(43));
         (await index.EnumerateAsync()).Should().BeEquivalentTo(new Index[] { 10, 15, 18, 43 });
+    }
+
+    [Fact]
+    [SuppressMessage("ReSharper", "MethodSupportsCancellation")]
+    public async Task LiveEnumeration_YieldsEntriesAddedWhileWaiting() {
+        using var index = new LogIndex();
+        using var cts = new CancellationTokenSource();
+        var received = new List<Index>();
+
+        // start consuming before any entries exist — forces the event path in WaitFor
+        var consumeTask = Task.Run(async () => {
+            await foreach (var entry in index.WithCancellation(cts.Token))
+                received.Add(entry);
+        });
+
+        await Task.Delay(50); // let the consumer reach the await in WaitFor
+
+        index.Advance(10);
+        index.Advance(5);
+
+        await Task.Delay(50); // let the consumer process both entries
+        await cts.CancelAsync();
+        try { await consumeTask; } catch (OperationCanceledException) { }
+
+        received.Should().BeEquivalentTo(new Index[] { new(10), new(15) }, o => o.WithStrictOrdering());
     }
 
 #if RELEASE

@@ -2,7 +2,9 @@ using System.Buffers;
 
 namespace Log;
 
-class SegmentedLog<TRecord>(int segmentSize = 0x100_0000) : ILog<TRecord>, IDisposable where TRecord : ILogRecord<TRecord> {
+delegate LogSegment<TRecord> SegmentFactory<TRecord>(int segmentSize) where TRecord : ILogRecord<TRecord>;
+
+class SegmentedLog<TRecord>(int segmentSize = 0x100_0000, SegmentFactory<TRecord>? segmentFactory = null) : ILog<TRecord>, IDisposable where TRecord : ILogRecord<TRecord> {
     readonly IMemoryOwner<LogSegment<TRecord>> _segments = MemoryPool<LogSegment<TRecord>>.Shared.Rent();
     readonly LogIndex _index = new();
     readonly SemaphoreSlim _semaphore = new(1, 1);
@@ -22,17 +24,18 @@ class SegmentedLog<TRecord>(int segmentSize = 0x100_0000) : ILog<TRecord>, IDisp
             segment.Complete();
             segment = OpenNewSegment();
             return await segment.TryAppendAsync(record, cancellationToken);
-        }
-        finally {
+        } finally {
             _semaphore.Release();
         }
     }
 
     bool Validate(Memory<byte> record) => record.Length <= segmentSize;
 
+    static LogSegment<TRecord> DefaultFactory(int size) => new(size);
+
     LogSegment<TRecord> OpenNewSegment() {
         _index.Advance(1);
-        var segment = new LogSegment<TRecord>(segmentSize);
+        var segment = (segmentFactory ?? DefaultFactory)(segmentSize);
         _segments.Memory.Span[_index.Head] = segment;
         return segment;
     }
@@ -46,7 +49,7 @@ class SegmentedLog<TRecord>(int segmentSize = 0x100_0000) : ILog<TRecord>, IDisp
 
     /// <inheritdoc/>
     public void Dispose() {
-        foreach (var segment in _segments.Memory.Span[.._index.Length])
+        foreach (var segment in _segments.Memory.Span[..(_index.Length + 1)])
             segment?.Dispose();
         _segments.Dispose();
         _index.Dispose();
