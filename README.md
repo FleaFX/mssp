@@ -28,6 +28,6 @@ Events are stored in a log-structured merge tree:
 Requires .NET 10 SDK.
 
 ```bash
-dotnet build src/log/Log.slnx
-dotnet test src/log/Log.slnx
+dotnet build src/MSSP.slnx
+dotnet test src/MSSP.slnx
 ```
