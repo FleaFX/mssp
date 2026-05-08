@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Diagnostics.CodeAnalysis;
 
 namespace MSSP.LsmTree;
 
@@ -38,7 +39,7 @@ sealed class SkipList<TKey, TValue> : IDisposable, IEnumerable<KeyValuePair<TKey
     /// <param name="key">The key to look up.</param>
     /// <param name="value">The value associated with <paramref name="key"/>, or <c>default</c> if not found.</param>
     /// <returns><c>true</c> if the key was found; otherwise <c>false</c>.</returns>
-    public bool TryGet(TKey key, out TValue? value) {
+    public bool TryGet(TKey key, [MaybeNullWhen(false)] out TValue value) {
         _lock.EnterReadLock();
         try {
             var node = FindNode(key);
@@ -131,7 +132,7 @@ sealed class SkipList<TKey, TValue> : IDisposable, IEnumerable<KeyValuePair<TKey
         try {
             var current = _head.Next[0];
             while (current != null) {
-                yield return new(current.Key!, current.Value!);
+                yield return new(current.Key!, current.Value);
                 current = current.Next[0];
             }
         } finally {
@@ -176,7 +177,7 @@ sealed class SkipList<TKey, TValue> : IDisposable, IEnumerable<KeyValuePair<TKey
 
     sealed class Node {
         internal readonly TKey? Key;
-        internal TValue? Value;
+        internal TValue Value = default!;
         internal readonly Node?[] Next;
 
         internal Node(int maxLevel) => Next = new Node?[maxLevel];
