@@ -8,23 +8,13 @@ public class MemTableTests : IDisposable {
     readonly List<byte[]> _walRecords = [];
     readonly MemTable<StringKey> _memTable;
 
-    public MemTableTests() {
+    public MemTableTests() =>
         _memTable = new MemTable<StringKey>(1024, (record, _) => {
             _walRecords.Add(record.ToArray());
             return ValueTask.FromResult(true);
         });
-    }
 
     public void Dispose() => _memTable.Dispose();
-
-    sealed record StringKey(string Value) : IKey<StringKey> {
-        public int CompareTo(StringKey? other) =>
-            string.Compare(Value, other?.Value, StringComparison.Ordinal);
-        public static implicit operator ReadOnlyMemory<byte>(StringKey key) =>
-            Encoding.UTF8.GetBytes(key.Value);
-        public static implicit operator StringKey(ReadOnlyMemory<byte> memory) =>
-            new(Encoding.UTF8.GetString(memory.Span));
-    }
 
     static ReadOnlyMemory<byte> Bytes(string value) => Encoding.UTF8.GetBytes(value);
     static string Text(ReadOnlyMemory<byte> bytes) => Encoding.UTF8.GetString(bytes.Span);
@@ -217,6 +207,39 @@ public class MemTableTests : IDisposable {
             await tinyMemTable.TryWriteAsync(new StringKey("k"), Bytes("v"));
 
             tinyMemTable.IsFull.Should().BeFalse();
+        }
+    }
+
+    public class Enumerate : MemTableTests {
+        [Fact]
+        public void EmptyTable_YieldsNothing() =>
+            _memTable.Should().BeEmpty();
+
+        [Fact]
+        public async Task SingleEntry_YieldsKeyAndValue() {
+            await _memTable.TryWriteAsync(new StringKey("a"), Bytes("1"));
+
+            _memTable.Should().ContainSingle(kv =>
+                kv.Key == new StringKey("a") && kv.Value != null && Text(kv.Value.Value) == "1");
+        }
+
+        [Fact]
+        public async Task MultipleEntries_YieldsInAscendingKeyOrder() {
+            await _memTable.TryWriteAsync(new StringKey("c"), Bytes("3"));
+            await _memTable.TryWriteAsync(new StringKey("a"), Bytes("1"));
+            await _memTable.TryWriteAsync(new StringKey("b"), Bytes("2"));
+
+            _memTable.Select(kv => kv.Key.Value).Should().BeInAscendingOrder();
+        }
+
+        [Fact]
+        public async Task TombstonedKey_YieldsNullValue() {
+            await _memTable.TryDeleteAsync(new StringKey("a"));
+
+            var results = _memTable.ToList();
+            results.Should().HaveCount(1);
+            results[0].Key.Should().Be(new StringKey("a"));
+            results[0].Value.Should().BeNull();
         }
     }
 

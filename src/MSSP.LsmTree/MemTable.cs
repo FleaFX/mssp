@@ -1,5 +1,7 @@
 using System.Buffers;
 using System.Buffers.Binary;
+using System.Collections;
+using System.Linq;
 
 namespace MSSP.LsmTree;
 
@@ -19,7 +21,8 @@ delegate ValueTask<bool> WalAppendDelegate(ReadOnlyMemory<byte> record, Cancella
 /// to memory. Callers should flush to an SST file when <see cref="IsFull"/> is true.
 /// </summary>
 /// <typeparam name="TKey">The type of the key.</typeparam>
-sealed class MemTable<TKey>(int capacityBytes, WalAppendDelegate walAppend) : IDisposable
+sealed class MemTable<TKey>(int capacityBytes, WalAppendDelegate walAppend) :
+    IDisposable, IEnumerable<KeyValuePair<TKey, ReadOnlyMemory<byte>?>>
     where TKey : IKey<TKey> {
 
     const byte WriteMarker = 0x01;
@@ -127,6 +130,24 @@ sealed class MemTable<TKey>(int capacityBytes, WalAppendDelegate walAppend) : ID
 
     /// <inheritdoc/>
     public void Dispose() => _data.Dispose();
+
+    /// <summary>
+    /// Returns an enumerator that yields all entries in ascending key order.
+    /// </summary>
+    /// <remarks>
+    /// The underlying skip list's read lock is held for the entire duration of the enumeration.
+    /// No writes to this table are possible while iterating.
+    /// </remarks>
+    IEnumerator<KeyValuePair<TKey, ReadOnlyMemory<byte>?>> IEnumerable<KeyValuePair<TKey, ReadOnlyMemory<byte>?>>.GetEnumerator() =>
+        ((IEnumerable<KeyValuePair<TKey, Entry>>)_data)
+            .Select(static pair => new KeyValuePair<TKey, ReadOnlyMemory<byte>?>(
+                pair.Key,
+                pair.Value.IsTombstone ? (ReadOnlyMemory<byte>?)null : pair.Value.Data))
+            .GetEnumerator();
+
+    /// <inheritdoc/>
+    IEnumerator IEnumerable.GetEnumerator() =>
+        ((IEnumerable<KeyValuePair<TKey, ReadOnlyMemory<byte>?>>)this).GetEnumerator();
 
     readonly record struct Entry(ReadOnlyMemory<byte> Data, bool IsTombstone);
 }
