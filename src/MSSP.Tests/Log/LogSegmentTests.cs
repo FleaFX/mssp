@@ -1,5 +1,5 @@
 using FluentAssertions;
-using Log.Extensions;
+using MSSP.Extensions;
 
 namespace MSSP.Log;
 

@@ -1,4 +1,4 @@
-﻿namespace Log.Extensions;
+namespace MSSP.Extensions;
 
 internal static class ExtensionsForIAsyncEnumerable {
     public static async Task<IEnumerable<T>> EnumerateAsync<T>(this IAsyncEnumerable<T> asyncEnumerable) {

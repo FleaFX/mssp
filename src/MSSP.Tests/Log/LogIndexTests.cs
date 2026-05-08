@@ -1,6 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using FluentAssertions;
-using Log.Extensions;
+using MSSP.Extensions;
 
 namespace MSSP.Log;
 

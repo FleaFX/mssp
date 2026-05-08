@@ -1,15 +1,10 @@
 using FluentAssertions;
-using Log;
-using Log.Extensions;
+using MSSP.Extensions;
 
 namespace MSSP.Log; 
 
 public class SegmentedLogTests {
-    readonly SegmentedLog<TestLogRecord> _segmentedLog;
-
-    public SegmentedLogTests() {
-        _segmentedLog = new SegmentedLog<TestLogRecord>(10);
-    }
+    readonly SegmentedLog<TestLogRecord> _segmentedLog = new(10);
 
     [Fact]
     public async Task Append() {
