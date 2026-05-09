@@ -4,10 +4,10 @@ using MSSP.Extensions;
 namespace MSSP.Log;
 
 public class LogSegmentTests : IDisposable {
-    readonly LogSegment<TestLogRecord> _logSegment;
+    readonly MemorySegment<TestLogRecord> _logSegment;
 
     public LogSegmentTests() {
-        _logSegment = new LogSegment<TestLogRecord>(10);
+        _logSegment = new MemorySegment<TestLogRecord>(10);
     }
 
     [Fact]
@@ -28,7 +28,7 @@ public class LogSegmentTests : IDisposable {
 
     [Fact]
     public async Task TryAppend_ReturnsFalse_AfterCompleteCalledFromAnotherThread() {
-        var segment = new LogSegment<TestLogRecord>(1024);
+        var segment = new MemorySegment<TestLogRecord>(1024);
 
         var completeTask = Task.Run(() => segment.Complete());
         await completeTask;
@@ -41,7 +41,7 @@ public class LogSegmentTests : IDisposable {
 
     [Fact]
     public async Task Enumerate_CompletesWithoutHanging_WhenCompleteCalledFromAnotherThread() {
-        var segment = new LogSegment<TestLogRecord>(1024);
+        var segment = new MemorySegment<TestLogRecord>(1024);
         await segment.TryAppendAsync(new TestLogRecord(new byte[] { 1, 2, 3 }));
 
         // Complete() is called from a concurrent task; the enumerator must see _completed = true

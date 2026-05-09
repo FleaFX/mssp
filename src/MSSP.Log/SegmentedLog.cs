@@ -2,10 +2,10 @@ using System.Buffers;
 
 namespace MSSP.Log;
 
-delegate LogSegment<TRecord> SegmentFactory<TRecord>(int segmentSize) where TRecord : ILogRecord<TRecord>;
+public delegate ILogSegment<TRecord> SegmentFactory<TRecord>(int segmentSize) where TRecord : ILogRecord<TRecord>;
 
 class SegmentedLog<TRecord>(int segmentSize = 0x100_0000, SegmentFactory<TRecord>? segmentFactory = null) : ILog<TRecord>, IDisposable where TRecord : ILogRecord<TRecord> {
-    readonly IMemoryOwner<LogSegment<TRecord>> _segments = MemoryPool<LogSegment<TRecord>>.Shared.Rent();
+    readonly IMemoryOwner<ILogSegment<TRecord>> _segments = MemoryPool<ILogSegment<TRecord>>.Shared.Rent();
     readonly LogIndex _index = new();
     readonly SemaphoreSlim _semaphore = new(1, 1);
 
@@ -29,11 +29,11 @@ class SegmentedLog<TRecord>(int segmentSize = 0x100_0000, SegmentFactory<TRecord
         }
     }
 
-    bool Validate(Memory<byte> record) => record.Length <= segmentSize;
+    bool Validate(ReadOnlyMemory<byte> record) => record.Length <= segmentSize;
 
-    static LogSegment<TRecord> DefaultFactory(int size) => new(size);
+    static ILogSegment<TRecord> DefaultFactory(int size) => new MemorySegment<TRecord>(size);
 
-    LogSegment<TRecord> OpenNewSegment() {
+    ILogSegment<TRecord> OpenNewSegment() {
         _index.Advance(1);
         var segment = (segmentFactory ?? DefaultFactory)(segmentSize);
         _segments.Memory.Span[_index.Head] = segment;

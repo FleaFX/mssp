@@ -2,7 +2,7 @@ using System.Buffers;
 
 namespace MSSP.Log;
 
-class LogSegment<TRecord> : ILog<TRecord>, IDisposable where TRecord : ILogRecord<TRecord> {
+class MemorySegment<TRecord> : ILogSegment<TRecord>, IDisposable where TRecord : ILogRecord<TRecord> {
     readonly int _segmentSize;
     readonly IMemoryOwner<byte> _table;
     readonly LogIndex _index;
@@ -10,10 +10,10 @@ class LogSegment<TRecord> : ILog<TRecord>, IDisposable where TRecord : ILogRecor
     volatile bool _completed;
 
     /// <summary>
-    /// Initializes a new <see cref="LogSegment{TRecord}"/>.
+    /// Initializes a new <see cref="MemorySegment{TRecord}"/>.
     /// </summary>
     /// <param name="segmentSize">The maximum size in bytes of the segment.</param>
-    public LogSegment(int segmentSize = 0x100_0000) {
+    public MemorySegment(int segmentSize = 0x100_0000) {
         _segmentSize = segmentSize;
         _table = MemoryPool<byte>.Shared.Rent(_segmentSize);
         _index = new LogIndex(_segmentSize);
@@ -24,7 +24,7 @@ class LogSegment<TRecord> : ILog<TRecord>, IDisposable where TRecord : ILogRecor
     public ValueTask<bool> TryAppendAsync(TRecord record, CancellationToken cancellationToken = new()) =>
       ValueTask.FromResult(TryAppendCore(record));
 
-    bool TryAppendCore(Memory<byte> record) {
+    bool TryAppendCore(ReadOnlyMemory<byte> record) {
         if (_completed) return false;
 
         lock (_lock) {
@@ -39,16 +39,14 @@ class LogSegment<TRecord> : ILog<TRecord>, IDisposable where TRecord : ILogRecor
         }
     }
 
-    /// <summary>
-    /// Marks the segment as complete. You will not be able to append any more records after calling this method.
-    /// </summary>
+    /// <inheritdoc/>
     public void Complete() => _completed = true;
 
     /// <inheritdoc/>
     async IAsyncEnumerator<TRecord> IAsyncEnumerable<TRecord>.GetAsyncEnumerator(CancellationToken cancellationToken) {
         var previous = Index.Start;
         await foreach (var index in _index.WithCancellation(!_completed ? cancellationToken : new CancellationToken(true))) {
-            yield return _table.Memory[previous..index];
+            yield return (ReadOnlyMemory<byte>)_table.Memory[previous..index];
             previous = index;
         }
     }

@@ -1,7 +1,6 @@
 using System.Buffers;
 using System.Buffers.Binary;
 using System.Collections;
-using System.Linq;
 
 namespace MSSP.LsmTree;
 
@@ -126,6 +125,37 @@ sealed class MemTable<TKey>(int capacityBytes, WalAppendDelegate walAppend) :
         }
         value = entry.Data;
         return true;
+    }
+
+    /// <summary>
+    /// Applies a WAL record directly to the in-memory state, bypassing the WAL.
+    /// </summary>
+    /// <remarks>
+    /// Only for use during recovery, when replaying records that are already durable in the WAL.
+    /// The record must have been produced by <see cref="TryWriteAsync"/> or
+    /// <see cref="TryDeleteAsync"/>; calling this on arbitrary data yields undefined behavior.
+    /// </remarks>
+    /// <exception cref="InvalidDataException">The record contains an unrecognized marker byte.</exception>
+    internal void ApplyRecord(ReadOnlyMemory<byte> record) {
+        var span = record.Span;
+        var marker = span[0];
+        var keyLen = BinaryPrimitives.ReadInt32LittleEndian(span[1..]);
+        TKey key = new ReadOnlyMemory<byte>(record.Slice(5, keyLen).ToArray());
+
+        if (marker == TombstoneMarker) {
+            _data.Write(key, new Entry(Data: default, IsTombstone: true));
+            Interlocked.Add(ref _size, keyLen);
+            return;
+        }
+
+        if (marker == WriteMarker) {
+            var value = record.Slice(5 + keyLen);
+            _data.Write(key, new Entry(value, IsTombstone: false));
+            Interlocked.Add(ref _size, (long)keyLen + value.Length);
+            return;
+        }
+
+        throw new InvalidDataException($"Unknown WAL record marker 0x{marker:X2}.");
     }
 
     /// <inheritdoc/>

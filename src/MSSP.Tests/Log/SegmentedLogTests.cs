@@ -18,7 +18,7 @@ public class SegmentedLogTests {
     public async Task Dispose_DisposesAllSegments() {
         var disposed = new List<bool>();
 
-        LogSegment<TestLogRecord> TrackingFactory(int size) {
+        ILogSegment<TestLogRecord> TrackingFactory(int size) {
             var i = disposed.Count;
             disposed.Add(false);
             return new TrackingLogSegment(size, () => disposed[i] = true);

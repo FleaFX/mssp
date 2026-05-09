@@ -4,7 +4,7 @@ namespace MSSP.Log;
 /// Provides log structured record storage.
 /// </summary>
 /// <typeparam name="TRecord">The type of a record in the log.</typeparam>
-interface ILog<TRecord> : IAsyncEnumerable<TRecord> where TRecord : ILogRecord<TRecord> {
+public interface ILog<TRecord> : IAsyncEnumerable<TRecord> where TRecord : ILogRecord<TRecord> {
     /// <summary>
     /// Appends the given <paramref name="record"/> to the log.
     /// </summary>

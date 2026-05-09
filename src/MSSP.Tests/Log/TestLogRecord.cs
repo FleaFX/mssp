@@ -5,9 +5,9 @@ class TestLogRecord : ILogRecord<TestLogRecord> {
 
     public TestLogRecord(byte[] payload) => _payload = payload;
 
-    public static implicit operator Memory<byte>(TestLogRecord record) => record._payload;
+    public static implicit operator ReadOnlyMemory<byte>(TestLogRecord record) => record._payload;
 
-    public static implicit operator TestLogRecord(Memory<byte> memory) => new(memory.ToArray());
+    public static implicit operator TestLogRecord(ReadOnlyMemory<byte> memory) => new(memory.ToArray());
 
     bool Equals(TestLogRecord other) => _payload.SequenceEqual(other._payload);
 
