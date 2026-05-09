@@ -65,13 +65,12 @@ sealed class MemTable<TKey>(int capacityBytes, WalAppendDelegate walAppend) :
 
             if (!await walAppend(buffer.AsMemory(0, recordLength), cancellationToken))
                 return false;
+
+            ApplyRecord(buffer.AsMemory(0, recordLength));
+            return true;
         } finally {
             ArrayPool<byte>.Shared.Return(buffer);
         }
-
-        _data.Write(key, new Entry(value, IsTombstone: false));
-        Interlocked.Add(ref _size, (long)keyBytes.Length + value.Length);
-        return true;
     }
 
     /// <summary>
@@ -96,13 +95,12 @@ sealed class MemTable<TKey>(int capacityBytes, WalAppendDelegate walAppend) :
 
             if (!await walAppend(buffer.AsMemory(0, recordLength), cancellationToken))
                 return false;
+
+            ApplyRecord(buffer.AsMemory(0, recordLength));
+            return true;
         } finally {
             ArrayPool<byte>.Shared.Return(buffer);
         }
-
-        _data.Write(key, new Entry(Data: default, IsTombstone: true));
-        Interlocked.Add(ref _size, keyBytes.Length);
-        return true;
     }
 
     /// <summary>
@@ -128,12 +126,13 @@ sealed class MemTable<TKey>(int capacityBytes, WalAppendDelegate walAppend) :
     }
 
     /// <summary>
-    /// Applies a WAL record directly to the in-memory state, bypassing the WAL.
+    /// Applies a WAL record to the in-memory state.
     /// </summary>
     /// <remarks>
-    /// Only for use during recovery, when replaying records that are already durable in the WAL.
-    /// The record must have been produced by <see cref="TryWriteAsync"/> or
-    /// <see cref="TryDeleteAsync"/>; calling this on arbitrary data yields undefined behavior.
+    /// Called on the normal write path after a successful WAL append, and during recovery
+    /// to replay records that are already durable. The record must have been produced by
+    /// <see cref="TryWriteAsync"/> or <see cref="TryDeleteAsync"/>; calling this on
+    /// arbitrary data yields undefined behavior.
     /// </remarks>
     /// <exception cref="InvalidDataException">The record contains an unrecognized marker byte.</exception>
     internal void ApplyRecord(ReadOnlyMemory<byte> record) {
@@ -149,7 +148,7 @@ sealed class MemTable<TKey>(int capacityBytes, WalAppendDelegate walAppend) :
         }
 
         if (marker == WriteMarker) {
-            var value = record.Slice(5 + keyLen);
+            var value = new ReadOnlyMemory<byte>(record.Slice(5 + keyLen).ToArray());
             _data.Write(key, new Entry(value, IsTombstone: false));
             Interlocked.Add(ref _size, (long)keyLen + value.Length);
             return;
