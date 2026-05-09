@@ -16,15 +16,15 @@ namespace MSSP.Log;
 /// For on-disk durability, open the underlying file with <see cref="FileOptions.WriteThrough"/>.
 /// The stream must be seekable for enumeration to work.
 /// </remarks>
-public sealed class StreamLog<TRecord> : ILogSegment<TRecord> where TRecord : ILogRecord<TRecord> {
+public sealed class StreamSegment<TRecord> : ILogSegment<TRecord> where TRecord : ILogRecord<TRecord> {
     readonly Stream _stream;
     volatile bool _completed;
 
     /// <summary>
-    /// Creates a <see cref="StreamLog{TRecord}"/> that appends to <paramref name="stream"/>.
+    /// Creates a <see cref="StreamSegment{TRecord}"/> that appends to <paramref name="stream"/>.
     /// The stream must be writable and positioned at the end of any existing content.
     /// </summary>
-    internal StreamLog(Stream stream) => _stream = stream;
+    internal StreamSegment(Stream stream) => _stream = stream;
 
     /// <inheritdoc/>
     public async ValueTask<bool> TryAppendAsync(TRecord record, CancellationToken cancellationToken = default) {
@@ -59,8 +59,8 @@ public sealed class StreamLog<TRecord> : ILogSegment<TRecord> where TRecord : IL
             await _stream.ReadExactlyAsync(buf, CancellationToken.None);
             var len = BinaryPrimitives.ReadInt32LittleEndian(buf);
 
-            if (_stream.Length - _stream.Position < len + 4)
-                yield break; // Truncated data or checksum — uncommitted write, discard.
+            if (len < 0 || _stream.Length - _stream.Position < len + 4)
+                yield break; // Corrupt length, truncated data, or missing checksum — stop recovery.
 
             var data = new byte[len];
             await _stream.ReadExactlyAsync(data, CancellationToken.None);

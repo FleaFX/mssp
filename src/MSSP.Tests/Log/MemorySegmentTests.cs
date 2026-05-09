@@ -3,12 +3,8 @@ using MSSP.Extensions;
 
 namespace MSSP.Log;
 
-public class LogSegmentTests : IDisposable {
-    readonly MemorySegment<TestLogRecord> _logSegment;
-
-    public LogSegmentTests() {
-        _logSegment = new MemorySegment<TestLogRecord>(10);
-    }
+public class MemorySegmentTests : IDisposable {
+    readonly MemorySegment<TestLogRecord> _logSegment = new(10);
 
     [Fact]
     public async Task Append() {

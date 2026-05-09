@@ -25,9 +25,9 @@ class MemorySegment<TRecord> : ILogSegment<TRecord>, IDisposable where TRecord :
       ValueTask.FromResult(TryAppendCore(record));
 
     bool TryAppendCore(ReadOnlyMemory<byte> record) {
-        if (_completed) return false;
-
         lock (_lock) {
+            if (_completed) return false;
+
             // the only reason to reject a record is if it doesn't fit the table anymore
             // a rejected write should be reissued to a new log segment
             if (!record.TryCopyTo(_table.Memory[_index.Head.._segmentSize]))
@@ -40,7 +40,9 @@ class MemorySegment<TRecord> : ILogSegment<TRecord>, IDisposable where TRecord :
     }
 
     /// <inheritdoc/>
-    public void Complete() => _completed = true;
+    public void Complete() {
+        lock (_lock) _completed = true;
+    }
 
     /// <inheritdoc/>
     async IAsyncEnumerator<TRecord> IAsyncEnumerable<TRecord>.GetAsyncEnumerator(CancellationToken cancellationToken) {

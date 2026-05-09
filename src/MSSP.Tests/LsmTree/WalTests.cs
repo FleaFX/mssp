@@ -10,7 +10,7 @@ public class WalRecoveryTests {
 
     [Fact]
     public async Task Recovery_RestoresWrittenEntries() {
-        using var walLog = new StreamLog<WalRecord>(new MemoryStream());
+        using var walLog = new StreamSegment<WalRecord>(new MemoryStream());
         using var original = new MemTable<StringKey>(4096, (bytes, ct) => walLog.TryAppendAsync(new WalRecord(bytes), ct));
         await original.TryWriteAsync(new StringKey("a"), Bytes("value-a"));
         await original.TryWriteAsync(new StringKey("b"), Bytes("value-b"));
@@ -28,7 +28,7 @@ public class WalRecoveryTests {
 
     [Fact]
     public async Task Recovery_RestoresTombstone() {
-        using var walLog = new StreamLog<WalRecord>(new MemoryStream());
+        using var walLog = new StreamSegment<WalRecord>(new MemoryStream());
         using var original = new MemTable<StringKey>(4096, (bytes, ct) => walLog.TryAppendAsync(new WalRecord(bytes), ct));
         await original.TryWriteAsync(new StringKey("x"), Bytes("value"));
         await original.TryDeleteAsync(new StringKey("x"));
@@ -43,7 +43,7 @@ public class WalRecoveryTests {
 
     [Fact]
     public async Task Recovery_LastWriteWins_OnDuplicateKey() {
-        using var walLog = new StreamLog<WalRecord>(new MemoryStream());
+        using var walLog = new StreamSegment<WalRecord>(new MemoryStream());
         using var original = new MemTable<StringKey>(4096, (bytes, ct) => walLog.TryAppendAsync(new WalRecord(bytes), ct));
         await original.TryWriteAsync(new StringKey("k"), Bytes("first"));
         await original.TryWriteAsync(new StringKey("k"), Bytes("second"));
@@ -58,7 +58,7 @@ public class WalRecoveryTests {
 
     [Fact]
     public async Task Recovery_EmptyWal_ProducesEmptyMemTable() {
-        using var walLog = new StreamLog<WalRecord>(new MemoryStream());
+        using var walLog = new StreamSegment<WalRecord>(new MemoryStream());
         using var recovered = new MemTable<StringKey>(4096, (_, _) => ValueTask.FromResult(true));
         await foreach (var record in walLog)
             recovered.ApplyRecord(record.Bytes);
