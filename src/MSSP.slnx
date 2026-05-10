@@ -2,6 +2,7 @@
   <Folder Name="/Solution Items/">
     <File Path="../.editorconfig" />
   </Folder>
+  <Project Path="MSSP/MSSP.csproj" />
   <Project Path="MSSP.Tests/MSSP.Tests.csproj" />
   <Project Path="MSSP.Log/MSSP.Log.csproj" />
   <Project Path="MSSP.LsmTree/MSSP.LsmTree.csproj" />
