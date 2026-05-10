@@ -2,15 +2,16 @@ using FluentAssertions;
 
 namespace MSSP.Embedded;
 
-public class EmbeddedMsspClientTests : IDisposable {
+public class EmbeddedMsspClientTests : IAsyncLifetime {
     readonly string _dataDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
-    readonly EmbeddedMsspClient _client;
+    EmbeddedMsspClient _client = null!;
 
-    public EmbeddedMsspClientTests() => _client = EmbeddedMsspClient.Open(_dataDir);
+    public async Task InitializeAsync() => _client = await EmbeddedMsspClient.OpenAsync(_dataDir);
 
-    public void Dispose() {
+    public Task DisposeAsync() {
         _client.Dispose();
         Directory.Delete(_dataDir, recursive: true);
+        return Task.CompletedTask;
     }
 
     static EventData Event(string type, string payload) =>
@@ -153,15 +154,16 @@ public class EmbeddedMsspClientTests : IDisposable {
         }
     }
 
-    public class Flush : IDisposable {
+    public class Flush : IAsyncLifetime {
         readonly string _dataDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
-        readonly EmbeddedMsspClient _tinyClient;
+        EmbeddedMsspClient _tinyClient = null!;
 
-        public Flush() => _tinyClient = EmbeddedMsspClient.Open(_dataDir, memTableCapacityBytes: 128);
+        public async Task InitializeAsync() => _tinyClient = await EmbeddedMsspClient.OpenAsync(_dataDir, memTableCapacityBytes: 128);
 
-        public void Dispose() {
+        public Task DisposeAsync() {
             _tinyClient.Dispose();
             Directory.Delete(_dataDir, recursive: true);
+            return Task.CompletedTask;
         }
 
         static EventData Event(string type, string payload) =>
@@ -203,6 +205,71 @@ public class EmbeddedMsspClientTests : IDisposable {
             events.Should().HaveCount(6);
             for (var i = 0; i < 6; i++)
                 events[i].EventType.Should().Be($"Event{i}");
+        }
+    }
+
+    public class Recovery {
+        static EventData Event(string type, string payload) =>
+            new(type, System.Text.Encoding.UTF8.GetBytes(payload));
+
+        [Fact]
+        public async Task EventsReadableAfterReopen() {
+            var dataDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+            try {
+                var client1 = await EmbeddedMsspClient.OpenAsync(dataDir);
+                await client1.AppendAsync("stream-a", StreamRevision.NoStream, [Event("Foo", "first"), Event("Bar", "second")]);
+                client1.Dispose();
+
+                var client2 = await EmbeddedMsspClient.OpenAsync(dataDir);
+                var events = await client2.ReadAsync("stream-a").ToListAsync();
+                client2.Dispose();
+
+                events.Should().HaveCount(2);
+                events[0].EventType.Should().Be("Foo");
+                events[1].EventType.Should().Be("Bar");
+            } finally {
+                Directory.Delete(dataDir, recursive: true);
+            }
+        }
+
+        [Fact]
+        public async Task StreamRevisionRestoredAfterReopen() {
+            var dataDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+            try {
+                var client1 = await EmbeddedMsspClient.OpenAsync(dataDir);
+                await client1.AppendAsync("stream-a", StreamRevision.NoStream, [Event("Foo", "data")]);
+                client1.Dispose();
+
+                var client2 = await EmbeddedMsspClient.OpenAsync(dataDir);
+                var act = async () => await client2.AppendAsync("stream-a", StreamRevision.NoStream, [Event("Bar", "data")]);
+                await act.Should().ThrowAsync<OptimisticConcurrencyException>();
+                client2.Dispose();
+            } finally {
+                Directory.Delete(dataDir, recursive: true);
+            }
+        }
+
+        [Fact]
+        public async Task EventsReadableAfterReopenFollowingFlush() {
+            var dataDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+            try {
+                var client1 = await EmbeddedMsspClient.OpenAsync(dataDir, memTableCapacityBytes: 128);
+                await client1.AppendAsync("stream-a", StreamRevision.NoStream, [
+                    Event("Foo", new string('x', 64)),
+                    Event("Bar", new string('x', 64))
+                ]);
+                client1.Dispose();
+
+                var client2 = await EmbeddedMsspClient.OpenAsync(dataDir, memTableCapacityBytes: 128);
+                var events = await client2.ReadAsync("stream-a").ToListAsync();
+                client2.Dispose();
+
+                events.Should().HaveCount(2);
+                events[0].EventType.Should().Be("Foo");
+                events[1].EventType.Should().Be("Bar");
+            } finally {
+                Directory.Delete(dataDir, recursive: true);
+            }
         }
     }
 }
