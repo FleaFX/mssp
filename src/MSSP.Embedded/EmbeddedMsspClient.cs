@@ -1,6 +1,5 @@
 using System.Buffers.Binary;
 using System.Runtime.CompilerServices;
-using System.Text;
 using MSSP.Log;
 using MSSP.LsmTree;
 
@@ -41,41 +40,22 @@ public sealed class EmbeddedMsspClient : IMsspClient, IDisposable {
     public static async ValueTask<EmbeddedMsspClient> OpenAsync(string dataDirectory, int memTableCapacityBytes = 64 * 1024 * 1024, CancellationToken ct = default) {
         Directory.CreateDirectory(dataDirectory);
 
+        var sstFiles = Directory.EnumerateFiles(dataDirectory, "*.sst").OrderBy(f => f).ToList();
+        var sstRevisions = BuildSstRevisions(sstFiles);
+
         var walStream = new FileStream(
-            Path.Combine(dataDirectory, "wal.log"),
+            WalPath(dataDirectory),
             FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None,
             bufferSize: 4096, FileOptions.WriteThrough | FileOptions.Asynchronous);
         var wal = new StreamSegment<WalRecord>(walStream);
+        var memTable = new MemTable<EventKey>(memTableCapacityBytes, WalAppendDelegate);
 
-        var sstFiles = Directory
-            .EnumerateFiles(dataDirectory, "*.sst")
-            .OrderBy(f => f)
-            .ToList();
-
-        var streamRevisions = new Dictionary<string, ulong>();
-        var sstMaxRevisions = BuildSstRevisions(sstFiles);
-        foreach (var (streamId, revision) in sstMaxRevisions)
-            streamRevisions[streamId] = revision;
-
-        WalAppendDelegate walDelegate = (record, cancelToken) => wal.TryAppendAsync(record, cancelToken);
-        var memTable = new MemTable<EventKey>(memTableCapacityBytes, walDelegate);
-
-        await foreach (var record in wal.WithCancellation(ct)) {
-            ReadOnlyMemory<byte> bytes = record;
-            var span = bytes.Span;
-            if (span.Length < 5 || span[0] != WalWriteMarker) continue;
-
-            var keyLen = BinaryPrimitives.ReadInt32LittleEndian(span[1..]);
-            EventKey key = bytes.Slice(5, keyLen);
-
-            if (!streamRevisions.TryGetValue(key.StreamId, out var current) || key.Revision > current)
-                streamRevisions[key.StreamId] = key.Revision;
-
-            if (!sstMaxRevisions.TryGetValue(key.StreamId, out var sstMax) || key.Revision > sstMax)
-                memTable.ApplyRecord(bytes);
-        }
+        var streamRevisions = await ReplayWalAsync(wal, sstRevisions, memTable, ct);
 
         return new EmbeddedMsspClient(dataDirectory, memTableCapacityBytes, wal, memTable, sstFiles, streamRevisions);
+
+        ValueTask<bool> WalAppendDelegate(ReadOnlyMemory<byte> record, CancellationToken cancelToken) =>
+            wal.TryAppendAsync(record, cancelToken);
     }
 
     /// <inheritdoc/>
@@ -87,11 +67,11 @@ public sealed class EmbeddedMsspClient : IMsspClient, IDisposable {
 
             var baseRevision = _streamRevisions.TryGetValue(streamId.Value, out var current) ? current + 1 : 0UL;
             var timestamp = DateTimeOffset.UtcNow;
+            var offset = 0UL;
 
-            var serialized = Serialize(streamId.Value, baseRevision, timestamp, events);
-            if (serialized.Count == 0) return;
-
-            foreach (var (key, value) in serialized) {
+            foreach (var eventData in events) {
+                var key = new EventKey(streamId.Value, baseRevision + offset++);
+                ReadOnlyMemory<byte> value = EventValue.From(eventData, timestamp);
                 ReadOnlyMemory<byte> keyBytes = key;
                 var entrySize = keyBytes.Length + value.Length;
 
@@ -126,39 +106,32 @@ public sealed class EmbeddedMsspClient : IMsspClient, IDisposable {
         foreach (var sstPath in sstSnapshot) {
             if (ct.IsCancellationRequested) yield break;
             using var stream = new FileStream(sstPath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.Asynchronous);
-            var reader = new SstReader<EventKey>(stream);
-            foreach (var (key, value) in reader.Scan()) {
-                if (key.StreamId != streamId.Value) continue;
-                if (key.Revision < from) continue;
-                if (value is null) continue;
-                yield return DeserializeValue(key, value.Value);
+            foreach (var (key, value) in new SstReader<EventKey>(stream).Scan()) {
+                if (key.StreamId != streamId.Value || key.Revision < from || value is null) continue;
+                yield return ((EventValue)value.Value).ToRecordedEvent(key);
             }
         }
 
         foreach (var (key, value) in memTableSnapshot) {
             if (ct.IsCancellationRequested) yield break;
-            if (key.StreamId != streamId.Value) continue;
-            if (key.Revision < from) continue;
-            if (value is null) continue;
-            yield return DeserializeValue(key, value.Value);
+            if (key.StreamId != streamId.Value || key.Revision < from || value is null) continue;
+            yield return ((EventValue)value.Value).ToRecordedEvent(key);
         }
     }
 
     async ValueTask FlushAsync(CancellationToken ct) {
         var sstPath = Path.Combine(_dataDirectory, $"{DateTimeOffset.UtcNow.Ticks:D19}.sst");
-        await using var stream = new FileStream(sstPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.Asynchronous);
-        await SstWriter.WriteAsync<EventKey>(_memTable, stream, cancellationToken: ct);
+        await using var sstStream = new FileStream(sstPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.Asynchronous);
+        await SstWriter.WriteAsync<EventKey>(_memTable, sstStream, cancellationToken: ct);
         _sstFiles.Add(sstPath);
 
         _wal.Dispose();
         var walStream = new FileStream(
-            Path.Combine(_dataDirectory, "wal.log"),
+            WalPath(_dataDirectory),
             FileMode.Create, FileAccess.ReadWrite, FileShare.None,
             bufferSize: 4096, FileOptions.WriteThrough | FileOptions.Asynchronous);
         _wal = new StreamSegment<WalRecord>(walStream);
-
-        WalAppendDelegate walDelegate = (record, ct2) => _wal.TryAppendAsync(record, ct2);
-        _memTable = new MemTable<EventKey>(_memTableCapacityBytes, walDelegate);
+        _memTable = new MemTable<EventKey>(_memTableCapacityBytes, (record, ct2) => _wal.TryAppendAsync(record, ct2));
     }
 
     bool CheckConcurrency(string streamId, StreamRevision expected) {
@@ -169,12 +142,13 @@ public sealed class EmbeddedMsspClient : IMsspClient, IDisposable {
         return exists && current == expected;
     }
 
+    static string WalPath(string dataDirectory) => Path.Combine(dataDirectory, "wal.log");
+
     static Dictionary<string, ulong> BuildSstRevisions(IEnumerable<string> sstFiles) {
         var revisions = new Dictionary<string, ulong>();
         foreach (var sstPath in sstFiles) {
             using var stream = new FileStream(sstPath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096);
-            var reader = new SstReader<EventKey>(stream);
-            foreach (var (key, _) in reader.Scan()) {
+            foreach (var (key, _) in new SstReader<EventKey>(stream).Scan()) {
                 if (!revisions.TryGetValue(key.StreamId, out var rev) || key.Revision > rev)
                     revisions[key.StreamId] = key.Revision;
             }
@@ -182,34 +156,24 @@ public sealed class EmbeddedMsspClient : IMsspClient, IDisposable {
         return revisions;
     }
 
-    static List<(EventKey Key, ReadOnlyMemory<byte> Value)> Serialize(string streamId, ulong baseRevision, DateTimeOffset timestamp, IEnumerable<EventData> events) {
-        var result = new List<(EventKey, ReadOnlyMemory<byte>)>();
-        var offset = 0UL;
-        foreach (var @event in events) {
-            result.Add((new EventKey(streamId, baseRevision + offset), SerializeValue(@event, timestamp)));
-            offset++;
+    static async ValueTask<Dictionary<string, ulong>> ReplayWalAsync(StreamSegment<WalRecord> wal, Dictionary<string, ulong> sstRevisions, MemTable<EventKey> memTable, CancellationToken ct) {
+        var streamRevisions = new Dictionary<string, ulong>(sstRevisions);
+
+        await foreach (var record in wal.WithCancellation(ct)) {
+            ReadOnlyMemory<byte> bytes = record;
+            var span = bytes.Span;
+            if (span.Length < 5 || span[0] != WalWriteMarker) continue;
+
+            EventKey key = bytes.Slice(5, BinaryPrimitives.ReadInt32LittleEndian(span[1..]));
+
+            if (!streamRevisions.TryGetValue(key.StreamId, out var current) || key.Revision > current)
+                streamRevisions[key.StreamId] = key.Revision;
+
+            if (!sstRevisions.TryGetValue(key.StreamId, out var sstMax) || key.Revision > sstMax)
+                memTable.ApplyRecord(bytes);
         }
-        return result;
-    }
 
-    static ReadOnlyMemory<byte> SerializeValue(EventData @event, DateTimeOffset timestamp) {
-        var typeBytes = Encoding.UTF8.GetBytes(@event.EventType);
-        var buffer = new byte[4 + typeBytes.Length + 8 + @event.Data.Length];
-        var span = buffer.AsSpan();
-        BinaryPrimitives.WriteInt32LittleEndian(span, typeBytes.Length);
-        typeBytes.CopyTo(span[4..]);
-        BinaryPrimitives.WriteInt64LittleEndian(span[(4 + typeBytes.Length)..], timestamp.ToUnixTimeMilliseconds());
-        @event.Data.Span.CopyTo(span[(4 + typeBytes.Length + 8)..]);
-        return buffer;
-    }
-
-    static RecordedEvent DeserializeValue(EventKey key, ReadOnlyMemory<byte> value) {
-        var span = value.Span;
-        var typeLen = BinaryPrimitives.ReadInt32LittleEndian(span);
-        var eventType = Encoding.UTF8.GetString(span.Slice(4, typeLen));
-        var timestamp = DateTimeOffset.FromUnixTimeMilliseconds(BinaryPrimitives.ReadInt64LittleEndian(span[(4 + typeLen)..]));
-        var data = value[(4 + typeLen + 8)..];
-        return new RecordedEvent(key.StreamId, key.Revision, eventType, data, timestamp);
+        return streamRevisions;
     }
 
     /// <inheritdoc/>
