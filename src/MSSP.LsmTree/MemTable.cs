@@ -168,7 +168,7 @@ sealed class MemTable<TKey>(int capacityBytes, WalAppendDelegate walAppend) :
     /// No writes to this table are possible while iterating.
     /// </remarks>
     IEnumerator<KeyValuePair<TKey, ReadOnlyMemory<byte>?>> IEnumerable<KeyValuePair<TKey, ReadOnlyMemory<byte>?>>.GetEnumerator() =>
-        ((IEnumerable<KeyValuePair<TKey, Entry>>)_data)
+        _data
             .Select(static pair => new KeyValuePair<TKey, ReadOnlyMemory<byte>?>(
                 pair.Key,
                 pair.Value.IsTombstone ? (ReadOnlyMemory<byte>?)null : pair.Value.Data))

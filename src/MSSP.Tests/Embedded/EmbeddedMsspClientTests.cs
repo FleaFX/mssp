@@ -152,4 +152,57 @@ public class EmbeddedMsspClientTests : IDisposable {
             events[0].Data.ToArray().Should().Equal(payload);
         }
     }
+
+    public class Flush : IDisposable {
+        readonly string _dataDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+        readonly EmbeddedMsspClient _tinyClient;
+
+        public Flush() => _tinyClient = EmbeddedMsspClient.Open(_dataDir, memTableCapacityBytes: 128);
+
+        public void Dispose() {
+            _tinyClient.Dispose();
+            Directory.Delete(_dataDir, recursive: true);
+        }
+
+        static EventData Event(string type, string payload) =>
+            new(type, System.Text.Encoding.UTF8.GetBytes(payload));
+
+        [Fact]
+        public async Task EventsRemainingReadableAfterFlush() {
+            await _tinyClient.AppendAsync("stream-a", StreamRevision.NoStream, [
+                Event("Foo", new string('x', 64)),
+                Event("Bar", new string('x', 64))
+            ]);
+
+            var events = await _tinyClient.ReadAsync("stream-a").ToListAsync();
+
+            events.Should().HaveCount(2);
+            events[0].EventType.Should().Be("Foo");
+            events[1].EventType.Should().Be("Bar");
+        }
+
+        [Fact]
+        public async Task SstFileCreatedAfterFlush() {
+            await _tinyClient.AppendAsync("stream-a", StreamRevision.NoStream, [
+                Event("Foo", new string('x', 64)),
+                Event("Bar", new string('x', 64))
+            ]);
+
+            Directory.EnumerateFiles(_dataDir, "*.sst").Should().HaveCount(1);
+        }
+
+        [Fact]
+        public async Task EventsSpanningMultipleSstFilesAndMemTable_ReadInOrder() {
+            for (var i = 0; i < 6; i++)
+                await _tinyClient.AppendAsync("stream-a", i == 0 ? StreamRevision.NoStream : (ulong)(i - 1), [
+                    Event($"Event{i}", new string('x', 32))
+                ]);
+
+            var events = await _tinyClient.ReadAsync("stream-a").ToListAsync();
+
+            events.Should().HaveCount(6);
+            for (var i = 0; i < 6; i++)
+                events[i].EventType.Should().Be($"Event{i}");
+        }
+    }
 }

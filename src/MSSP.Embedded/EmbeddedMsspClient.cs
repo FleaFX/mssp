@@ -10,31 +10,45 @@ namespace MSSP.Embedded;
 /// An embedded, single-process implementation of <see cref="IMsspClient"/> that stores events on the local filesystem.
 /// </summary>
 public sealed class EmbeddedMsspClient : IMsspClient, IDisposable {
+    readonly string _dataDirectory;
+    readonly int _memTableCapacityBytes;
     readonly StreamSegment<WalRecord> _wal;
-    readonly MemTable<EventKey> _memTable;
     readonly SemaphoreSlim _writeLock = new(1, 1);
     readonly Dictionary<string, ulong> _streamRevisions = new();
+    readonly List<string> _sstFiles;
+    MemTable<EventKey> _memTable;
 
-    EmbeddedMsspClient(StreamSegment<WalRecord> wal, MemTable<EventKey> memTable) {
+    EmbeddedMsspClient(string dataDirectory, int memTableCapacityBytes, StreamSegment<WalRecord> wal, MemTable<EventKey> memTable, List<string> sstFiles) {
+        _dataDirectory = dataDirectory;
+        _memTableCapacityBytes = memTableCapacityBytes;
         _wal = wal;
         _memTable = memTable;
+        _sstFiles = sstFiles;
     }
 
     /// <summary>
     /// Opens or creates an embedded event store at the given <paramref name="dataDirectory"/>.
     /// </summary>
     /// <param name="dataDirectory">The directory in which to store WAL and SST files.</param>
-    /// <param name="memTableCapacityBytes">The maximum size of the in-memory write buffer before it must be flushed to disk.</param>
+    /// <param name="memTableCapacityBytes">The maximum size of the in-memory write buffer before it is flushed to an SST file.</param>
     /// <returns>An <see cref="EmbeddedMsspClient"/> ready for use.</returns>
     public static EmbeddedMsspClient Open(string dataDirectory, int memTableCapacityBytes = 64 * 1024 * 1024) {
         Directory.CreateDirectory(dataDirectory);
+
         var walStream = new FileStream(
             Path.Combine(dataDirectory, "wal.log"),
             FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None,
             bufferSize: 4096, FileOptions.WriteThrough | FileOptions.Asynchronous);
         var wal = new StreamSegment<WalRecord>(walStream);
         WalAppendDelegate walDelegate = (record, ct) => wal.TryAppendAsync(record, ct);
-        return new EmbeddedMsspClient(wal, new MemTable<EventKey>(memTableCapacityBytes, walDelegate));
+        var memTable = new MemTable<EventKey>(memTableCapacityBytes, walDelegate);
+
+        var sstFiles = Directory
+            .EnumerateFiles(dataDirectory, "*.sst")
+            .OrderBy(f => f)
+            .ToList();
+
+        return new EmbeddedMsspClient(dataDirectory, memTableCapacityBytes, wal, memTable, sstFiles);
     }
 
     /// <inheritdoc/>
@@ -44,18 +58,25 @@ public sealed class EmbeddedMsspClient : IMsspClient, IDisposable {
             if (!CheckConcurrency(streamId.Value, expectedRevision))
                 throw new OptimisticConcurrencyException(streamId, expectedRevision);
 
-            if (_memTable.IsFull)
-                throw new InvalidOperationException("MemTable is full; flush to SST before appending. (Not yet implemented.)");
-
-            var nextRevision = _streamRevisions.TryGetValue(streamId.Value, out var current) ? current + 1 : 0UL;
+            var baseRevision = _streamRevisions.TryGetValue(streamId.Value, out var current) ? current + 1 : 0UL;
             var timestamp = DateTimeOffset.UtcNow;
 
-            foreach (var @event in events) {
-                var key = new EventKey(streamId.Value, nextRevision);
-                var value = SerializeValue(@event, timestamp);
+            var serialized = Serialize(streamId.Value, baseRevision, timestamp, events);
+            if (serialized.Count == 0) return;
+
+            foreach (var (key, value) in serialized) {
+                ReadOnlyMemory<byte> keyBytes = key;
+                var entrySize = keyBytes.Length + value.Length;
+
+                if (entrySize > _memTableCapacityBytes)
+                    throw new InvalidOperationException("Single event exceeds MemTable capacity.");
+
+                if (_memTable.Size + entrySize > _memTableCapacityBytes)
+                    await FlushAsync(ct);
+
                 if (!await _memTable.TryWriteAsync(key, value, ct))
                     throw new InvalidOperationException("WAL append failed.");
-                _streamRevisions[streamId.Value] = nextRevision++;
+                _streamRevisions[streamId.Value] = key.Revision;
             }
         } finally {
             _writeLock.Release();
@@ -64,14 +85,47 @@ public sealed class EmbeddedMsspClient : IMsspClient, IDisposable {
 
     /// <inheritdoc/>
     public async IAsyncEnumerable<RecordedEvent> ReadAsync(StreamId streamId, StreamRevision from = default, [EnumeratorCancellation] CancellationToken ct = default) {
-        // TODO: merge with SST layers once flush is implemented
-        foreach (var (key, value) in _memTable) {
+        string[] sstSnapshot;
+        MemTable<EventKey> memTableSnapshot;
+
+        await _writeLock.WaitAsync(ct);
+        try {
+            sstSnapshot = [.. _sstFiles];
+            memTableSnapshot = _memTable;
+        } finally {
+            _writeLock.Release();
+        }
+
+        foreach (var sstPath in sstSnapshot) {
+            if (ct.IsCancellationRequested) yield break;
+            await using var stream = new FileStream(sstPath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.Asynchronous);
+            var reader = new SstReader<EventKey>(stream);
+            foreach (var (key, value) in reader.Scan()) {
+                if (key.StreamId != streamId.Value) continue;
+                if (key.Revision < from) continue;
+                if (value is null) continue;
+                yield return DeserializeValue(key, value.Value);
+            }
+        }
+
+        foreach (var (key, value) in memTableSnapshot) {
             if (ct.IsCancellationRequested) yield break;
             if (key.StreamId != streamId.Value) continue;
             if (key.Revision < from) continue;
-            if (value is null) continue; // tombstone
+            if (value is null) continue;
             yield return DeserializeValue(key, value.Value);
         }
+    }
+
+    async ValueTask FlushAsync(CancellationToken ct) {
+        var sstPath = Path.Combine(_dataDirectory, $"{DateTimeOffset.UtcNow.Ticks:D19}.sst");
+        await using var stream = new FileStream(sstPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.Asynchronous);
+        await SstWriter.WriteAsync<EventKey>(_memTable, stream, cancellationToken: ct);
+        _sstFiles.Add(sstPath);
+
+        // TODO: rotate WAL — the flushed entries no longer need to be replayed on recovery
+        WalAppendDelegate walDelegate = (record, ct2) => _wal.TryAppendAsync(record, ct2);
+        _memTable = new MemTable<EventKey>(_memTableCapacityBytes, walDelegate);
     }
 
     bool CheckConcurrency(string streamId, StreamRevision expected) {
@@ -80,6 +134,16 @@ public sealed class EmbeddedMsspClient : IMsspClient, IDisposable {
         if (expected == StreamRevision.NoStream) return !exists;
         if (expected == StreamRevision.StreamExists) return exists;
         return exists && current == expected;
+    }
+
+    static List<(EventKey Key, ReadOnlyMemory<byte> Value)> Serialize(string streamId, ulong baseRevision, DateTimeOffset timestamp, IEnumerable<EventData> events) {
+        var result = new List<(EventKey, ReadOnlyMemory<byte>)>();
+        var offset = 0UL;
+        foreach (var @event in events) {
+            result.Add((new EventKey(streamId, baseRevision + offset), SerializeValue(@event, timestamp)));
+            offset++;
+        }
+        return result;
     }
 
     static ReadOnlyMemory<byte> SerializeValue(EventData @event, DateTimeOffset timestamp) {
