@@ -146,11 +146,12 @@ public sealed class EmbeddedMsspClient : IMsspClient, IDisposable {
             if (value is not null) max = key.Revision;
         }
 
+        var startKey = new EventKey(streamId, 0UL);
         foreach (var sstPath in _sstFiles) {
             using var stream = new FileStream(sstPath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096);
-            foreach (var (key, _) in new SstReader<EventKey>(stream).Scan()) {
-                if (key.StreamId == streamId)
-                    max = max.HasValue ? Math.Max(max.Value, key.Revision) : key.Revision;
+            foreach (var (key, _) in new SstReader<EventKey>(stream).Scan(startKey)) {
+                if (key.StreamId != streamId) break;
+                max = max.HasValue ? Math.Max(max.Value, key.Revision) : key.Revision;
             }
         }
 

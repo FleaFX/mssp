@@ -163,6 +163,73 @@ public class SstTests {
         }
     }
 
+    public class ScanFrom : SstTests {
+        [Fact]
+        public async Task EmptySst_YieldsNothing() {
+            var stream = await WriteAsync([]);
+            using var reader = new SstReader<StringKey>(stream);
+
+            reader.Scan(new StringKey("a")).Should().BeEmpty();
+        }
+
+        [Fact]
+        public async Task ScanFromExistingKey_IncludesThatKeyAndAfter() {
+            var stream = await WriteAsync([Entry("a", "1"), Entry("b", "2"), Entry("c", "3")]);
+            using var reader = new SstReader<StringKey>(stream);
+
+            reader.Scan(new StringKey("b"))
+                  .Select(kv => kv.Key.Value)
+                  .Should().Equal("b", "c");
+        }
+
+        [Fact]
+        public async Task ScanFromBetweenKeys_StartsAtNextKey() {
+            var stream = await WriteAsync([Entry("a", "1"), Entry("c", "3")]);
+            using var reader = new SstReader<StringKey>(stream);
+
+            reader.Scan(new StringKey("b"))
+                  .Should().ContainSingle(kv => kv.Key == new StringKey("c"));
+        }
+
+        [Fact]
+        public async Task ScanFromBeforeFirst_YieldsAll() {
+            var stream = await WriteAsync([Entry("b", "2"), Entry("c", "3")]);
+            using var reader = new SstReader<StringKey>(stream);
+
+            reader.Scan(new StringKey("a")).Should().HaveCount(2);
+        }
+
+        [Fact]
+        public async Task ScanFromAfterLast_YieldsNothing() {
+            var stream = await WriteAsync([Entry("a", "1"), Entry("b", "2")]);
+            using var reader = new SstReader<StringKey>(stream);
+
+            reader.Scan(new StringKey("c")).Should().BeEmpty();
+        }
+
+        [Fact]
+        public async Task ScanFromAcrossSparseIndexBoundary() {
+            // sparseInterval=2: blocks start at entries 0, 2, 4
+            var entries = Enumerable.Range(0, 6).Select(i => Entry(i.ToString("D3"), $"val{i}")).ToList();
+            var stream = await WriteAsync(entries, sparseInterval: 2);
+            using var reader = new SstReader<StringKey>(stream);
+
+            reader.Scan(new StringKey("003"))
+                  .Select(kv => kv.Key.Value)
+                  .Should().Equal("003", "004", "005");
+        }
+
+        [Fact]
+        public async Task TombstoneEntry_YieldsNullValue() {
+            var stream = await WriteAsync([Entry("a", "1"), Tombstone("b"), Entry("c", "3")]);
+            using var reader = new SstReader<StringKey>(stream);
+
+            var results = reader.Scan(new StringKey("b")).ToList();
+            results[0].Key.Should().Be(new StringKey("b"));
+            results[0].Value.Should().BeNull();
+        }
+    }
+
     public class Validation : SstTests {
         [Fact]
         public void InvalidMagic_ThrowsInvalidDataException() {

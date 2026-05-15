@@ -76,6 +76,20 @@ sealed class SstReader<TKey> : IDisposable where TKey : IKey<TKey> {
         }
     }
 
+    /// <summary>
+    /// Returns an enumerable that yields entries in ascending key order, starting from the first
+    /// entry with a key greater than or equal to <paramref name="from"/>.
+    /// </summary>
+    internal IEnumerable<KeyValuePair<TKey, ReadOnlyMemory<byte>?>> Scan(TKey from) {
+        var blockIndex = FindBlockIndex(from);
+        _stream.Seek(blockIndex >= 0 ? _index[blockIndex].DataOffset : 0L, SeekOrigin.Begin);
+        while (_stream.Position < _footer.IndexOffset) {
+            var (key, value) = ReadEntry();
+            if (key.CompareTo(from) < 0) continue;
+            yield return new(key, value);
+        }
+    }
+
     /// <inheritdoc/>
     public void Dispose() => _stream.Dispose();
 
