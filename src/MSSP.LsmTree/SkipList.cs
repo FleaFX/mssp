@@ -118,6 +118,32 @@ sealed class SkipList<TKey, TValue> : IDisposable, IEnumerable<KeyValuePair<TKey
         _lock.Dispose();
 
     /// <summary>
+    /// Returns an enumerable that yields entries in ascending key order, starting from the first key
+    /// greater than or equal to <paramref name="from"/>.
+    /// </summary>
+    /// <remarks>
+    /// The read lock is held for the entire duration of the enumeration. The same threading
+    /// constraints as <see cref="IEnumerable{T}.GetEnumerator"/> apply.
+    /// </remarks>
+    internal IEnumerable<KeyValuePair<TKey, TValue>> Scan(TKey from) {
+        _lock.EnterReadLock();
+        try {
+            var current = _head;
+            for (var i = _level - 1; i >= 0; i--) {
+                while (current.Next[i]?.Key!.CompareTo(from) < 0)
+                    current = current.Next[i]!;
+            }
+            current = current.Next[0];
+            while (current != null) {
+                yield return new(current.Key!, current.Value);
+                current = current.Next[0];
+            }
+        } finally {
+            _lock.ExitReadLock();
+        }
+    }
+
+    /// <summary>
     /// Returns an enumerator that yields all entries in ascending key order.
     /// </summary>
     /// <remarks>

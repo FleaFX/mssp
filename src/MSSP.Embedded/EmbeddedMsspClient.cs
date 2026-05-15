@@ -141,9 +141,9 @@ public sealed class EmbeddedMsspClient : IMsspClient, IDisposable {
     (bool exists, ulong revision) LookupCurrentRevision(string streamId) {
         ulong? max = null;
 
-        foreach (var (key, value) in _memTable) {
-            if (key.StreamId == streamId && value is not null)
-                max = max.HasValue ? Math.Max(max.Value, key.Revision) : key.Revision;
+        foreach (var (key, value) in _memTable.ScanFrom(new EventKey(streamId, 0UL))) {
+            if (key.StreamId != streamId) break;
+            if (value is not null) max = key.Revision;
         }
 
         foreach (var sstPath in _sstFiles) {

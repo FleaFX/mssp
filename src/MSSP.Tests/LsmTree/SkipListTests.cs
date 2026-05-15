@@ -118,6 +118,48 @@ public class SkipListTests : IDisposable {
         }
     }
 
+    public class Scan : SkipListTests {
+        [Fact]
+        public void EmptyList_YieldsNothing() =>
+            _skipList.Scan("b").Should().BeEmpty();
+
+        [Fact]
+        public void ScanFromExistingKey_IncludesThatKeyAndAfter() {
+            _skipList.Write("a", "1");
+            _skipList.Write("b", "2");
+            _skipList.Write("c", "3");
+
+            _skipList.Scan("b").Should().Equal(
+                new KeyValuePair<string, string>("b", "2"),
+                new KeyValuePair<string, string>("c", "3")
+            );
+        }
+
+        [Fact]
+        public void ScanFromBetweenKeys_StartsAtNextKey() {
+            _skipList.Write("a", "1");
+            _skipList.Write("c", "3");
+
+            _skipList.Scan("b").Should().ContainSingle(kv => kv.Key == "c");
+        }
+
+        [Fact]
+        public void ScanFromBeforeFirst_YieldsAll() {
+            _skipList.Write("b", "2");
+            _skipList.Write("c", "3");
+
+            _skipList.Scan("a").Should().HaveCount(2);
+        }
+
+        [Fact]
+        public void ScanFromAfterLast_YieldsNothing() {
+            _skipList.Write("a", "1");
+            _skipList.Write("b", "2");
+
+            _skipList.Scan("c").Should().BeEmpty();
+        }
+    }
+
     public class LargeScale : SkipListTests {
         [Fact]
         public void AllEntriesRetrievable_At65536Entries() {

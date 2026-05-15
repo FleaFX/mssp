@@ -161,6 +161,16 @@ sealed class MemTable<TKey>(int capacityBytes, WalAppendDelegate walAppend) :
     public void Dispose() => _data.Dispose();
 
     /// <summary>
+    /// Returns an enumerable that yields entries in ascending key order, starting from the first key
+    /// greater than or equal to <paramref name="from"/>.
+    /// </summary>
+    public IEnumerable<KeyValuePair<TKey, ReadOnlyMemory<byte>?>> ScanFrom(TKey from) =>
+        _data.Scan(from)
+             .Select(static pair => new KeyValuePair<TKey, ReadOnlyMemory<byte>?>(
+                 pair.Key,
+                 pair.Value.IsTombstone ? (ReadOnlyMemory<byte>?)null : pair.Value.Data));
+
+    /// <summary>
     /// Returns an enumerator that yields all entries in ascending key order.
     /// </summary>
     /// <remarks>

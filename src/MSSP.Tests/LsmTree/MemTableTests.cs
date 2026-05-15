@@ -243,6 +243,49 @@ public class MemTableTests : IDisposable {
         }
     }
 
+    public class ScanFrom : MemTableTests {
+        [Fact]
+        public void EmptyTable_YieldsNothing() =>
+            _memTable.ScanFrom(new StringKey("b")).Should().BeEmpty();
+
+        [Fact]
+        public async Task ScanFromExistingKey_IncludesThatKeyAndAfter() {
+            await _memTable.TryWriteAsync(new StringKey("a"), Bytes("1"));
+            await _memTable.TryWriteAsync(new StringKey("b"), Bytes("2"));
+            await _memTable.TryWriteAsync(new StringKey("c"), Bytes("3"));
+
+            _memTable.ScanFrom(new StringKey("b"))
+                     .Select(kv => kv.Key.Value)
+                     .Should().Equal("b", "c");
+        }
+
+        [Fact]
+        public async Task ScanFromBetweenKeys_StartsAtNextKey() {
+            await _memTable.TryWriteAsync(new StringKey("a"), Bytes("1"));
+            await _memTable.TryWriteAsync(new StringKey("c"), Bytes("3"));
+
+            _memTable.ScanFrom(new StringKey("b"))
+                     .Should().ContainSingle(kv => kv.Key == new StringKey("c"));
+        }
+
+        [Fact]
+        public async Task ScanFromAfterLast_YieldsNothing() {
+            await _memTable.TryWriteAsync(new StringKey("a"), Bytes("1"));
+
+            _memTable.ScanFrom(new StringKey("b")).Should().BeEmpty();
+        }
+
+        [Fact]
+        public async Task TombstonedKey_YieldsNullValue() {
+            await _memTable.TryDeleteAsync(new StringKey("a"));
+
+            var results = _memTable.ScanFrom(new StringKey("a")).ToList();
+            results.Should().ContainSingle();
+            results[0].Key.Should().Be(new StringKey("a"));
+            results[0].Value.Should().BeNull();
+        }
+    }
+
     public class CountTests : MemTableTests {
         [Fact]
         public void StartsAtZero() =>
