@@ -14,14 +14,16 @@ sealed class LsmStore<TKey> : IDisposable where TKey : IKey<TKey> {
 
     readonly string _dataDirectory;
     readonly int _capacityBytes;
+    readonly int _compactionThreshold;
     readonly WalAppendDelegate _walAppend;
     readonly MemTableFlushedDelegate _onFlushed;
     readonly List<string> _sstFiles;
     MemTable<TKey> _memTable;
 
-    LsmStore(string dataDirectory, int capacityBytes, List<string> sstFiles, WalAppendDelegate walAppend, MemTableFlushedDelegate onFlushed) {
+    LsmStore(string dataDirectory, int capacityBytes, int compactionThreshold, List<string> sstFiles, WalAppendDelegate walAppend, MemTableFlushedDelegate onFlushed) {
         _dataDirectory = dataDirectory;
         _capacityBytes = capacityBytes;
+        _compactionThreshold = compactionThreshold;
         _walAppend = walAppend;
         _onFlushed = onFlushed;
         _sstFiles = sstFiles;
@@ -34,7 +36,7 @@ sealed class LsmStore<TKey> : IDisposable where TKey : IKey<TKey> {
     /// </summary>
     internal static async ValueTask<LsmStore<TKey>> OpenAsync(LsmStoreOptions options, IAsyncEnumerable<ReadOnlyMemory<byte>> walRecords, CancellationToken ct) {
         var sstFiles = Directory.EnumerateFiles(options.DataDirectory, "*.sst").OrderBy(f => f).ToList();
-        var store = new LsmStore<TKey>(options.DataDirectory, options.CapacityBytes, sstFiles, options.WalAppend, options.OnFlushed);
+        var store = new LsmStore<TKey>(options.DataDirectory, options.CapacityBytes, options.CompactionThreshold, sstFiles, options.WalAppend, options.OnFlushed);
         await store.RecoverAsync(walRecords, ct);
         return store;
     }
@@ -109,12 +111,78 @@ sealed class LsmStore<TKey> : IDisposable where TKey : IKey<TKey> {
 
     async ValueTask FlushAsync(CancellationToken ct) {
         var sstPath = Path.Combine(_dataDirectory, $"{DateTimeOffset.UtcNow.Ticks:D19}.sst");
-        await using var sstStream = new FileStream(sstPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.Asynchronous);
-        await SstWriter.WriteAsync(_memTable, sstStream, cancellationToken: ct);
+        {
+            await using var sstStream = new FileStream(sstPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.Asynchronous);
+            await SstWriter.WriteAsync(_memTable, sstStream, cancellationToken: ct);
+        }
         _sstFiles.Add(sstPath);
 
         await _onFlushed(ct);
         _memTable = new MemTable<TKey>(_capacityBytes, _walAppend);
+
+        if (_sstFiles.Count >= _compactionThreshold)
+            await CompactAsync(ct);
+    }
+
+    /// <summary>
+    /// Merges all SST files into a single new SST file and removes the originals.
+    /// Writes to a <c>.sst.tmp</c> file first; the subsequent rename ensures that a crash
+    /// or cancellation mid-compaction leaves the original files intact.
+    /// </summary>
+    internal async ValueTask CompactAsync(CancellationToken ct) {
+        if (_sstFiles.Count < 2) return;
+
+        var readers = new List<SstReader<TKey>>(_sstFiles.Count);
+        try {
+            foreach (var path in _sstFiles)
+                readers.Add(new SstReader<TKey>(new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096)));
+
+            var tmpPath = Path.Combine(_dataDirectory, $"{DateTimeOffset.UtcNow.Ticks:D19}.sst.tmp");
+            {
+                await using var tmpStream = new FileStream(tmpPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.Asynchronous);
+                await SstWriter.WriteAsync(MergeAll(readers), tmpStream, cancellationToken: ct);
+            }
+
+            // Release file handles before renaming and deleting the source files.
+            foreach (var reader in readers) reader.Dispose();
+            readers.Clear();
+
+            var compactedPath = Path.ChangeExtension(tmpPath, ".sst");
+            File.Move(tmpPath, compactedPath);
+
+            var oldPaths = _sstFiles.ToList();
+            _sstFiles.Clear();
+            _sstFiles.Add(compactedPath);
+
+            foreach (var path in oldPaths)
+                File.Delete(path);
+        } finally {
+            foreach (var reader in readers)
+                reader.Dispose();
+        }
+    }
+
+    // K-way merge of pre-sorted SST readers using a min-heap. Keys are unique across files
+    // (event store invariant: (streamId, revision) pairs are immutable), so no deduplication needed.
+    static IEnumerable<KeyValuePair<TKey, ReadOnlyMemory<byte>?>> MergeAll(List<SstReader<TKey>> readers) {
+        var pq = new PriorityQueue<(KeyValuePair<TKey, ReadOnlyMemory<byte>?> Entry, IEnumerator<KeyValuePair<TKey, ReadOnlyMemory<byte>?>> Enumerator), TKey>();
+
+        foreach (var reader in readers) {
+            var enumerator = reader.Scan().GetEnumerator();
+            if (enumerator.MoveNext())
+                pq.Enqueue((enumerator.Current, enumerator), enumerator.Current.Key);
+            else
+                enumerator.Dispose();
+        }
+
+        while (pq.Count > 0) {
+            var (entry, enumerator) = pq.Dequeue();
+            yield return entry;
+            if (enumerator.MoveNext())
+                pq.Enqueue((enumerator.Current, enumerator), enumerator.Current.Key);
+            else
+                enumerator.Dispose();
+        }
     }
 
     /// <inheritdoc />

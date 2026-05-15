@@ -147,6 +147,73 @@ public class LsmStoreTests : IAsyncLifetime {
         }
     }
 
+    public class CompactAsyncTests : LsmStoreTests {
+        // Disable auto-compaction by default so tests can assert exact SST file counts.
+        new LsmStoreOptions Options(int capacityBytes = 4096, int compactionThreshold = int.MaxValue) =>
+            new(_dataDir, capacityBytes, AppendToWal, _ => ValueTask.CompletedTask, compactionThreshold);
+
+        [Fact]
+        public async Task NoOp_WhenFewerThanTwoSstFiles() {
+            await _store.WriteAsync(new StringKey("a"), Bytes("1"), default);
+
+            await _store.CompactAsync(default);
+
+            Directory.EnumerateFiles(_dataDir, "*.sst").Should().BeEmpty();
+            _store.ScanAllFrom(new StringKey("")).Select(e => e.Key.Value).Should().Equal("a");
+        }
+
+        [Fact]
+        public async Task MergesMultipleSstFilesIntoOne() {
+            // capacity 4: a,b→SST1 on write c; c,d→SST2 on write e; e in MemTable
+            var store = await LsmStore<StringKey>.OpenAsync(Options(4), Empty(), default);
+            await store.WriteAsync(new StringKey("a"), Bytes("1"), default);
+            await store.WriteAsync(new StringKey("b"), Bytes("2"), default);
+            await store.WriteAsync(new StringKey("c"), Bytes("3"), default);
+            await store.WriteAsync(new StringKey("d"), Bytes("4"), default);
+            await store.WriteAsync(new StringKey("e"), Bytes("5"), default);
+            Directory.EnumerateFiles(_dataDir, "*.sst").Should().HaveCount(2);
+
+            await store.CompactAsync(default);
+
+            Directory.EnumerateFiles(_dataDir, "*.sst").Should().HaveCount(1);
+            store.Dispose();
+        }
+
+        [Fact]
+        public async Task PreservesAllEntriesAfterCompaction() {
+            var store = await LsmStore<StringKey>.OpenAsync(Options(4), Empty(), default);
+            await store.WriteAsync(new StringKey("a"), Bytes("1"), default);
+            await store.WriteAsync(new StringKey("b"), Bytes("2"), default);
+            await store.WriteAsync(new StringKey("c"), Bytes("3"), default);
+            await store.WriteAsync(new StringKey("d"), Bytes("4"), default);
+            await store.WriteAsync(new StringKey("e"), Bytes("5"), default);
+
+            await store.CompactAsync(default);
+
+            store.ScanAllFrom(new StringKey(""))
+                 .Select(e => e.Key.Value)
+                 .Should().Equal("a", "b", "c", "d", "e");
+            store.Dispose();
+        }
+
+        [Fact]
+        public async Task AutoCompacts_WhenSstCountReachesThreshold() {
+            // capacity 4, threshold 2: a,b→SST1; c,d→SST2 triggers auto-compact→SST3; e in MemTable
+            var store = await LsmStore<StringKey>.OpenAsync(Options(4, compactionThreshold: 2), Empty(), default);
+            await store.WriteAsync(new StringKey("a"), Bytes("1"), default);
+            await store.WriteAsync(new StringKey("b"), Bytes("2"), default);
+            await store.WriteAsync(new StringKey("c"), Bytes("3"), default);
+            await store.WriteAsync(new StringKey("d"), Bytes("4"), default);
+            await store.WriteAsync(new StringKey("e"), Bytes("5"), default);
+
+            Directory.EnumerateFiles(_dataDir, "*.sst").Should().HaveCount(1);
+            store.ScanAllFrom(new StringKey(""))
+                 .Select(e => e.Key.Value)
+                 .Should().Equal("a", "b", "c", "d", "e");
+            store.Dispose();
+        }
+    }
+
     public class ScanSnapshotFromTests : LsmStoreTests {
         [Fact]
         public async Task ReturnsCurrentEntries() {
