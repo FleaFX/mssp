@@ -2,6 +2,12 @@ using System.Buffers.Binary;
 
 namespace MSSP.LsmTree;
 
+/// <summary>
+/// Invoked after each MemTable flush, e.g. to rotate the WAL so flushed records are no longer replayed on recovery.
+/// </summary>
+/// <param name="cancellationToken">Token to cancel the callback.</param>
+delegate ValueTask MemTableFlushedDelegate(CancellationToken cancellationToken);
+
 sealed class LsmStore<TKey> : IDisposable where TKey : IKey<TKey> {
     // Matches MemTable<TKey>.WriteMarker — both define the on-disk WAL record format.
     const byte WriteMarker = 0x01;
@@ -9,11 +15,11 @@ sealed class LsmStore<TKey> : IDisposable where TKey : IKey<TKey> {
     readonly string _dataDirectory;
     readonly int _capacityBytes;
     readonly WalAppendDelegate _walAppend;
-    readonly Func<CancellationToken, ValueTask> _onFlushed;
+    readonly MemTableFlushedDelegate _onFlushed;
     readonly List<string> _sstFiles;
     MemTable<TKey> _memTable;
 
-    LsmStore(string dataDirectory, int capacityBytes, List<string> sstFiles, WalAppendDelegate walAppend, Func<CancellationToken, ValueTask> onFlushed) {
+    LsmStore(string dataDirectory, int capacityBytes, List<string> sstFiles, WalAppendDelegate walAppend, MemTableFlushedDelegate onFlushed) {
         _dataDirectory = dataDirectory;
         _capacityBytes = capacityBytes;
         _walAppend = walAppend;
@@ -104,7 +110,7 @@ sealed class LsmStore<TKey> : IDisposable where TKey : IKey<TKey> {
     async ValueTask FlushAsync(CancellationToken ct) {
         var sstPath = Path.Combine(_dataDirectory, $"{DateTimeOffset.UtcNow.Ticks:D19}.sst");
         await using var sstStream = new FileStream(sstPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.Asynchronous);
-        await SstWriter.WriteAsync<TKey>(_memTable, sstStream, cancellationToken: ct);
+        await SstWriter.WriteAsync(_memTable, sstStream, cancellationToken: ct);
         _sstFiles.Add(sstPath);
 
         await _onFlushed(ct);

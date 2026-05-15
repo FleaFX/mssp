@@ -11,5 +11,5 @@ readonly record struct LsmStoreOptions(
     string DataDirectory,
     int CapacityBytes,
     WalAppendDelegate WalAppend,
-    Func<CancellationToken, ValueTask> OnFlushed
+    MemTableFlushedDelegate OnFlushed
 );
