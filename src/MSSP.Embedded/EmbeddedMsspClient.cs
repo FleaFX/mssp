@@ -16,17 +16,16 @@ public sealed class EmbeddedMsspClient : IMsspClient, IDisposable {
     readonly int _memTableCapacityBytes;
     StreamSegment<WalRecord> _wal;
     readonly SemaphoreSlim _writeLock = new(1, 1);
-    readonly Dictionary<string, ulong> _streamRevisions;
+    readonly Dictionary<string, ulong> _streamRevisions = new();
     readonly List<string> _sstFiles;
     MemTable<EventKey> _memTable;
 
-    EmbeddedMsspClient(string dataDirectory, int memTableCapacityBytes, StreamSegment<WalRecord> wal, MemTable<EventKey> memTable, List<string> sstFiles, Dictionary<string, ulong> streamRevisions) {
+    EmbeddedMsspClient(string dataDirectory, int memTableCapacityBytes, StreamSegment<WalRecord> wal, MemTable<EventKey> memTable, List<string> sstFiles) {
         _dataDirectory = dataDirectory;
         _memTableCapacityBytes = memTableCapacityBytes;
         _wal = wal;
         _memTable = memTable;
         _sstFiles = sstFiles;
-        _streamRevisions = streamRevisions;
     }
 
     /// <summary>
@@ -50,9 +49,9 @@ public sealed class EmbeddedMsspClient : IMsspClient, IDisposable {
         var wal = new StreamSegment<WalRecord>(walStream);
         var memTable = new MemTable<EventKey>(memTableCapacityBytes, WalAppendDelegate);
 
-        var streamRevisions = await ReplayWalAsync(wal, sstRevisions, memTable, ct);
+        await ReplayWalAsync(wal, sstRevisions, memTable, ct);
 
-        return new EmbeddedMsspClient(dataDirectory, memTableCapacityBytes, wal, memTable, sstFiles, streamRevisions);
+        return new EmbeddedMsspClient(dataDirectory, memTableCapacityBytes, wal, memTable, sstFiles);
 
         ValueTask<bool> WalAppendDelegate(ReadOnlyMemory<byte> record, CancellationToken cancelToken) =>
             wal.TryAppendAsync(record, cancelToken);
@@ -62,6 +61,11 @@ public sealed class EmbeddedMsspClient : IMsspClient, IDisposable {
     public async ValueTask AppendAsync(StreamId streamId, StreamRevision expectedRevision, IEnumerable<EventData> events, CancellationToken ct = default) {
         await _writeLock.WaitAsync(ct);
         try {
+            if (!_streamRevisions.ContainsKey(streamId.Value)) {
+                var (exists, revision) = LookupCurrentRevision(streamId.Value);
+                if (exists) _streamRevisions[streamId.Value] = revision;
+            }
+
             if (!CheckConcurrency(streamId.Value, expectedRevision))
                 throw new OptimisticConcurrencyException(streamId, expectedRevision);
 
@@ -134,6 +138,25 @@ public sealed class EmbeddedMsspClient : IMsspClient, IDisposable {
         _memTable = new MemTable<EventKey>(_memTableCapacityBytes, (record, ct2) => _wal.TryAppendAsync(record, ct2));
     }
 
+    (bool exists, ulong revision) LookupCurrentRevision(string streamId) {
+        ulong? max = null;
+
+        foreach (var (key, value) in _memTable) {
+            if (key.StreamId == streamId && value is not null)
+                max = max.HasValue ? Math.Max(max.Value, key.Revision) : key.Revision;
+        }
+
+        foreach (var sstPath in _sstFiles) {
+            using var stream = new FileStream(sstPath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096);
+            foreach (var (key, _) in new SstReader<EventKey>(stream).Scan()) {
+                if (key.StreamId == streamId)
+                    max = max.HasValue ? Math.Max(max.Value, key.Revision) : key.Revision;
+            }
+        }
+
+        return (max.HasValue, max ?? 0UL);
+    }
+
     bool CheckConcurrency(string streamId, StreamRevision expected) {
         var exists = _streamRevisions.TryGetValue(streamId, out var current);
         if (expected == StreamRevision.Any) return true;
@@ -156,9 +179,7 @@ public sealed class EmbeddedMsspClient : IMsspClient, IDisposable {
         return revisions;
     }
 
-    static async ValueTask<Dictionary<string, ulong>> ReplayWalAsync(StreamSegment<WalRecord> wal, Dictionary<string, ulong> sstRevisions, MemTable<EventKey> memTable, CancellationToken ct) {
-        var streamRevisions = new Dictionary<string, ulong>(sstRevisions);
-
+    static async ValueTask ReplayWalAsync(StreamSegment<WalRecord> wal, Dictionary<string, ulong> sstRevisions, MemTable<EventKey> memTable, CancellationToken ct) {
         await foreach (var record in wal.WithCancellation(ct)) {
             ReadOnlyMemory<byte> bytes = record;
             var span = bytes.Span;
@@ -166,14 +187,9 @@ public sealed class EmbeddedMsspClient : IMsspClient, IDisposable {
 
             EventKey key = bytes.Slice(5, BinaryPrimitives.ReadInt32LittleEndian(span[1..]));
 
-            if (!streamRevisions.TryGetValue(key.StreamId, out var current) || key.Revision > current)
-                streamRevisions[key.StreamId] = key.Revision;
-
             if (!sstRevisions.TryGetValue(key.StreamId, out var sstMax) || key.Revision > sstMax)
                 memTable.ApplyRecord(bytes);
         }
-
-        return streamRevisions;
     }
 
     /// <inheritdoc/>
