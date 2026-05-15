@@ -7,7 +7,7 @@ namespace MSSP.Log;
 class LogIndex : IDisposable, IAsyncEnumerable<Index> {
     readonly Index[] _table;
 
-    delegate void IndexAdvancedHandler(object sender, Index head);
+    delegate void IndexAdvancedHandler(object sender, Index newCount);
     event IndexAdvancedHandler? IndexAdvanced;
 
     Range _range;
@@ -61,10 +61,10 @@ class LogIndex : IDisposable, IAsyncEnumerable<Index> {
     }
 
     /// <summary>
-    /// Removes entries from the index.
+    /// Removes entries from the index, retaining only the first <paramref name="length"/> entries.
     /// </summary>
-    /// <param name="to">Optional <see cref="Index"/> to truncate to. This will be the last index in the table. If omitted, the entire table will be emptied.</param>
-    public void Truncate(Index to = default) => _range = new Range(0, to);
+    /// <param name="length">The number of entries to keep (exclusive end of the new range). If omitted, the entire table will be emptied.</param>
+    public void Truncate(Index length = default) => _range = new Range(0, length);
 
     /// <inheritdoc/>
     public void Dispose() => ArrayPool<Index>.Shared.Return(_table, true);
@@ -94,7 +94,7 @@ class LogIndex : IDisposable, IAsyncEnumerable<Index> {
                     h => IndexAdvanced += h
                     , h => IndexAdvanced -= h
                     , cancellationToken)
-                .Where(head => head.Value >= index.Value)
+                .Where(newCount => newCount.Value > index.Value)
                 .Select(_ => _table[index])
                 .FirstOrDefaultAsync(cancellationToken);
 }

@@ -7,7 +7,7 @@ public readonly struct StreamId(string value) {
     /// <summary>
     /// Gets the string value of this stream identifier.
     /// </summary>
-    public string Value { get; } = value;
+    public string Value { get; } = !string.IsNullOrEmpty(value) ? value : throw new ArgumentNullException(nameof(value));
 
     /// <summary>
     /// Implicitly converts a <see cref="string"/> to a <see cref="StreamId"/>.

@@ -9,8 +9,9 @@ namespace MSSP.LsmTree;
 delegate ValueTask MemTableFlushedDelegate(CancellationToken cancellationToken);
 
 sealed class LsmStore<TKey> : IDisposable where TKey : IKey<TKey> {
-    // Matches MemTable<TKey>.WriteMarker — both define the on-disk WAL record format.
+    // Both constants match MemTable<TKey> — they share the on-disk WAL record format.
     const byte WriteMarker = 0x01;
+    const byte TombstoneMarker = 0x02;
 
     readonly string _dataDirectory;
     readonly int _capacityBytes;
@@ -35,6 +36,9 @@ sealed class LsmStore<TKey> : IDisposable where TKey : IKey<TKey> {
     /// then replays any WAL records not yet reflected in the SST files.
     /// </summary>
     internal static async ValueTask<LsmStore<TKey>> OpenAsync(LsmStoreOptions options, IAsyncEnumerable<ReadOnlyMemory<byte>> walRecords, CancellationToken ct) {
+        if (options.CapacityBytes <= 0)
+            throw new ArgumentOutOfRangeException(nameof(options), $"{nameof(LsmStoreOptions.CapacityBytes)} must be positive.");
+
         var sstFiles = Directory.EnumerateFiles(options.DataDirectory, "*.sst").OrderBy(f => f).ToList();
         var store = new LsmStore<TKey>(options.DataDirectory, options.CapacityBytes, options.CompactionThreshold, sstFiles, options.WalAppend, options.OnFlushed);
         await store.RecoverAsync(walRecords, ct);
@@ -63,8 +67,8 @@ sealed class LsmStore<TKey> : IDisposable where TKey : IKey<TKey> {
     /// </summary>
     internal IEnumerable<KeyValuePair<TKey, ReadOnlyMemory<byte>?>> ScanAllFrom(TKey from) {
         foreach (var sstPath in _sstFiles) {
-            using var stream = new FileStream(sstPath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096);
-            foreach (var entry in new SstReader<TKey>(stream).Scan(from))
+            using var reader = new SstReader<TKey>(new FileStream(sstPath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096));
+            foreach (var entry in reader.Scan(from))
                 yield return entry;
         }
         foreach (var entry in _memTable.ScanFrom(from))
@@ -80,8 +84,8 @@ sealed class LsmStore<TKey> : IDisposable where TKey : IKey<TKey> {
         var memTable = _memTable;
 
         foreach (var sstPath in sstFiles) {
-            using var stream = new FileStream(sstPath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096);
-            foreach (var entry in new SstReader<TKey>(stream).Scan(from))
+            using var reader = new SstReader<TKey>(new FileStream(sstPath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096));
+            foreach (var entry in reader.Scan(from))
                 yield return entry;
         }
 
@@ -95,26 +99,38 @@ sealed class LsmStore<TKey> : IDisposable where TKey : IKey<TKey> {
     internal async ValueTask RecoverAsync(IAsyncEnumerable<ReadOnlyMemory<byte>> walRecords, CancellationToken ct) {
         var sstKeys = new HashSet<TKey>();
         foreach (var sstPath in _sstFiles) {
-            await using var stream = new FileStream(sstPath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096);
-            foreach (var (key, _) in new SstReader<TKey>(stream).Scan())
+            using var reader = new SstReader<TKey>(new FileStream(sstPath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096));
+            foreach (var (key, _) in reader.Scan())
                 sstKeys.Add(key);
         }
 
         await foreach (var bytes in walRecords.WithCancellation(ct)) {
             var span = bytes.Span;
-            if (span.Length < 5 || span[0] != WriteMarker) continue;
-            TKey key = bytes.Slice(5, BinaryPrimitives.ReadInt32LittleEndian(span[1..]));
+            if (span.Length < 5) continue;
+            var keyLen = BinaryPrimitives.ReadInt32LittleEndian(span[1..]);
+            if (keyLen < 0 || 5 + keyLen > span.Length) continue;
+
+            if (span[0] == TombstoneMarker) {
+                // Deletes that occurred after the last flush are not in any SST; always replay.
+                _memTable.ApplyRecord(bytes);
+                continue;
+            }
+
+            if (span[0] != WriteMarker) continue;
+            TKey key = bytes.Slice(5, keyLen);
             if (!sstKeys.Contains(key))
                 _memTable.ApplyRecord(bytes);
         }
     }
 
     async ValueTask FlushAsync(CancellationToken ct) {
-        var sstPath = Path.Combine(_dataDirectory, $"{DateTimeOffset.UtcNow.Ticks:D19}.sst");
+        var tmpPath = Path.Combine(_dataDirectory, $"{DateTimeOffset.UtcNow.Ticks:D19}.sst.tmp");
         {
-            await using var sstStream = new FileStream(sstPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.Asynchronous);
+            await using var sstStream = new FileStream(tmpPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.Asynchronous);
             await SstWriter.WriteAsync(_memTable, sstStream, cancellationToken: ct);
         }
+        var sstPath = Path.ChangeExtension(tmpPath, ".sst");
+        File.Move(tmpPath, sstPath);
         _sstFiles.Add(sstPath);
 
         await _onFlushed(ct);
@@ -175,13 +191,19 @@ sealed class LsmStore<TKey> : IDisposable where TKey : IKey<TKey> {
                 enumerator.Dispose();
         }
 
-        while (pq.Count > 0) {
-            var (entry, enumerator) = pq.Dequeue();
-            yield return entry;
-            if (enumerator.MoveNext())
-                pq.Enqueue((enumerator.Current, enumerator), enumerator.Current.Key);
-            else
-                enumerator.Dispose();
+        try {
+            while (pq.Count > 0) {
+                var (entry, enumerator) = pq.Dequeue();
+                yield return entry;
+                if (enumerator.MoveNext())
+                    pq.Enqueue((enumerator.Current, enumerator), enumerator.Current.Key);
+                else
+                    enumerator.Dispose();
+            }
+        } finally {
+            // Dispose enumerators that remain queued if iteration was abandoned early.
+            while (pq.TryDequeue(out var item, out _))
+                item.Enumerator.Dispose();
         }
     }
 

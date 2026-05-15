@@ -32,6 +32,9 @@ sealed class WalManager : IDisposable {
     /// Called after a MemTable flush so replayed records on next open don't include already-flushed data.
     /// </summary>
     internal ValueTask RotateAsync(CancellationToken ct) {
+        // FileShare.None prevents opening the new stream before closing the old one,
+        // so we dispose first. On failure to reopen, _wal is left as the disposed segment;
+        // any subsequent append will fail with ObjectDisposedException, signalling the broken state.
         _wal.Dispose();
         var walStream = new FileStream(_walPath, FileMode.Create, FileAccess.ReadWrite, FileShare.None,
             bufferSize: 4096, FileOptions.WriteThrough | FileOptions.Asynchronous);

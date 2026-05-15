@@ -146,11 +146,23 @@ sealed class SstReader<TKey> : IDisposable where TKey : IKey<TKey> {
         if (!buf[..8].SequenceEqual(Sst.Magic))
             throw new InvalidDataException("Not a valid SST file.");
 
-        return new Footer(
+        var footer = new Footer(
             IndexOffset: BinaryPrimitives.ReadInt64LittleEndian(buf[8..]),
             EntryCount: BinaryPrimitives.ReadInt32LittleEndian(buf[16..]),
             IndexEntryCount: BinaryPrimitives.ReadInt32LittleEndian(buf[20..]),
             SparseInterval: BinaryPrimitives.ReadInt32LittleEndian(buf[24..]));
+
+        var dataSize = input.Length - Sst.FooterSize;
+        if (footer.IndexOffset < 0 || footer.IndexOffset > dataSize)
+            throw new InvalidDataException($"SST footer has invalid index offset {footer.IndexOffset}.");
+        if (footer.EntryCount < 0)
+            throw new InvalidDataException($"SST footer has negative entry count {footer.EntryCount}.");
+        if (footer.IndexEntryCount < 0)
+            throw new InvalidDataException($"SST footer has negative index entry count {footer.IndexEntryCount}.");
+        if (footer.SparseInterval <= 0)
+            throw new InvalidDataException($"SST footer has invalid sparse interval {footer.SparseInterval}.");
+
+        return footer;
     }
 
     static IndexEntry[] ReadIndex(Stream input, Footer footer) {
