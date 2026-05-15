@@ -8,11 +8,14 @@ namespace MSSP.Embedded;
 /// </summary>
 public sealed class EmbeddedMsspClient : IMsspClient, IDisposable {
     readonly SemaphoreSlim _writeLock = new(1, 1);
-    readonly LsmStore _store;
     readonly RevisionIndex _revisions = new();
+    readonly LsmStore<EventKey> _store;
+    readonly WalManager _wal;
 
-    EmbeddedMsspClient(LsmStore store) =>
+    EmbeddedMsspClient(LsmStore<EventKey> store, WalManager wal) {
         _store = store;
+        _wal = wal;
+    }
 
     /// <summary>
     /// Opens or creates an embedded event store at the given <paramref name="dataDirectory"/>,
@@ -22,15 +25,20 @@ public sealed class EmbeddedMsspClient : IMsspClient, IDisposable {
     /// <param name="memTableCapacityBytes">The maximum size of the in-memory write buffer before it is flushed to an SST file.</param>
     /// <param name="ct">Token to cancel the open operation.</param>
     /// <returns>An <see cref="EmbeddedMsspClient"/> ready for use.</returns>
-    public static async ValueTask<EmbeddedMsspClient> OpenAsync(string dataDirectory, int memTableCapacityBytes = 64 * 1024 * 1024, CancellationToken ct = default) =>
-        new(await LsmStore.OpenAsync(dataDirectory, memTableCapacityBytes, ct));
+    public static async ValueTask<EmbeddedMsspClient> OpenAsync(string dataDirectory, int memTableCapacityBytes = 64 * 1024 * 1024, CancellationToken ct = default) {
+        Directory.CreateDirectory(dataDirectory);
+        var wal = WalManager.Open(dataDirectory);
+        var options = new LsmStoreOptions(dataDirectory, memTableCapacityBytes, wal.AppendAsync, wal.RotateAsync);
+        var store = await LsmStore<EventKey>.OpenAsync(options, wal.ReadAllAsync(ct), ct);
+        return new EmbeddedMsspClient(store, wal);
+    }
 
     /// <inheritdoc/>
     public async ValueTask AppendAsync(StreamId streamId, StreamRevision expectedRevision, IEnumerable<EventData> events, CancellationToken ct = default) {
         await _writeLock.WaitAsync(ct);
         try {
             if (!_revisions.Contains(streamId.Value)) {
-                var (exists, revision) = _store.LookupCurrentRevision(streamId.Value);
+                var (exists, revision) = LookupCurrentRevision(streamId.Value);
                 if (exists) _revisions.Set(streamId.Value, revision);
             }
 
@@ -54,35 +62,39 @@ public sealed class EmbeddedMsspClient : IMsspClient, IDisposable {
 
     /// <inheritdoc/>
     public async IAsyncEnumerable<RecordedEvent> ReadAsync(StreamId streamId, StreamRevision from = default, [EnumeratorCancellation] CancellationToken ct = default) {
-        string[] sstFiles;
-        MemTable<EventKey> memTable;
+        IEnumerable<KeyValuePair<EventKey, ReadOnlyMemory<byte>?>> scan;
+        var startKey = new EventKey(streamId.Value, 0UL);
 
         await _writeLock.WaitAsync(ct);
         try {
-            (sstFiles, memTable) = _store.TakeSnapshot();
+            scan = _store.ScanSnapshotFrom(startKey);
         } finally {
             _writeLock.Release();
         }
 
-        foreach (var sstPath in sstFiles) {
-            if (ct.IsCancellationRequested) yield break;
-            using var stream = new FileStream(sstPath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.Asynchronous);
-            foreach (var (key, value) in new SstReader<EventKey>(stream).Scan()) {
-                if (key.StreamId != streamId.Value || key.Revision < from || value is null) continue;
-                yield return ((EventValue)value.Value).ToRecordedEvent(key);
-            }
-        }
-
-        foreach (var (key, value) in memTable) {
+        foreach (var (key, value) in scan) {
             if (ct.IsCancellationRequested) yield break;
             if (key.StreamId != streamId.Value || key.Revision < from || value is null) continue;
             yield return ((EventValue)value.Value).ToRecordedEvent(key);
         }
     }
 
+    (bool exists, ulong revision) LookupCurrentRevision(string streamId) {
+        ulong? max = null;
+        var startKey = new EventKey(streamId, 0UL);
+
+        foreach (var (key, _) in _store.ScanAllFrom(startKey)) {
+            if (key.StreamId != streamId) break;
+            max = key.Revision;
+        }
+
+        return (max.HasValue, max ?? 0UL);
+    }
+
     /// <inheritdoc/>
     public void Dispose() {
         _writeLock.Dispose();
         _store.Dispose();
+        _wal.Dispose();
     }
 }

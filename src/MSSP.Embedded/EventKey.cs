@@ -23,6 +23,15 @@ readonly struct EventKey(string streamId, ulong revision) : IKey<EventKey> {
     public ulong Revision { get; } = revision;
 
     /// <inheritdoc/>
+    public bool Equals(EventKey other) => StreamId == other.StreamId && Revision == other.Revision;
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj) => obj is EventKey other && Equals(other);
+
+    /// <inheritdoc/>
+    public override int GetHashCode() => HashCode.Combine(StreamId, Revision);
+
+    /// <inheritdoc/>
     public int CompareTo(EventKey other) {
         var streamCompare = string.Compare(StreamId, other.StreamId, StringComparison.Ordinal);
         return streamCompare != 0 ? streamCompare : Revision.CompareTo(other.Revision);
