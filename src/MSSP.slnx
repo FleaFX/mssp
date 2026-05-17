@@ -3,9 +3,20 @@
     <File Path="../.editorconfig" />
   </Folder>
   <Project Path="MSSP/MSSP.csproj" />
-  <Project Path="MSSP.Embedded/MSSP.Embedded.csproj" />
-  <Project Path="MSSP.Tests/MSSP.Tests.csproj" />
-  <Project Path="MSSP.Log/MSSP.Log.csproj" />
-  <Project Path="MSSP.LsmTree/MSSP.LsmTree.csproj" />
-  <Project Path="MSSP.BloomFilters/MSSP.BloomFilters.csproj" />
+  <Folder Name="/Storage/">
+    <Project Path="MSSP.Log/MSSP.Log.csproj" />
+    <Project Path="MSSP.LsmTree/MSSP.LsmTree.csproj" />
+    <Project Path="MSSP.BloomFilters/MSSP.BloomFilters.csproj" />
+  </Folder>
+  <Folder Name="/Embedded/">
+    <Project Path="MSSP.Embedded/MSSP.Embedded.csproj" />
+  </Folder>
+  <Folder Name="/Network/">
+    <Project Path="MSSP.Grpc/MSSP.Grpc.csproj" />
+    <Project Path="MSSP.Server/MSSP.Server.csproj" />
+    <Project Path="MSSP.Client/MSSP.Client.csproj" />
+  </Folder>
+  <Folder Name="/Tests/">
+    <Project Path="MSSP.Tests/MSSP.Tests.csproj" />
+  </Folder>
 </Solution>
