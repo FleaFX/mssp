@@ -74,7 +74,8 @@ public sealed class EmbeddedMsspClient : IMsspClient, IDisposable {
 
         foreach (var (key, value) in scan) {
             if (ct.IsCancellationRequested) yield break;
-            if (key.StreamId != streamId.Value || key.Revision < from || value is null) continue;
+            if (key.StreamId != streamId.Value) break;
+            if (key.Revision < from || value is null) continue;
             yield return ((EventValue)value.Value).ToRecordedEvent(key);
         }
     }
