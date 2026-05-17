@@ -24,6 +24,8 @@ public sealed class MsspGrpcService(IMsspClient client) : MsspBase {
     /// the expected revision, or with <see cref="StatusCode.InvalidArgument"/> when the revision value is invalid.
     /// </exception>
     public override async Task<AppendResponse> Append(AppendRequest request, ServerCallContext context) {
+        if (string.IsNullOrEmpty(request.StreamId))
+            throw new RpcException(new Status(StatusCode.InvalidArgument, "stream_id is required."));
         try {
             await client.AppendAsync(
                 new StreamId(request.StreamId),
@@ -43,6 +45,8 @@ public sealed class MsspGrpcService(IMsspClient client) : MsspBase {
     /// <param name="responseStream">The server stream writer to which recorded events are written in order.</param>
     /// <param name="context">The gRPC server call context.</param>
     public override async Task Read(ReadRequest request, IServerStreamWriter<GrpcRecordedEvent> responseStream, ServerCallContext context) {
+        if (string.IsNullOrEmpty(request.StreamId))
+            throw new RpcException(new Status(StatusCode.InvalidArgument, "stream_id is required."));
         await foreach (var e in client.ReadAsync(new StreamId(request.StreamId), (StreamRevision)request.FromRevision, context.CancellationToken)) {
             await responseStream.WriteAsync(new GrpcRecordedEvent {
                 StreamId = e.StreamId.Value,
