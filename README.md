@@ -44,6 +44,37 @@ await foreach (var e in client.ReadAsync(new StreamId("order-123")))
 
 `AppendAsync` throws `OptimisticConcurrencyException` when the actual stream revision does not match `expectedRevision`. Pass a specific `ulong` revision to implement optimistic locking.
 
+## Getting started (client-server)
+
+To run MSSP as a standalone server, add the server package to an ASP.NET Core application:
+
+```
+dotnet add package MSSP.Embedded
+dotnet add package MSSP.Server
+```
+
+```csharp
+// Program.cs (server)
+builder.Services.AddMssp(options => options.DataDirectory = "./data")
+                .AddServer();
+
+app.UseMssp();
+```
+
+On the client side, install the client package:
+
+```
+dotnet add package MSSP.Client
+```
+
+```csharp
+// Program.cs (client)
+builder.Services.AddMssp(options =>
+    options.Address = new Uri("https://my-mssp-server:5001"));
+```
+
+Both server and client expose `IMsspClient` — the usage code is identical to the embedded example above.
+
 ## Architecture
 
 MSSP is built on two foundational components:
@@ -63,6 +94,7 @@ Events are stored in a log-structured merge tree:
 - [x] Embedded event store (WAL + LSM, optimistic concurrency, recovery)
 - [x] Bloom filters (`.bf` sidecar per SST file, opt-in via `BloomFilteredSstAccess<TKey>`)
 - [x] Range queries in SkipList (`Scan(TKey from)` positions in O(log n) via skip list levels)
+- [x] Client-server mode (gRPC, contract-first; `MSSP.Server` + `MSSP.Client`)
 - [ ] Cluster mode (Raft consensus)
 
 ## Building

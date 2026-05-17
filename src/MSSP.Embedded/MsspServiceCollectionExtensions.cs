@@ -16,13 +16,13 @@ public static class MsspServiceCollectionExtensions {
     /// <param name="configure">
     /// A delegate that configures the <see cref="MsspOptions"/>.
     /// </param>
-    public static IServiceCollection AddMssp(this IServiceCollection services, Action<MsspOptions> configure) {
+    public static MsspBuilder AddMssp(this IServiceCollection services, Action<MsspOptions> configure) {
         var options = new MsspOptions();
         configure(options);
         services.AddSingleton(options);
         services.AddSingleton<MsspHostedService>();
         services.AddSingleton<IMsspClient>(sp => sp.GetRequiredService<MsspHostedService>().Client);
         services.AddHostedService(sp => sp.GetRequiredService<MsspHostedService>());
-        return services;
+        return new MsspBuilder(services);
     }
 }

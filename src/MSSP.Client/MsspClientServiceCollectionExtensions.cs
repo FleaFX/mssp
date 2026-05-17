@@ -17,11 +17,11 @@ public static class MsspClientServiceCollectionExtensions {
     /// <param name="configure">
     /// A delegate that configures the <see cref="MsspClientOptions"/>.
     /// </param>
-    public static IServiceCollection AddMssp(this IServiceCollection services, Action<MsspClientOptions> configure) {
+    public static MsspBuilder AddMssp(this IServiceCollection services, Action<MsspClientOptions> configure) {
         var options = new MsspClientOptions();
         configure(options);
         services.AddSingleton(_ => GrpcChannel.ForAddress(options.Address));
         services.AddSingleton<IMsspClient>(sp => new RemoteMsspClient(new MsspGrpcClient(sp.GetRequiredService<GrpcChannel>())));
-        return services;
+        return new MsspBuilder(services);
     }
 }
