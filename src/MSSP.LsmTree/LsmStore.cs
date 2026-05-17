@@ -18,29 +18,32 @@ sealed class LsmStore<TKey> : IDisposable where TKey : IKey<TKey> {
     readonly int _compactionThreshold;
     readonly WalAppendDelegate _walAppend;
     readonly MemTableFlushedDelegate _onFlushed;
+    readonly ISstAccess<TKey> _sst;
     readonly List<string> _sstFiles;
     MemTable<TKey> _memTable;
 
-    LsmStore(string dataDirectory, int capacityBytes, int compactionThreshold, List<string> sstFiles, WalAppendDelegate walAppend, MemTableFlushedDelegate onFlushed) {
+    LsmStore(string dataDirectory, int capacityBytes, int compactionThreshold, List<string> sstFiles, WalAppendDelegate walAppend, MemTableFlushedDelegate onFlushed, ISstAccess<TKey> sst) {
         _dataDirectory = dataDirectory;
         _capacityBytes = capacityBytes;
         _compactionThreshold = compactionThreshold;
         _walAppend = walAppend;
         _onFlushed = onFlushed;
+        _sst = sst;
         _sstFiles = sstFiles;
         _memTable = new MemTable<TKey>(capacityBytes, walAppend);
     }
 
     /// <summary>
-    /// Opens or creates a <see cref="LsmStore{TKey}"/> at <see cref="LsmStoreOptions.DataDirectory"/>,
+    /// Opens or creates a <see cref="LsmStore{TKey}"/> at <see cref="LsmStoreOptions{TKey}.DataDirectory"/>,
     /// then replays any WAL records not yet reflected in the SST files.
     /// </summary>
-    internal static async ValueTask<LsmStore<TKey>> OpenAsync(LsmStoreOptions options, IAsyncEnumerable<ReadOnlyMemory<byte>> walRecords, CancellationToken ct) {
+    internal static async ValueTask<LsmStore<TKey>> OpenAsync(LsmStoreOptions<TKey> options, IAsyncEnumerable<ReadOnlyMemory<byte>> walRecords, CancellationToken ct) {
         if (options.CapacityBytes <= 0)
-            throw new ArgumentOutOfRangeException(nameof(options), $"{nameof(LsmStoreOptions.CapacityBytes)} must be positive.");
+            throw new ArgumentOutOfRangeException(nameof(options), $"{nameof(LsmStoreOptions<TKey>.CapacityBytes)} must be positive.");
 
         var sstFiles = Directory.EnumerateFiles(options.DataDirectory, "*.sst").OrderBy(f => f).ToList();
-        var store = new LsmStore<TKey>(options.DataDirectory, options.CapacityBytes, options.CompactionThreshold, sstFiles, options.WalAppend, options.OnFlushed);
+        var sst = options.SstAccess ?? DefaultSstAccess<TKey>.Instance;
+        var store = new LsmStore<TKey>(options.DataDirectory, options.CapacityBytes, options.CompactionThreshold, sstFiles, options.WalAppend, options.OnFlushed, sst);
         await store.RecoverAsync(walRecords, ct);
         return store;
     }
@@ -67,7 +70,7 @@ sealed class LsmStore<TKey> : IDisposable where TKey : IKey<TKey> {
     /// </summary>
     internal IEnumerable<KeyValuePair<TKey, ReadOnlyMemory<byte>?>> ScanAllFrom(TKey from) {
         foreach (var sstPath in _sstFiles) {
-            using var reader = new SstReader<TKey>(new FileStream(sstPath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096));
+            using var reader = _sst.OpenReader(sstPath);
             foreach (var entry in reader.Scan(from))
                 yield return entry;
         }
@@ -84,7 +87,7 @@ sealed class LsmStore<TKey> : IDisposable where TKey : IKey<TKey> {
         var memTable = _memTable;
 
         foreach (var sstPath in sstFiles) {
-            using var reader = new SstReader<TKey>(new FileStream(sstPath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096));
+            using var reader = _sst.OpenReader(sstPath);
             foreach (var entry in reader.Scan(from))
                 yield return entry;
         }
@@ -99,7 +102,7 @@ sealed class LsmStore<TKey> : IDisposable where TKey : IKey<TKey> {
     internal async ValueTask RecoverAsync(IAsyncEnumerable<ReadOnlyMemory<byte>> walRecords, CancellationToken ct) {
         var sstKeys = new HashSet<TKey>();
         foreach (var sstPath in _sstFiles) {
-            using var reader = new SstReader<TKey>(new FileStream(sstPath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096));
+            using var reader = _sst.OpenReader(sstPath);
             foreach (var (key, _) in reader.Scan())
                 sstKeys.Add(key);
         }
@@ -124,13 +127,8 @@ sealed class LsmStore<TKey> : IDisposable where TKey : IKey<TKey> {
     }
 
     async ValueTask FlushAsync(CancellationToken ct) {
-        var tmpPath = Path.Combine(_dataDirectory, $"{DateTimeOffset.UtcNow.Ticks:D19}.sst.tmp");
-        {
-            await using var sstStream = new FileStream(tmpPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.Asynchronous);
-            await SstWriter.WriteAsync(_memTable, sstStream, cancellationToken: ct);
-        }
-        var sstPath = Path.ChangeExtension(tmpPath, ".sst");
-        File.Move(tmpPath, sstPath);
+        var sstPath = Path.Combine(_dataDirectory, $"{DateTimeOffset.UtcNow.Ticks:D19}.sst");
+        await _sst.WriteAsync(_memTable, sstPath, ct);
         _sstFiles.Add(sstPath);
 
         await _onFlushed(ct);
@@ -142,36 +140,28 @@ sealed class LsmStore<TKey> : IDisposable where TKey : IKey<TKey> {
 
     /// <summary>
     /// Merges all SST files into a single new SST file and removes the originals.
-    /// Writes to a <c>.sst.tmp</c> file first; the subsequent rename ensures that a crash
-    /// or cancellation mid-compaction leaves the original files intact.
     /// </summary>
     internal async ValueTask CompactAsync(CancellationToken ct) {
         if (_sstFiles.Count < 2) return;
 
-        var readers = new List<SstReader<TKey>>(_sstFiles.Count);
+        var readers = new List<ISstReader<TKey>>(_sstFiles.Count);
         try {
             foreach (var path in _sstFiles)
-                readers.Add(new SstReader<TKey>(new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096)));
+                readers.Add(_sst.OpenReader(path));
 
-            var tmpPath = Path.Combine(_dataDirectory, $"{DateTimeOffset.UtcNow.Ticks:D19}.sst.tmp");
-            {
-                await using var tmpStream = new FileStream(tmpPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.Asynchronous);
-                await SstWriter.WriteAsync(MergeAll(readers), tmpStream, cancellationToken: ct);
-            }
+            var compactedPath = Path.Combine(_dataDirectory, $"{DateTimeOffset.UtcNow.Ticks:D19}.sst");
+            await _sst.WriteAsync(MergeAll(readers), compactedPath, ct);
 
             // Release file handles before renaming and deleting the source files.
             foreach (var reader in readers) reader.Dispose();
             readers.Clear();
-
-            var compactedPath = Path.ChangeExtension(tmpPath, ".sst");
-            File.Move(tmpPath, compactedPath);
 
             var oldPaths = _sstFiles.ToList();
             _sstFiles.Clear();
             _sstFiles.Add(compactedPath);
 
             foreach (var path in oldPaths)
-                File.Delete(path);
+                _sst.Delete(path);
         } finally {
             foreach (var reader in readers)
                 reader.Dispose();
@@ -180,7 +170,7 @@ sealed class LsmStore<TKey> : IDisposable where TKey : IKey<TKey> {
 
     // K-way merge of pre-sorted SST readers using a min-heap. Keys are unique across files
     // (event store invariant: (streamId, revision) pairs are immutable), so no deduplication needed.
-    static IEnumerable<KeyValuePair<TKey, ReadOnlyMemory<byte>?>> MergeAll(List<SstReader<TKey>> readers) {
+    static IEnumerable<KeyValuePair<TKey, ReadOnlyMemory<byte>?>> MergeAll(List<ISstReader<TKey>> readers) {
         var pq = new PriorityQueue<(KeyValuePair<TKey, ReadOnlyMemory<byte>?> Entry, IEnumerator<KeyValuePair<TKey, ReadOnlyMemory<byte>?>> Enumerator), TKey>();
 
         foreach (var reader in readers) {

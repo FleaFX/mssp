@@ -11,10 +11,15 @@ namespace MSSP.LsmTree;
 /// Number of SST files that triggers automatic compaction after a flush.
 /// Set to <see cref="int.MaxValue"/> to disable automatic compaction.
 /// </param>
-readonly record struct LsmStoreOptions(
+/// <param name="SstAccess">
+/// Strategy for SST file I/O. Defaults to <see cref="DefaultSstAccess{TKey}"/> when <c>null</c>.
+/// Decorate to add cross-cutting behaviour such as bloom filter sidecars.
+/// </param>
+readonly record struct LsmStoreOptions<TKey>(
     string DataDirectory,
     int CapacityBytes,
     WalAppendDelegate WalAppend,
     MemTableFlushedDelegate OnFlushed,
-    int CompactionThreshold = 4
-);
+    int CompactionThreshold = 4,
+    ISstAccess<TKey>? SstAccess = null
+) where TKey : IKey<TKey>;

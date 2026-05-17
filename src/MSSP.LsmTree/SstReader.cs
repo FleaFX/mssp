@@ -12,7 +12,7 @@ namespace MSSP.LsmTree;
 /// be called concurrently, as they both manipulate the underlying stream position.
 /// </remarks>
 /// <typeparam name="TKey">The type of the key.</typeparam>
-sealed class SstReader<TKey> : IDisposable where TKey : IKey<TKey> {
+sealed class SstReader<TKey> : ISstReader<TKey> where TKey : IKey<TKey> {
     readonly Stream _stream;
     readonly Footer _footer;
     readonly IndexEntry[] _index;
@@ -37,7 +37,7 @@ sealed class SstReader<TKey> : IDisposable where TKey : IKey<TKey> {
     /// or <c>default</c> if the key is not present.
     /// </param>
     /// <returns><c>true</c> if the key exists (even as a tombstone); otherwise <c>false</c>.</returns>
-    internal bool TryGet(TKey key, [MaybeNullWhen(false)] out ReadOnlyMemory<byte>? value) {
+    public bool TryGet(TKey key, [MaybeNullWhen(false)] out ReadOnlyMemory<byte>? value) {
         var blockIndex = FindBlockIndex(key);
         if (blockIndex < 0) {
             value = default;
@@ -68,7 +68,7 @@ sealed class SstReader<TKey> : IDisposable where TKey : IKey<TKey> {
     /// Returns an enumerable that yields all entries in ascending key order.
     /// Resets the read position each time iteration begins.
     /// </summary>
-    internal IEnumerable<KeyValuePair<TKey, ReadOnlyMemory<byte>?>> Scan() {
+    public IEnumerable<KeyValuePair<TKey, ReadOnlyMemory<byte>?>> Scan() {
         _stream.Seek(0, SeekOrigin.Begin);
         while (_stream.Position < _footer.IndexOffset) {
             var (key, value) = ReadEntry();
@@ -80,7 +80,7 @@ sealed class SstReader<TKey> : IDisposable where TKey : IKey<TKey> {
     /// Returns an enumerable that yields entries in ascending key order, starting from the first
     /// entry with a key greater than or equal to <paramref name="from"/>.
     /// </summary>
-    internal IEnumerable<KeyValuePair<TKey, ReadOnlyMemory<byte>?>> Scan(TKey from) {
+    public IEnumerable<KeyValuePair<TKey, ReadOnlyMemory<byte>?>> Scan(TKey from) {
         var blockIndex = FindBlockIndex(from);
         _stream.Seek(blockIndex >= 0 ? _index[blockIndex].DataOffset : 0L, SeekOrigin.Begin);
         while (_stream.Position < _footer.IndexOffset) {

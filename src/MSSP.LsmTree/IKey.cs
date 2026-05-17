@@ -5,7 +5,7 @@ namespace MSSP.LsmTree;
 /// Keys must be orderable and serializable to bytes for WAL persistence.
 /// </summary>
 /// <typeparam name="TSelf">The implementing type.</typeparam>
-interface IKey<TSelf> : IComparable<TSelf>, IEquatable<TSelf> where TSelf : IKey<TSelf> {
+public interface IKey<TSelf> : IComparable<TSelf>, IEquatable<TSelf> where TSelf : IKey<TSelf> {
     /// <summary>
     /// Implicitly converts <paramref name="key"/> to its byte representation.
     /// </summary>

@@ -11,7 +11,7 @@ namespace MSSP.Embedded;
 /// <remarks>
 /// Binary layout: [streamIdLen: 4 bytes LE] [streamId: UTF-8] [revision: 8 bytes LE]
 /// </remarks>
-readonly struct EventKey(string streamId, ulong revision) : IKey<EventKey> {
+public readonly struct EventKey(string streamId, ulong revision) : IKey<EventKey> {
     /// <summary>
     /// Gets the stream identifier.
     /// </summary>

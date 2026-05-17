@@ -20,7 +20,7 @@ public class LsmStoreTests : IAsyncLifetime {
         return Task.CompletedTask;
     }
 
-    LsmStoreOptions Options(int capacityBytes = 4096) =>
+    LsmStoreOptions<StringKey> Options(int capacityBytes = 4096) =>
         new(_dataDir, capacityBytes, AppendToWal, _ => ValueTask.CompletedTask);
 
     ValueTask<bool> AppendToWal(ReadOnlyMemory<byte> record, CancellationToken _) {
@@ -149,7 +149,7 @@ public class LsmStoreTests : IAsyncLifetime {
 
     public class CompactAsyncTests : LsmStoreTests {
         // Disable auto-compaction by default so tests can assert exact SST file counts.
-        new LsmStoreOptions Options(int capacityBytes = 4096, int compactionThreshold = int.MaxValue) =>
+        LsmStoreOptions<StringKey> Options(int capacityBytes = 4096, int compactionThreshold = int.MaxValue) =>
             new(_dataDir, capacityBytes, AppendToWal, _ => ValueTask.CompletedTask, compactionThreshold);
 
         [Fact]
