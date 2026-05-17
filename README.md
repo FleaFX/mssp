@@ -16,15 +16,6 @@ Events are stored in a log-structured merge tree:
 - Level 0: an in-memory SkipList (MemTable)
 - Levels 1–n: Sorted String Tables (SST) on disk, searched efficiently via bloom filters
 
-## Packages
-
-| Package | Description |
-|---------|-------------|
-| `MSSP.Log` | Write Ahead Log foundation |
-| `MSSP.LsmTree` | LSM tree storage engine (`ISstAccess<TKey>` for extensibility) |
-| `MSSP.BloomFilters` | Bloom filter sidecar decorator for `ISstAccess<TKey>` |
-| `MSSP.Embedded` | Single-process embedded event store |
-
 ## Roadmap
 
 - [x] Log module (WAL foundation)
