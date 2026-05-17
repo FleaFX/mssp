@@ -22,7 +22,7 @@ Events are stored in a log-structured merge tree:
 - [x] LSM tree (MemTable, SST format, sparse index, compaction)
 - [x] Embedded event store (WAL + LSM, optimistic concurrency, recovery)
 - [x] Bloom filters (`.bf` sidecar per SST file, opt-in via `BloomFilteredSstAccess<TKey>`)
-- [ ] Range queries in SkipList (currently O(n) linear scan)
+- [x] Range queries in SkipList (`Scan(TKey from)` positions in O(log n) via skip list levels)
 - [ ] Cluster mode (Raft consensus)
 
 ## Building
