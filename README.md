@@ -4,6 +4,46 @@ MSSP (pronounced *Mississippi*) is a purpose-built event store database for .NET
 
 > **Status:** early development — not production ready.
 
+## Getting started (embedded)
+
+For single-process use, install the embedded package:
+
+```
+dotnet add package MSSP.Embedded
+```
+
+Register with the .NET Generic Host:
+
+```csharp
+builder.Services.AddMssp(options => {
+    options.DataDirectory = "./data";
+});
+```
+
+`DataDirectory` is the only required option. `UseBloomFilters` defaults to `true` and `MemTableCapacityBytes` defaults to 64 MiB.
+
+Inject `IMsspClient` where needed:
+
+```csharp
+// Append events — stream must not yet exist
+await client.AppendAsync(
+    streamId: new StreamId("order-123"),
+    expectedRevision: StreamRevision.NoStream,
+    events: [new EventData("OrderPlaced", JsonSerializer.SerializeToUtf8Bytes(payload))]);
+
+// Append to an existing stream without a concurrency check
+await client.AppendAsync(
+    streamId: new StreamId("order-123"),
+    expectedRevision: StreamRevision.Any,
+    events: [new EventData("OrderShipped", JsonSerializer.SerializeToUtf8Bytes(payload))]);
+
+// Read all events from the beginning
+await foreach (var e in client.ReadAsync(new StreamId("order-123")))
+    Console.WriteLine($"{e.Revision}: {e.EventType} at {e.Timestamp}");
+```
+
+`AppendAsync` throws `OptimisticConcurrencyException` when the actual stream revision does not match `expectedRevision`. Pass a specific `ulong` revision to implement optimistic locking.
+
 ## Architecture
 
 MSSP is built on two foundational components:
