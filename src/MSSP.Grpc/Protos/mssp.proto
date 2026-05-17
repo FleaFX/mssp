@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+option csharp_namespace = "MSSP.Grpc";
+
+package mssp;
+
+service Mssp {
+  rpc Append (AppendRequest) returns (AppendResponse);
+  rpc Read   (ReadRequest)   returns (stream RecordedEvent);
+}
+
+message AppendRequest {
+  string             stream_id         = 1;
+  sint64             expected_revision = 2;
+  repeated EventData events            = 3;
+}
+
+message AppendResponse {}
+
+message EventData {
+  string event_type = 1;
+  bytes  data       = 2;
+}
+
+message ReadRequest {
+  string stream_id     = 1;
+  uint64 from_revision = 2;
+}
+
+message RecordedEvent {
+  string stream_id    = 1;
+  uint64 revision     = 2;
+  string event_type   = 3;
+  bytes  data         = 4;
+  int64  timestamp_ns = 5;
+}

@@ -29,6 +29,13 @@ public readonly struct StreamRevision : IEquatable<StreamRevision>, IComparable<
     /// <param name="value">The numeric revision value.</param>
     public static implicit operator StreamRevision(ulong value) => new((long)value);
 
+    /// <summary>
+    /// Explicitly converts a <see cref="StreamRevision"/> to its underlying <see cref="long"/> representation.
+    /// Sentinel values (<see cref="Any"/>, <see cref="NoStream"/>, <see cref="StreamExists"/>) are preserved as negative numbers.
+    /// </summary>
+    /// <param name="revision">The revision to convert.</param>
+    public static explicit operator long(StreamRevision revision) => revision._value;
+
     /// <inheritdoc/>
     public bool Equals(StreamRevision other) => _value == other._value;
 

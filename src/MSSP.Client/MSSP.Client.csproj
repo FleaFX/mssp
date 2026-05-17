@@ -6,16 +6,22 @@
     <Nullable>enable</Nullable>
     <VersionPrefix>0.1.0</VersionPrefix>
     <PackageId>$(AssemblyName)</PackageId>
-    <Title>MSSP</Title>
+    <Title>MSSP.Client</Title>
     <Authors>Wouter Naessens</Authors>
     <Product>MSSP</Product>
-    <Description>Provides the public client interface and types for the MSSP event store.</Description>
+    <Description>gRPC client for the MSSP event store.</Description>
     <PackageProjectUrl>https://github.com/FleaFX/mssp</PackageProjectUrl>
     <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Grpc.Net.Client" Version="2.65.0" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="9.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\MSSP\MSSP.csproj" />
+    <ProjectReference Include="..\MSSP.Grpc\MSSP.Grpc.csproj" />
   </ItemGroup>
 
 </Project>
