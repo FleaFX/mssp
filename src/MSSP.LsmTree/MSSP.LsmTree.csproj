@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <VersionPrefix>0.1.0</VersionPrefix>
+    <PackageId>$(AssemblyName)</PackageId>
+    <Title>MSSP.LsmTree</Title>
+    <Authors>Wouter Naessens</Authors>
+    <Product>MSSP</Product>
+    <Description>Provides LSM tree structured storage.</Description>
+    <PackageProjectUrl>https://github.com/FleaFX/mssp</PackageProjectUrl>
+    <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
+  </PropertyGroup>
+
+
+</Project>
