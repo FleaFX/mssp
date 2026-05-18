@@ -1,5 +1,4 @@
 using System.Runtime.CompilerServices;
-using MSSP.Embedded;
 using MSSP.Raft;
 
 namespace MSSP.Cluster;

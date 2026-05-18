@@ -5,7 +5,6 @@ using GrpcVoteRequest = MSSP.Cluster.Grpc.VoteRequest;
 using GrpcVoteResponse = MSSP.Cluster.Grpc.VoteResponse;
 using GrpcAppendEntriesRequest = MSSP.Cluster.Grpc.AppendEntriesRequest;
 using GrpcAppendEntriesResponse = MSSP.Cluster.Grpc.AppendEntriesResponse;
-using GrpcLogEntry = MSSP.Cluster.Grpc.LogEntry;
 
 namespace MSSP.Cluster;
 

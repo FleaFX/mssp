@@ -1,5 +1,3 @@
-using MSSP.Raft;
-
 namespace MSSP.Raft;
 
 sealed class InMemoryRaftTransport : IRaftTransport {

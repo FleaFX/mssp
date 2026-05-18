@@ -1,4 +1,4 @@
-namespace MSSP.LsmTree;
+namespace MSSP;
 
 /// <summary>
 /// Contract for keys used in the LSM tree.

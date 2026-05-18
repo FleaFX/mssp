@@ -4,7 +4,6 @@ using MSSP.Raft;
 using AppendRequest = MSSP.Grpc.AppendRequest;
 using AppendResponse = MSSP.Grpc.AppendResponse;
 using ReadRequest = MSSP.Grpc.ReadRequest;
-using GrpcEventData = MSSP.Grpc.EventData;
 using GrpcRecordedEvent = MSSP.Grpc.RecordedEvent;
 using MsspBase = MSSP.Grpc.Mssp.MsspBase;
 

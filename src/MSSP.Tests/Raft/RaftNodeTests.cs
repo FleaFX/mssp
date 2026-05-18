@@ -1,5 +1,4 @@
 using FluentAssertions;
-using MSSP.Raft;
 
 namespace MSSP.Raft;
 
