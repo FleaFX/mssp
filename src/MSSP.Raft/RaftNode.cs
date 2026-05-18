@@ -19,28 +19,36 @@ namespace MSSP.Raft;
 /// <param name="transport">The network layer used to contact peers.</param>
 /// <param name="stateMachine">The application state machine that applies committed entries.</param>
 /// <param name="stateStorage">Durable storage for the node's persistent Raft state.</param>
-public sealed partial class RaftNode(RaftNodeConfig config, IRaftLog log, IRaftTransport transport, IRaftStateMachine stateMachine, IRaftStateStorage stateStorage) : IDisposable {
-    enum RaftRole { Follower, Candidate, Leader }
+public sealed partial class RaftNode(
+    RaftNodeConfig config,
+    IRaftLog log,
+    IRaftTransport transport,
+    IRaftStateMachine stateMachine,
+    IRaftStateStorage stateStorage
+) : IDisposable {
 
+    readonly RaftNodeConfig _config = config;
+    readonly IRaftLog _log = log;
+    readonly IRaftTransport _transport = transport;
+    readonly IRaftStateStorage _stateStorage = stateStorage;
     readonly Random _rng = new();
 
-    RaftRole _role = RaftRole.Follower;
     ulong _currentTerm;
     string? _votedFor;
     string? _leaderId;
     ulong _commitIndex;
-    bool _noOpCommitted;
+    RaftRole _role = null!;
 
     /// <summary>
     /// Gets the unique identifier of this node within the cluster.
     /// </summary>
-    public string NodeId => config.NodeId;
+    public string NodeId => _config.NodeId;
 
     /// <summary>
     /// Gets a value indicating whether this node is the current Raft leader and has committed
     /// its initial no-op entry, meaning it is ready to accept client proposals.
     /// </summary>
-    public bool IsLeader => _role == RaftRole.Leader && _noOpCommitted;
+    public bool IsLeader => _role is LeaderRole { NoOpCommitted: true };
 
     /// <summary>
     /// Gets the node ID of the node this node believes to be the current leader,
@@ -53,19 +61,18 @@ public sealed partial class RaftNode(RaftNodeConfig config, IRaftLog log, IRaftT
     /// </summary>
     /// <param name="ct">Token to cancel startup.</param>
     public async Task StartAsync(CancellationToken ct = default) {
-        var state = await stateStorage.LoadAsync(ct);
+        var state = await _stateStorage.LoadAsync(ct);
         _currentTerm = state.CurrentTerm;
         _votedFor = state.VotedFor;
 
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         _mailboxTask = Task.Run(() => RunMailboxAsync(_cts.Token), _cts.Token);
 
-        ResetElectionTimer();
+        _role = new FollowerRole(this);
     }
 
     /// <summary>
-    /// Cancels the mailbox consumer, stops the heartbeat and election timers, and awaits
-    /// any in-flight mailbox work.
+    /// Cancels the mailbox consumer, stops timers, and awaits any in-flight mailbox work.
     /// </summary>
     /// <param name="ct">Token to cancel the stop operation (not used for forced cancellation — that is handled internally).</param>
     public async Task StopAsync(CancellationToken ct = default) {
@@ -74,16 +81,16 @@ public sealed partial class RaftNode(RaftNodeConfig config, IRaftLog log, IRaftT
             if (_mailboxTask is not null)
                 await _mailboxTask.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
         }
-        await (_electionTimer?.DisposeAsync() ?? ValueTask.CompletedTask);
-        _heartbeatTimer?.Dispose();
-        _heartbeatTask = null;
+        if (_role is LeaderRole leader)
+            await leader.StopAsync();
+        else
+            _role?.Dispose();
     }
 
     /// <inheritdoc/>
     public void Dispose() {
         _cts?.Dispose();
-        _electionTimer?.Dispose();
-        _heartbeatTimer?.Dispose();
+        _role?.Dispose();
     }
 
     /// <summary>
@@ -96,17 +103,7 @@ public sealed partial class RaftNode(RaftNodeConfig config, IRaftLog log, IRaftT
     public Task<RaftApplyResult> ProposeAsync(ReadOnlyMemory<byte> command, CancellationToken ct = default) {
         var tcs = new TaskCompletionSource<RaftApplyResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         CancelTcsOnStop(tcs);
-        Post(async () => {
-            if (_role != RaftRole.Leader || !_noOpCommitted) {
-                tcs.TrySetException(new NotLeaderException(_leaderId));
-                return;
-            }
-            var entry = new RaftLogEntry(_currentTerm, log.LastIndex + 1, RaftLogEntryType.Command, command);
-            await log.AppendAsync([entry]);
-            _pending[entry.Index] = tcs;
-            await ReplicateToAllPeersAsync();
-            await TryAdvanceCommitIndexAsync();
-        });
+        Post(() => _role.ProposeAsync(command, tcs));
         return tcs.Task;
     }
 
@@ -119,7 +116,7 @@ public sealed partial class RaftNode(RaftNodeConfig config, IRaftLog log, IRaftT
     public ValueTask<VoteResponse> ReceiveVoteRequestAsync(VoteRequest request, CancellationToken ct = default) {
         var tcs = new TaskCompletionSource<VoteResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
         CancelTcsOnStop(tcs);
-        Post(async () => tcs.TrySetResult(await HandleVoteRequestAsync(request)));
+        Post(async () => tcs.TrySetResult(await _role.HandleVoteRequestAsync(request)));
         return new ValueTask<VoteResponse>(tcs.Task);
     }
 
@@ -132,10 +129,53 @@ public sealed partial class RaftNode(RaftNodeConfig config, IRaftLog log, IRaftT
     public ValueTask<AppendEntriesResponse> ReceiveAppendEntriesAsync(AppendEntriesRequest request, CancellationToken ct = default) {
         var tcs = new TaskCompletionSource<AppendEntriesResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
         CancelTcsOnStop(tcs);
-        Post(async () => tcs.TrySetResult(await HandleAppendEntriesAsync(request)));
+        Post(async () => tcs.TrySetResult(await _role.HandleAppendEntriesAsync(request)));
         return new ValueTask<AppendEntriesResponse>(tcs.Task);
     }
 
     void CancelTcsOnStop<T>(TaskCompletionSource<T> tcs) =>
         _cts?.Token.Register(() => tcs.TrySetCanceled());
+
+    async Task TransitionToFollowerAsync(ulong term) {
+        if (term > _currentTerm) {
+            _currentTerm = term;
+            _votedFor = null;
+            await _stateStorage.SaveAsync(new RaftPersistentState(_currentTerm, _votedFor));
+        }
+        if (_role is LeaderRole leader)
+            await leader.StopAsync();
+        else
+            _role.Dispose();
+        _role = new FollowerRole(this);
+    }
+
+    async Task TransitionToCandidateAsync() {
+        _currentTerm++;
+        _votedFor = _config.NodeId;
+        _leaderId = null;
+        await _stateStorage.SaveAsync(new RaftPersistentState(_currentTerm, _votedFor));
+        _role.Dispose();
+        _role = new CandidateRole(this);
+    }
+
+    async Task TransitionToLeaderAsync() {
+        _leaderId = _config.NodeId;
+        _role.Dispose();
+        var leader = new LeaderRole(this);
+        _role = leader;
+        var noOp = new RaftLogEntry(_currentTerm, _log.LastIndex + 1, RaftLogEntryType.NoOp, ReadOnlyMemory<byte>.Empty);
+        await _log.AppendAsync([noOp]);
+        await leader.StartHeartbeatAsync();
+        await leader.ReplicateToAllPeersAsync();
+        await leader.TryAdvanceCommitIndexAsync();
+    }
+
+    async Task ApplyCommittedEntriesAsync() {
+        while (stateMachine.LastAppliedIndex < _commitIndex) {
+            var idx = stateMachine.LastAppliedIndex + 1;
+            var entry = await _log.GetEntryAsync(idx);
+            var success = await stateMachine.ApplyAsync(entry);
+            _role.OnEntryApplied(idx, entry, success);
+        }
+    }
 }
