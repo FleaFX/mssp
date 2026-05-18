@@ -6,4 +6,23 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+
+  <ItemGroup>
+    <Compile Update="RaftNode.Mailbox.cs">
+      <DependentUpon>RaftNode.cs</DependentUpon>
+    </Compile>
+    <Compile Update="RaftNode.Election.cs">
+      <DependentUpon>RaftNode.cs</DependentUpon>
+    </Compile>
+    <Compile Update="RaftNode.Replication.cs">
+      <DependentUpon>RaftNode.cs</DependentUpon>
+    </Compile>
+    <Compile Update="RaftNode.Heartbeat.cs">
+      <DependentUpon>RaftNode.cs</DependentUpon>
+    </Compile>
+    <Compile Update="RaftNode.AppendEntries.cs">
+      <DependentUpon>RaftNode.cs</DependentUpon>
+    </Compile>
+  </ItemGroup>
+
 </Project>

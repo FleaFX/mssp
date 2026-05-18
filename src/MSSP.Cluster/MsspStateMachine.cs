@@ -33,8 +33,6 @@ sealed class MsspStateMachine : IRaftStateMachine, IDisposable {
     /// <inheritdoc/>
     public ulong LastAppliedIndex => _lastAppliedIndex;
 
-    internal LsmStore<EventKey> Store => _store;
-
     /// <summary>
     /// Opens or creates the state machine's LSM store in <paramref name="dataDirectory"/>,
     /// loading existing SST files and rebuilding the revision index from them.
