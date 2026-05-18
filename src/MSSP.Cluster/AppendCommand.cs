@@ -3,10 +3,25 @@ using System.Text;
 
 namespace MSSP.Cluster;
 
-// Binary layout:
-//   [streamIdLen:4LE][streamId:UTF8][expectedRevision:8LE][eventCount:4LE]
-//   per event: [typeLen:4LE][type:UTF8][dataLen:4LE][data:bytes]
+/// <summary>
+/// Binary serialisation and deserialisation of append commands carried as
+/// <see cref="MSSP.Raft.RaftLogEntry"/> payloads.
+/// </summary>
+/// <remarks>
+/// Layout: <c>[streamIdLen:4LE][streamId:UTF8][expectedRevision:8LE][eventCount:4LE]</c>
+/// followed by each event as <c>[typeLen:4LE][type:UTF8][dataLen:4LE][data:bytes]</c>.
+/// </remarks>
 static class AppendCommand {
+    /// <summary>
+    /// Serialises a stream-append command into a contiguous byte buffer.
+    /// </summary>
+    /// <param name="streamId">The target stream identifier.</param>
+    /// <param name="expectedRevision">
+    /// The expected current revision of the stream, encoded as a <see langword="long"/>
+    /// where negative values map to special <see cref="StreamRevision"/> sentinels.
+    /// </param>
+    /// <param name="events">The events to append.</param>
+    /// <returns>A <see cref="ReadOnlyMemory{T}"/> containing the serialised payload.</returns>
     public static ReadOnlyMemory<byte> Serialize(string streamId, long expectedRevision, IEnumerable<EventData> events) {
         var eventList = events as IReadOnlyList<EventData> ?? events.ToArray();
         var streamIdBytes = Encoding.UTF8.GetBytes(streamId);
@@ -44,6 +59,11 @@ static class AppendCommand {
         return buf;
     }
 
+    /// <summary>
+    /// Deserialises a payload produced by <see cref="Serialize"/>.
+    /// </summary>
+    /// <param name="payload">The raw payload bytes.</param>
+    /// <returns>The stream ID, expected revision, and reconstructed events.</returns>
     public static (string StreamId, long ExpectedRevision, EventData[] Events) Deserialize(ReadOnlyMemory<byte> payload) {
         var span = payload.Span;
 

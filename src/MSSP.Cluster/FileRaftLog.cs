@@ -4,7 +4,15 @@ using MSSP.Raft;
 
 namespace MSSP.Cluster;
 
-// Entry layout: [term:8LE][index:8LE][type:1][payloadLen:4LE][payload:bytes][crc32:4LE]
+/// <summary>
+/// <see cref="IRaftLog"/> implementation backed by a single append-only file.
+/// </summary>
+/// <remarks>
+/// Entry layout: <c>[term:8LE][index:8LE][type:1][payloadLen:4LE][payload:bytes][crc32:4LE]</c>.
+/// A <c>List&lt;long&gt;</c> of file offsets provides O(1) random access by log index.
+/// On open, the file is scanned sequentially; the first entry with a bad CRC32 causes the file
+/// to be truncated at that offset (torn write recovery).
+/// </remarks>
 sealed class FileRaftLog : IRaftLog, IDisposable {
     const int HeaderSize = 8 + 8 + 1 + 4; // term + index + type + payloadLen
     const int FooterSize = 4;              // crc32
@@ -17,6 +25,12 @@ sealed class FileRaftLog : IRaftLog, IDisposable {
     public ulong LastIndex => (ulong)_offsets.Count;
     public ulong LastTerm { get; private set; }
 
+    /// <summary>
+    /// Opens or creates the Raft log file in <paramref name="dataDirectory"/>, recovering any
+    /// partially-written tail entry before returning.
+    /// </summary>
+    /// <param name="dataDirectory">The directory that contains (or will contain) <c>raft.log</c>.</param>
+    /// <param name="ct">Token to cancel the open/recovery operation.</param>
     public static async ValueTask<FileRaftLog> OpenAsync(string dataDirectory, CancellationToken ct = default) {
         Directory.CreateDirectory(dataDirectory);
         var path = Path.Combine(dataDirectory, "raft.log");
@@ -63,6 +77,7 @@ sealed class FileRaftLog : IRaftLog, IDisposable {
         }
     }
 
+    /// <inheritdoc/>
     public async ValueTask<RaftLogEntry> GetEntryAsync(ulong index, CancellationToken ct = default) {
         if (index == 0 || index > LastIndex)
             throw new ArgumentOutOfRangeException(nameof(index));
@@ -85,6 +100,7 @@ sealed class FileRaftLog : IRaftLog, IDisposable {
         return new RaftLogEntry(term, idx, type, payload);
     }
 
+    /// <inheritdoc/>
     public async IAsyncEnumerable<RaftLogEntry> GetEntriesFromAsync(ulong fromIndex, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default) {
         for (var i = fromIndex; i <= LastIndex; i++) {
             if (ct.IsCancellationRequested) yield break;
@@ -92,6 +108,7 @@ sealed class FileRaftLog : IRaftLog, IDisposable {
         }
     }
 
+    /// <inheritdoc/>
     public async ValueTask AppendAsync(IEnumerable<RaftLogEntry> entries, CancellationToken ct = default) {
         _file.Seek(0, SeekOrigin.End);
 
@@ -116,6 +133,7 @@ sealed class FileRaftLog : IRaftLog, IDisposable {
         }
     }
 
+    /// <inheritdoc/>
     public ValueTask TruncateFromAsync(ulong fromIndex, CancellationToken ct = default) {
         if (fromIndex == 0 || fromIndex > LastIndex) return ValueTask.CompletedTask;
 
@@ -126,6 +144,7 @@ sealed class FileRaftLog : IRaftLog, IDisposable {
         return ValueTask.CompletedTask;
     }
 
+    /// <inheritdoc/>
     public async ValueTask<ulong> GetTermAtAsync(ulong index, CancellationToken ct = default) {
         var entry = await GetEntryAsync(index, ct);
         return entry.Term;
@@ -150,5 +169,6 @@ sealed class FileRaftLog : IRaftLog, IDisposable {
         return BinaryPrimitives.ReadUInt32LittleEndian(crc.GetCurrentHash());
     }
 
+    /// <inheritdoc/>
     public void Dispose() => _file.Dispose();
 }

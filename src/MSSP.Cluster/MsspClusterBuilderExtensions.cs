@@ -4,7 +4,21 @@ using MSSP.Embedded;
 
 namespace MSSP.Cluster;
 
+/// <summary>
+/// Extends <see cref="MsspBuilder"/> with the Raft cluster layer.
+/// </summary>
 public static class MsspClusterBuilderExtensions {
+    /// <summary>
+    /// Adds the Raft consensus cluster to the MSSP service registrations.
+    /// </summary>
+    /// <remarks>
+    /// Replaces the embedded <see cref="MsspHostedService"/> and <see cref="IMsspClient"/>
+    /// registrations with their cluster equivalents: <see cref="RaftHostedService"/> and
+    /// <see cref="ClusteredMsspClient"/>.
+    /// </remarks>
+    /// <param name="builder">The MSSP builder returned by <c>AddMssp()</c>.</param>
+    /// <param name="configure">Delegate to configure <see cref="MsspClusterOptions"/>.</param>
+    /// <returns>The same <paramref name="builder"/> for further chaining.</returns>
     public static MsspBuilder AddCluster(this MsspBuilder builder, Action<MsspClusterOptions> configure) {
         var options = new MsspClusterOptions();
         configure(options);

@@ -9,9 +9,17 @@ using GrpcLogEntry = MSSP.Cluster.Grpc.LogEntry;
 
 namespace MSSP.Cluster;
 
+/// <summary>
+/// <see cref="IRaftTransport"/> implementation that routes Raft RPCs over gRPC.
+/// One <see cref="GrpcChannel"/> is created per peer and kept open for the lifetime of the node.
+/// </summary>
 sealed class RaftGrpcTransport : IRaftTransport, IDisposable {
     readonly Dictionary<string, (GrpcChannel Channel, RaftConsensus.RaftConsensusClient Client)> _peers = new();
 
+    /// <summary>
+    /// Creates a transport and opens a gRPC channel to each peer in <paramref name="peers"/>.
+    /// </summary>
+    /// <param name="peers">The cluster members this node can send RPCs to.</param>
     public RaftGrpcTransport(IEnumerable<RaftClusterMember> peers) {
         foreach (var peer in peers) {
             var channel = GrpcChannel.ForAddress(peer.Address);
@@ -19,6 +27,7 @@ sealed class RaftGrpcTransport : IRaftTransport, IDisposable {
         }
     }
 
+    /// <inheritdoc/>
     public async ValueTask<VoteResponse> RequestVoteAsync(string peerId, VoteRequest request, CancellationToken ct = default) {
         var client = GetClient(peerId);
         var grpcRequest = new Grpc.VoteRequest {
@@ -31,6 +40,7 @@ sealed class RaftGrpcTransport : IRaftTransport, IDisposable {
         return new VoteResponse(response.Term, response.VoteGranted);
     }
 
+    /// <inheritdoc/>
     public async ValueTask<AppendEntriesResponse> AppendEntriesAsync(string peerId, AppendEntriesRequest request, CancellationToken ct = default) {
         var client = GetClient(peerId);
         var grpcRequest = new Grpc.AppendEntriesRequest {
@@ -54,6 +64,7 @@ sealed class RaftGrpcTransport : IRaftTransport, IDisposable {
         _peers.TryGetValue(peerId, out var peer) ? peer.Client
         : throw new InvalidOperationException($"Unknown peer: {peerId}");
 
+    /// <inheritdoc/>
     public void Dispose() {
         foreach (var (channel, _) in _peers.Values)
             channel.Dispose();

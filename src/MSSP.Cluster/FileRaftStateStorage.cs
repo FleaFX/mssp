@@ -3,9 +3,13 @@ using MSSP.Raft;
 
 namespace MSSP.Cluster;
 
+/// <summary>
+/// Persists <see cref="RaftPersistentState"/> to a JSON file using an atomic tmp→rename write.
+/// </summary>
 sealed class FileRaftStateStorage(string dataDirectory) : IRaftStateStorage {
     static string StatePath(string dir) => Path.Combine(dir, "raft-state.json");
 
+    /// <inheritdoc/>
     public async ValueTask<RaftPersistentState> LoadAsync(CancellationToken ct = default) {
         var path = StatePath(dataDirectory);
         if (!File.Exists(path)) return new RaftPersistentState(0, null);
@@ -19,6 +23,7 @@ sealed class FileRaftStateStorage(string dataDirectory) : IRaftStateStorage {
         return new RaftPersistentState(term, votedFor);
     }
 
+    /// <inheritdoc/>
     public async ValueTask SaveAsync(RaftPersistentState state, CancellationToken ct = default) {
         Directory.CreateDirectory(dataDirectory);
         var path = StatePath(dataDirectory);

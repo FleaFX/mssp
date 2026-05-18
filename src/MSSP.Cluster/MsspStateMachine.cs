@@ -6,6 +6,19 @@ using MSSP.Raft;
 
 namespace MSSP.Cluster;
 
+/// <summary>
+/// <see cref="IRaftStateMachine"/> implementation backed by an LSM-tree event store.
+/// </summary>
+/// <remarks>
+/// OCC is validated at apply-time (after the Raft quorum has committed the entry). A conflict
+/// causes <see cref="ApplyAsync"/> to return <c>false</c> without writing any events; the entry
+/// is still acknowledged as committed.
+/// <para>
+/// The Raft log is the WAL, so no separate WAL is used. On every MemTable → SST flush the
+/// current <see cref="LastAppliedIndex"/> is written to <c>raft-checkpoint.json</c>; on restart
+/// the <see cref="RaftHostedService"/> replays log entries from <c>checkpoint + 1</c> onwards.
+/// </para>
+/// </remarks>
 sealed class MsspStateMachine : IRaftStateMachine, IDisposable {
     readonly SemaphoreSlim _writeLock = new(1, 1);
     readonly LsmStore<EventKey> _store;
@@ -17,10 +30,22 @@ sealed class MsspStateMachine : IRaftStateMachine, IDisposable {
         _lastAppliedIndex = lastAppliedIndex;
     }
 
+    /// <inheritdoc/>
     public ulong LastAppliedIndex => _lastAppliedIndex;
 
     internal LsmStore<EventKey> Store => _store;
 
+    /// <summary>
+    /// Opens or creates the state machine's LSM store in <paramref name="dataDirectory"/>,
+    /// loading existing SST files and rebuilding the revision index from them.
+    /// </summary>
+    /// <param name="dataDirectory">Directory that holds SST files and the checkpoint file.</param>
+    /// <param name="memTableCapacityBytes">MemTable size threshold that triggers an SST flush.</param>
+    /// <param name="checkpointIndex">
+    /// The log index up to which the SST files already reflect applied entries.
+    /// Used as the initial <see cref="LastAppliedIndex"/> and persisted on the next flush.
+    /// </param>
+    /// <param name="ct">Token to cancel the open operation.</param>
     public static async ValueTask<MsspStateMachine> OpenAsync(
         string dataDirectory,
         int memTableCapacityBytes,
@@ -53,6 +78,7 @@ sealed class MsspStateMachine : IRaftStateMachine, IDisposable {
         return machine;
     }
 
+    /// <inheritdoc/>
     public async ValueTask<bool> ApplyAsync(RaftLogEntry entry, CancellationToken ct = default) {
         if (entry.Type == RaftLogEntryType.NoOp) {
             _lastAppliedIndex = entry.Index;
@@ -92,6 +118,12 @@ sealed class MsspStateMachine : IRaftStateMachine, IDisposable {
         }
     }
 
+    /// <summary>
+    /// Captures an atomic snapshot of the current store state and returns a lazy enumerable
+    /// of all events at or after <paramref name="from"/>.
+    /// The write lock is held only for the snapshot capture, not for iteration.
+    /// </summary>
+    /// <param name="from">The lower-bound key (inclusive) for the scan.</param>
     internal IEnumerable<KeyValuePair<EventKey, ReadOnlyMemory<byte>?>> ScanSnapshotFrom(EventKey from) {
         _writeLock.Wait();
         try {
@@ -101,6 +133,12 @@ sealed class MsspStateMachine : IRaftStateMachine, IDisposable {
         }
     }
 
+    /// <summary>
+    /// Reads the last-applied log index recorded in <c>raft-checkpoint.json</c>,
+    /// or returns zero if no checkpoint file exists.
+    /// </summary>
+    /// <param name="dataDirectory">The data directory to look in.</param>
+    /// <param name="ct">Token to cancel the read.</param>
     public static async ValueTask<ulong> ReadCheckpointIndexAsync(string dataDirectory, CancellationToken ct = default) {
         var path = CheckpointPath(dataDirectory);
         if (!File.Exists(path)) return 0;
@@ -147,6 +185,7 @@ sealed class MsspStateMachine : IRaftStateMachine, IDisposable {
 
     static string CheckpointPath(string dataDirectory) => Path.Combine(dataDirectory, "raft-checkpoint.json");
 
+    /// <inheritdoc/>
     public void Dispose() {
         _writeLock.Dispose();
         _store.Dispose();

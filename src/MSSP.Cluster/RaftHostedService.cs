@@ -4,6 +4,15 @@ using MSSP.Raft;
 
 namespace MSSP.Cluster;
 
+/// <summary>
+/// <see cref="IHostedService"/> that owns the lifetime of all Raft cluster resources:
+/// <see cref="FileRaftLog"/>, <see cref="MsspStateMachine"/>, <see cref="RaftGrpcTransport"/>,
+/// and <see cref="RaftNode"/>.
+/// </summary>
+/// <remarks>
+/// On startup the service reads the SST checkpoint index, opens the log and state machine,
+/// replays any log entries that postdate the checkpoint, then starts the Raft node.
+/// </remarks>
 sealed class RaftHostedService(MsspOptions msspOptions, MsspClusterOptions clusterOptions) : IHostedService, IDisposable {
     FileRaftLog? _log;
     MsspStateMachine? _stateMachine;
@@ -12,12 +21,21 @@ sealed class RaftHostedService(MsspOptions msspOptions, MsspClusterOptions clust
     FileRaftStateStorage? _stateStorage;
     bool _disposed;
 
+    /// <summary>
+    /// Gets the running <see cref="RaftNode"/>.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">Thrown if accessed before <see cref="StartAsync"/> completes.</exception>
     public RaftNode Node =>
         _node ?? throw new InvalidOperationException("Raft node is not available before the host has started.");
 
+    /// <summary>
+    /// Gets the <see cref="MsspStateMachine"/> that holds the current event-store state.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">Thrown if accessed before <see cref="StartAsync"/> completes.</exception>
     public MsspStateMachine StateMachine =>
         _stateMachine ?? throw new InvalidOperationException("State machine is not available before the host has started.");
 
+    /// <inheritdoc/>
     public async Task StartAsync(CancellationToken cancellationToken) {
         var dataDir = msspOptions.DataDirectory;
 
@@ -46,12 +64,14 @@ sealed class RaftHostedService(MsspOptions msspOptions, MsspClusterOptions clust
         await _node.StartAsync(cancellationToken);
     }
 
+    /// <inheritdoc/>
     public async Task StopAsync(CancellationToken cancellationToken) {
         if (_node is not null)
             await _node.StopAsync(cancellationToken);
         Dispose();
     }
 
+    /// <inheritdoc/>
     public void Dispose() {
         if (_disposed) return;
         _disposed = true;

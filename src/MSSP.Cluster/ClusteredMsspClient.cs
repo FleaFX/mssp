@@ -4,7 +4,12 @@ using MSSP.Raft;
 
 namespace MSSP.Cluster;
 
+/// <summary>
+/// <see cref="IMsspClient"/> implementation that routes writes through the Raft leader and
+/// reads from the local state machine snapshot (leader-only reads).
+/// </summary>
 sealed class ClusteredMsspClient(RaftHostedService raftService) : IMsspClient {
+    /// <inheritdoc/>
     public async ValueTask AppendAsync(StreamId streamId, StreamRevision expectedRevision, IEnumerable<EventData> events, CancellationToken ct = default) {
         var node = raftService.Node;
         if (!node.IsLeader)
@@ -16,6 +21,7 @@ sealed class ClusteredMsspClient(RaftHostedService raftService) : IMsspClient {
             throw new OptimisticConcurrencyException(streamId, expectedRevision);
     }
 
+    /// <inheritdoc/>
     public async IAsyncEnumerable<RecordedEvent> ReadAsync(StreamId streamId, StreamRevision from = default, [EnumeratorCancellation] CancellationToken ct = default) {
         var node = raftService.Node;
         if (!node.IsLeader)

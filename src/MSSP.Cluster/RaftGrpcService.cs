@@ -9,7 +9,16 @@ using GrpcLogEntry = MSSP.Cluster.Grpc.LogEntry;
 
 namespace MSSP.Cluster;
 
+/// <summary>
+/// gRPC service that receives inbound Raft RPCs from peer nodes and forwards them
+/// to the local <see cref="RaftNode"/> via the mailbox.
+/// </summary>
 sealed class RaftGrpcService(RaftHostedService raftService) : RaftConsensus.RaftConsensusBase {
+    /// <summary>
+    /// Handles a <c>RequestVote</c> RPC from a candidate peer.
+    /// Translates the protobuf message to the Raft domain model, delegates to
+    /// <see cref="RaftNode.ReceiveVoteRequestAsync"/>, and maps the result back.
+    /// </summary>
     public override async Task<GrpcVoteResponse> RequestVote(GrpcVoteRequest request, ServerCallContext context) {
         var node = raftService.Node;
         var raftRequest = new MSSP.Raft.VoteRequest(
@@ -19,6 +28,11 @@ sealed class RaftGrpcService(RaftHostedService raftService) : RaftConsensus.Raft
         return new GrpcVoteResponse { Term = response.Term, VoteGranted = response.VoteGranted };
     }
 
+    /// <summary>
+    /// Handles an <c>AppendEntries</c> RPC from the current leader.
+    /// Translates the protobuf message to the Raft domain model, delegates to
+    /// <see cref="RaftNode.ReceiveAppendEntriesAsync"/>, and maps the result back.
+    /// </summary>
     public override async Task<GrpcAppendEntriesResponse> AppendEntries(GrpcAppendEntriesRequest request, ServerCallContext context) {
         var node = raftService.Node;
         var entries = request.Entries.Select(e => new RaftLogEntry(
