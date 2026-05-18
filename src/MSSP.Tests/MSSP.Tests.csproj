@@ -34,6 +34,8 @@
     <ProjectReference Include="..\MSSP.Log\MSSP.Log.csproj" />
     <ProjectReference Include="..\MSSP.LsmTree\MSSP.LsmTree.csproj" />
     <ProjectReference Include="..\MSSP.Server\MSSP.Server.csproj" />
+    <ProjectReference Include="..\MSSP.Raft\MSSP.Raft.csproj" />
+    <ProjectReference Include="..\MSSP.Cluster\MSSP.Cluster.csproj" />
   </ItemGroup>
 
   <ItemGroup>

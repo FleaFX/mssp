@@ -1,5 +1,6 @@
 using Grpc.Core;
 using Google.Protobuf;
+using MSSP.Raft;
 using AppendRequest = MSSP.Grpc.AppendRequest;
 using AppendResponse = MSSP.Grpc.AppendResponse;
 using ReadRequest = MSSP.Grpc.ReadRequest;
@@ -35,6 +36,11 @@ public sealed class MsspGrpcService(IMsspClient client) : MsspBase {
             return new AppendResponse();
         } catch (OptimisticConcurrencyException ex) {
             throw new RpcException(new Status(StatusCode.FailedPrecondition, ex.Message));
+        } catch (NotLeaderException ex) {
+            var metadata = new Metadata();
+            if (ex.LeaderHint is not null)
+                metadata.Add("leader-hint", ex.LeaderHint);
+            throw new RpcException(new Status(StatusCode.Unavailable, "Not the leader."), metadata);
         }
     }
 
@@ -47,14 +53,21 @@ public sealed class MsspGrpcService(IMsspClient client) : MsspBase {
     public override async Task Read(ReadRequest request, IServerStreamWriter<GrpcRecordedEvent> responseStream, ServerCallContext context) {
         if (string.IsNullOrEmpty(request.StreamId))
             throw new RpcException(new Status(StatusCode.InvalidArgument, "stream_id is required."));
-        await foreach (var e in client.ReadAsync(new StreamId(request.StreamId), (StreamRevision)request.FromRevision, context.CancellationToken)) {
-            await responseStream.WriteAsync(new GrpcRecordedEvent {
-                StreamId = e.StreamId.Value,
-                Revision = e.Revision,
-                EventType = e.EventType,
-                Data = ByteString.CopyFrom(e.Data.Span),
-                TimestampNs = (e.Timestamp.UtcTicks - DateTimeOffset.UnixEpoch.Ticks) * 100L
-            });
+        try {
+            await foreach (var e in client.ReadAsync(new StreamId(request.StreamId), (StreamRevision)request.FromRevision, context.CancellationToken)) {
+                await responseStream.WriteAsync(new GrpcRecordedEvent {
+                    StreamId = e.StreamId.Value,
+                    Revision = e.Revision,
+                    EventType = e.EventType,
+                    Data = ByteString.CopyFrom(e.Data.Span),
+                    TimestampNs = (e.Timestamp.UtcTicks - DateTimeOffset.UnixEpoch.Ticks) * 100L
+                });
+            }
+        } catch (NotLeaderException ex) {
+            var metadata = new Metadata();
+            if (ex.LeaderHint is not null)
+                metadata.Add("leader-hint", ex.LeaderHint);
+            throw new RpcException(new Status(StatusCode.Unavailable, "Not the leader."), metadata);
         }
     }
 

@@ -16,6 +16,10 @@
     <Project Path="MSSP.Server/MSSP.Server.csproj" />
     <Project Path="MSSP.Client/MSSP.Client.csproj" />
   </Folder>
+  <Folder Name="/Cluster/">
+    <Project Path="MSSP.Raft/MSSP.Raft.csproj" />
+    <Project Path="MSSP.Cluster/MSSP.Cluster.csproj" />
+  </Folder>
   <Folder Name="/Tests/">
     <Project Path="MSSP.Tests/MSSP.Tests.csproj" />
   </Folder>
