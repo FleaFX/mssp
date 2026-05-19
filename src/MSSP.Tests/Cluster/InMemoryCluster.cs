@@ -25,7 +25,7 @@ sealed class InMemoryCluster : IAsyncDisposable {
             var stateMachine = new RaftLogStateMachine();
             var log = new InMemoryRaftLog();
             var stateStorage = new InMemoryRaftStateStorage();
-            var config = new RaftNodeConfig(nodeId, peers, 50, 100, 20);
+            var config = new RaftNodeConfig(nodeId, peers, 300, 600, 50);
             var node = new RaftNode(config, log, transport, stateMachine, stateStorage);
             transport.Register(node);
 
@@ -39,7 +39,7 @@ sealed class InMemoryCluster : IAsyncDisposable {
 
             var store = await LsmStore<EventKey>.OpenAsync(options, AsyncEnumerable.Empty<ReadOnlyMemory<byte>>(), ct);
 
-            var client = new ClusteredMsspClient(node, store);
+            var client = new ClusteredMsspClient(node, store, []);
             cluster._nodes.Add(new NodeHandle(node, client, store));
         }
 

@@ -21,7 +21,6 @@
   <ItemGroup>
     <ProjectReference Include="..\MSSP\MSSP.csproj" />
     <ProjectReference Include="..\MSSP.Grpc\MSSP.Grpc.csproj" />
-    <ProjectReference Include="..\MSSP.Raft\MSSP.Raft.csproj" />
   </ItemGroup>
 
 </Project>
