@@ -1,101 +1,31 @@
 # MSSP
 
-MSSP (pronounced *Mississippi*) is a purpose-built event store database for .NET. It is designed to scale from embedded use in a single process all the way to a high-availability cluster.
+MSSP (pronounced *Mississippi*) is a purpose-built event store for .NET 10. It scales from an embedded library in a single process all the way to a high-availability cluster.
 
 > **Status:** early development — not production ready.
 
-## Getting started (embedded)
+## Deployment modes
 
-For single-process use, install the embedded package:
+| Mode | Packages | Description |
+|------|---------|-------------|
+| Embedded | `MSSP.Embedded` | Runs in-process; no network required |
+| Client-Server | `MSSP.Server` + `MSSP.Client` | Standalone server over gRPC |
+| HA Cluster | `MSSP.Cluster` | Multi-node Raft consensus cluster |
 
-```
-dotnet add package MSSP.Embedded
-```
-
-Register with the .NET Generic Host:
-
-```csharp
-builder.Services.AddMssp(options => {
-    options.DataDirectory = "./data";
-});
-```
-
-`DataDirectory` is the only required option. `UseBloomFilters` defaults to `true` and `MemTableCapacityBytes` defaults to 64 MiB.
-
-Inject `IMsspClient` where needed:
+All modes share the same `IMsspClient` interface:
 
 ```csharp
-// Append events — stream must not yet exist
-await client.AppendAsync(
-    streamId: new StreamId("order-123"),
-    expectedRevision: StreamRevision.NoStream,
-    events: [new EventData("OrderPlaced", JsonSerializer.SerializeToUtf8Bytes(payload))]);
+// Append events
+await client.AppendAsync("orders-42", StreamRevision.NoStream, [
+    new EventData("OrderPlaced", JsonSerializer.SerializeToUtf8Bytes(payload))
+]);
 
-// Append to an existing stream without a concurrency check
-await client.AppendAsync(
-    streamId: new StreamId("order-123"),
-    expectedRevision: StreamRevision.Any,
-    events: [new EventData("OrderShipped", JsonSerializer.SerializeToUtf8Bytes(payload))]);
-
-// Read all events from the beginning
-await foreach (var e in client.ReadAsync(new StreamId("order-123")))
-    Console.WriteLine($"{e.Revision}: {e.EventType} at {e.Timestamp}");
+// Read events
+await foreach (var e in client.ReadAsync("orders-42"))
+    Console.WriteLine($"{e.Revision}: {e.EventType}");
 ```
 
-`AppendAsync` throws `OptimisticConcurrencyException` when the actual stream revision does not match `expectedRevision`. Pass a specific `ulong` revision to implement optimistic locking.
-
-## Getting started (client-server)
-
-To run MSSP as a standalone server, add the server package to an ASP.NET Core application:
-
-```
-dotnet add package MSSP.Embedded
-dotnet add package MSSP.Server
-```
-
-```csharp
-// Program.cs (server)
-builder.Services.AddMssp(options => options.DataDirectory = "./data")
-                .AddServer();
-
-app.UseMssp();
-```
-
-On the client side, install the client package:
-
-```
-dotnet add package MSSP.Client
-```
-
-```csharp
-// Program.cs (client)
-builder.Services.AddMssp(options =>
-    options.Address = new Uri("https://my-mssp-server:5001"));
-```
-
-Both server and client expose `IMsspClient` — the usage code is identical to the embedded example above.
-
-## Architecture
-
-MSSP is built on two foundational components:
-
-**Write Ahead Log (WAL)**
-All writes are persisted to the WAL before being acknowledged. In embedded mode this is a single append-only file. In cluster mode the WAL is replicated across nodes via a consensus algorithm (Raft), and a write is only durable once the cluster agrees.
-
-**LSM Tree**
-Events are stored in a log-structured merge tree:
-- Level 0: an in-memory SkipList (MemTable)
-- Levels 1–n: Sorted String Tables (SST) on disk, searched efficiently via bloom filters
-
-## Roadmap
-
-- [x] Log module (WAL foundation)
-- [x] LSM tree (MemTable, SST format, sparse index, compaction)
-- [x] Embedded event store (WAL + LSM, optimistic concurrency, recovery)
-- [x] Bloom filters (`.bf` sidecar per SST file, opt-in via `BloomFilteredSstAccess<TKey>`)
-- [x] Range queries in SkipList (`Scan(TKey from)` positions in O(log n) via skip list levels)
-- [x] Client-server mode (gRPC, contract-first; `MSSP.Server` + `MSSP.Client`)
-- [x] Cluster mode (Raft consensus)
+See the [wiki](../../wiki) for full setup instructions, architecture details, and operations guidance.
 
 ## Building
 

@@ -1,0 +1,51 @@
+name: Publish packages
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    branches: [main]
+    types:
+      - completed
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 2
+
+      - name: Check if version changed
+        id: version_check
+        run: |
+          if git diff HEAD~1 --name-only | grep -q 'Directory.Build.props'; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Setup .NET
+        if: steps.version_check.outputs.changed == 'true'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Pack
+        if: steps.version_check.outputs.changed == 'true'
+        run: >
+          dotnet pack src/MSSP.slnx
+          --configuration Release
+          -o ./packages
+          /p:Authors="${{ vars.NUGET_AUTHORS }}"
+          /p:PackageProjectUrl="${{ vars.NUGET_PROJECT_URL }}"
+          /p:Copyright="${{ vars.NUGET_COPYRIGHT }}"
+
+      - name: Push
+        if: steps.version_check.outputs.changed == 'true'
+        run: >
+          dotnet nuget push ./packages/*.nupkg
+          --api-key ${{ secrets.NUGET_API_KEY }}
+          --source ${{ vars.NUGET_PUSH_SOURCE }}
+          --skip-duplicate
