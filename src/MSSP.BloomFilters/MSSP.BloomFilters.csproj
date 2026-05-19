@@ -4,10 +4,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <PackageId>$(AssemblyName)</PackageId>
-    <Title>MSSP.BloomFilters</Title>
-    <Description>Bloom filter sidecar decorator for MSSP.LsmTree SST access.</Description>
-    <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
+    <IsPackable>false</IsPackable>
   </PropertyGroup>
 
   <ItemGroup>
