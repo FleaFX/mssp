@@ -39,7 +39,7 @@ sealed class InMemoryCluster : IAsyncDisposable {
 
             var store = await LsmStore<EventKey>.OpenAsync(options, AsyncEnumerable.Empty<ReadOnlyMemory<byte>>(), ct);
 
-            var client = new ClusteredMsspClient(node, store);
+            var client = new ClusteredMsspClient(node, store, []);
             cluster._nodes.Add(new NodeHandle(node, client, store));
         }
 

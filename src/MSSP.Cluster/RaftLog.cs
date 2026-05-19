@@ -13,7 +13,11 @@ sealed class RaftLog(RaftNode node, RaftLogStateMachine stateMachine) : ILog<Wal
     /// <inheritdoc/>
     public async ValueTask<bool> TryAppendAsync(WalRecord record, CancellationToken cancellationToken = default) {
         ReadOnlyMemory<byte> payload = record;
-        await node.ProposeAsync(payload, cancellationToken);
+        try {
+            await node.ProposeAsync(payload, cancellationToken);
+        } catch (NotLeaderException) {
+            return false;
+        }
         return true;
     }
 

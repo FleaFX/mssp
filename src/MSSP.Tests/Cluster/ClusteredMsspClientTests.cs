@@ -27,14 +27,13 @@ public class ClusteredMsspClientTests : IAsyncLifetime {
     }
 
     [Fact]
-    public async Task Follower_ThrowsNotLeaderException() {
+    public async Task Follower_ThrowsTimeoutException_WhenForwardingNotConfigured() {
         var leader = await _cluster.WaitForLeaderAsync();
         var follower = _cluster.Nodes.First(h => h.Node != leader.Node);
 
         var act = async () => await follower.Client.AppendAsync("stream-a", StreamRevision.NoStream, [Event("Foo", "bar")]);
 
-        await act.Should().ThrowAsync<NotLeaderException>()
-            .Where(ex => ex.LeaderHint != null);
+        await act.Should().ThrowAsync<TimeoutException>();
     }
 
     [Fact]
@@ -105,7 +104,7 @@ public class ClusteredMsspClientTests : IAsyncLifetime {
             var options = new LsmStoreOptions<EventKey>(dataDir, 1024 * 1024, raftLog, _ => ValueTask.CompletedTask);
             var store = await LsmStore<EventKey>.OpenAsync(options, AsyncEnumerable.Empty<ReadOnlyMemory<byte>>(), default);
             await node.StartAsync();
-            var client = new ClusteredMsspClient(node, store);
+            var client = new ClusteredMsspClient(node, store, []);
             try {
                 var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(3);
                 while (DateTime.UtcNow < deadline && !node.IsLeader)
