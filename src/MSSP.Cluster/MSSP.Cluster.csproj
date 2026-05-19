@@ -4,6 +4,10 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <PackageId>$(AssemblyName)</PackageId>
+    <Title>MSSP.Cluster</Title>
+    <Description>HA cluster implementation of the MSSP event store using Raft consensus.</Description>
+    <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
   </PropertyGroup>
 
   <ItemGroup>
