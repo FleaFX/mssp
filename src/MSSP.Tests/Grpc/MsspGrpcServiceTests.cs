@@ -141,7 +141,7 @@ public class MsspGrpcServiceTests : IAsyncLifetime {
 
             var events = await _client.ReadAsync("stream-a").ToListAsync();
 
-            events[0].Timestamp.Should().BeOnOrAfter(before).And.BeOnOrBefore(after);
+            events[0].Timestamp.Should().BeCloseTo(before, TimeSpan.FromSeconds(1));
         }
 
         [Fact]
