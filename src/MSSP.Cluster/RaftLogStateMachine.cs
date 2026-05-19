@@ -18,7 +18,7 @@ sealed class RaftLogStateMachine : IRaftStateMachine {
     ulong _lastAppliedIndex;
 
     /// <inheritdoc/>
-    public ulong LastAppliedIndex => _lastAppliedIndex;
+    public ulong LastAppliedIndex => Volatile.Read(ref _lastAppliedIndex);
 
     /// <summary>
     /// The stream of committed WAL records, consumed by <see cref="RaftLog"/>.
@@ -29,7 +29,7 @@ sealed class RaftLogStateMachine : IRaftStateMachine {
     public ValueTask<bool> ApplyAsync(RaftLogEntry entry, CancellationToken ct = default) {
         if (entry.Type == RaftLogEntryType.Command)
             _channel.Writer.TryWrite((WalRecord)entry.Payload);
-        _lastAppliedIndex = entry.Index;
+        Volatile.Write(ref _lastAppliedIndex, entry.Index);
         return ValueTask.FromResult(true);
     }
 
