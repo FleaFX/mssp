@@ -32,11 +32,16 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
+      - name: Build
+        if: steps.version_check.outputs.changed == 'true'
+        run: dotnet build src/MSSP.slnx --configuration Release
+
       - name: Pack
         if: steps.version_check.outputs.changed == 'true'
         run: >
           dotnet pack src/MSSP.slnx
           --configuration Release
+          --no-build
           -o ./packages
           /p:Authors="${{ vars.NUGET_AUTHORS }}"
           /p:PackageProjectUrl="${{ vars.NUGET_PROJECT_URL }}"
