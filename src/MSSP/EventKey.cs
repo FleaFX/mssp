@@ -1,8 +1,7 @@
 using System.Buffers.Binary;
 using System.Text;
-using MSSP.LsmTree;
 
-namespace MSSP.Embedded;
+namespace MSSP;
 
 /// <summary>
 /// Composite key that uniquely identifies a single event by stream and revision.

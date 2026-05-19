@@ -8,7 +8,7 @@ namespace MSSP.Embedded;
 /// Manages the lifecycle of <see cref="EmbeddedMsspClient"/> as an <see cref="IHostedService"/>.
 /// Opens the store on host startup and disposes it on shutdown.
 /// </summary>
-sealed class MsspHostedService(MsspOptions options) : IHostedService, IDisposable {
+public sealed class MsspHostedService(MsspOptions options) : IHostedService, IDisposable {
     EmbeddedMsspClient? _client;
     bool _disposed;
 

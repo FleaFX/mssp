@@ -2,6 +2,10 @@ namespace MSSP.Log;
 
 delegate ILogSegment<TRecord> SegmentFactory<TRecord>(int segmentSize) where TRecord : ILogRecord<TRecord>;
 
+/// <summary>
+/// An <see cref="ILog{TRecord}"/> backed by a growing list of fixed-size <see cref="ILogSegment{TRecord}"/> instances.
+/// When the active segment is full a new one is opened automatically.
+/// </summary>
 class SegmentedLog<TRecord>(int segmentSize = 0x100_0000, SegmentFactory<TRecord>? segmentFactory = null) : ILog<TRecord>, IDisposable where TRecord : ILogRecord<TRecord> {
     readonly List<ILogSegment<TRecord>> _segments = [];
     readonly SemaphoreSlim _semaphore = new(1, 1);

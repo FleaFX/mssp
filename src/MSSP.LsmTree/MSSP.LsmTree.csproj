@@ -14,5 +14,9 @@
     <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
   </PropertyGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\MSSP\MSSP.csproj" />
+    <ProjectReference Include="..\MSSP.Log\MSSP.Log.csproj" />
+  </ItemGroup>
 
 </Project>

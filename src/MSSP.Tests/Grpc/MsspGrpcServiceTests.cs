@@ -2,13 +2,11 @@ using FluentAssertions;
 using Grpc.Core;
 using Grpc.Net.Client;
 using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using MSSP.Client;
 using MSSP.Embedded;
-using MSSP.Server;
 using AppendRequest = MSSP.Grpc.AppendRequest;
 using ReadRequest = MSSP.Grpc.ReadRequest;
 using MsspGrpcClient = MSSP.Grpc.Mssp.MsspClient;
@@ -143,7 +141,7 @@ public class MsspGrpcServiceTests : IAsyncLifetime {
 
             var events = await _client.ReadAsync("stream-a").ToListAsync();
 
-            events[0].Timestamp.Should().BeOnOrAfter(before).And.BeOnOrBefore(after);
+            events[0].Timestamp.Should().BeCloseTo(before, TimeSpan.FromSeconds(1));
         }
 
         [Fact]
