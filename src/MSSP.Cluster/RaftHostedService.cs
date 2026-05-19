@@ -1,21 +1,21 @@
 using Microsoft.Extensions.Hosting;
 using MSSP.Embedded;
+using MSSP.LsmTree;
 using MSSP.Raft;
 
 namespace MSSP.Cluster;
 
 /// <summary>
 /// <see cref="IHostedService"/> that owns the lifetime of all Raft cluster resources:
-/// <see cref="FileRaftLog"/>, <see cref="MsspStateMachine"/>, <see cref="RaftGrpcTransport"/>,
-/// and <see cref="RaftNode"/>.
+/// <see cref="FileRaftLog"/>, <see cref="RaftLog"/>, <see cref="RaftLogStateMachine"/>,
+/// <see cref="LsmStore{TKey}"/>, <see cref="RaftGrpcTransport"/>, and <see cref="RaftNode"/>.
 /// </summary>
-/// <remarks>
-/// On startup the service reads the SST checkpoint index, opens the log and state machine,
-/// replays any log entries that postdate the checkpoint, then starts the Raft node.
-/// </remarks>
 sealed class RaftHostedService(MsspOptions msspOptions, MsspClusterOptions clusterOptions) : IHostedService, IDisposable {
-    FileRaftLog? _log;
-    MsspStateMachine? _stateMachine;
+    FileRaftLog? _raftLog;
+    RaftLog? _log;
+    RaftLogStateMachine? _stateMachine;
+    LsmStore<EventKey>? _store;
+    ClusteredMsspClient? _client;
     RaftNode? _node;
     RaftGrpcTransport? _transport;
     FileRaftStateStorage? _stateStorage;
@@ -29,20 +29,19 @@ sealed class RaftHostedService(MsspOptions msspOptions, MsspClusterOptions clust
         _node ?? throw new InvalidOperationException("Raft node is not available before the host has started.");
 
     /// <summary>
-    /// Gets the <see cref="MsspStateMachine"/> that holds the current event-store state.
+    /// Gets the <see cref="IMsspClient"/> for this cluster node.
     /// </summary>
     /// <exception cref="InvalidOperationException">Thrown if accessed before <see cref="StartAsync"/> completes.</exception>
-    public MsspStateMachine StateMachine =>
-        _stateMachine ?? throw new InvalidOperationException("State machine is not available before the host has started.");
+    public ClusteredMsspClient Client =>
+        _client ?? throw new InvalidOperationException("Client is not available before the host has started.");
 
     /// <inheritdoc/>
     public async Task StartAsync(CancellationToken cancellationToken) {
         var dataDir = msspOptions.DataDirectory;
+        var checkpointIndex = await RaftLogStateMachine.ReadCheckpointIndexAsync(dataDir, cancellationToken);
 
-        var checkpointIndex = await MsspStateMachine.ReadCheckpointIndexAsync(dataDir, cancellationToken);
-
-        _log = await FileRaftLog.OpenAsync(dataDir, cancellationToken);
-        _stateMachine = await MsspStateMachine.OpenAsync(dataDir, msspOptions.MemTableCapacityBytes, checkpointIndex, cancellationToken);
+        _raftLog = await FileRaftLog.OpenAsync(dataDir, cancellationToken);
+        _stateMachine = new RaftLogStateMachine();
         _stateStorage = new FileRaftStateStorage(dataDir);
         _transport = new RaftGrpcTransport(clusterOptions.Peers);
 
@@ -53,11 +52,26 @@ sealed class RaftHostedService(MsspOptions msspOptions, MsspClusterOptions clust
             clusterOptions.ElectionTimeoutMaxMs,
             clusterOptions.HeartbeatIntervalMs);
 
-        _node = new RaftNode(config, _log, _transport, _stateMachine, _stateStorage);
+        _node = new RaftNode(config, _raftLog, _transport, _stateMachine, _stateStorage);
+        _log = new RaftLog(_node, _stateMachine);
+
+        RaftLogStateMachine capturedStateMachine = _stateMachine;
+        MemTableFlushedDelegate onFlushed = async ct =>
+            await RaftLogStateMachine.WriteCheckpointAsync(dataDir, capturedStateMachine.LastAppliedIndex, ct);
+
+        var options = new LsmStoreOptions<EventKey>(
+            dataDir,
+            msspOptions.MemTableCapacityBytes,
+            _log,
+            onFlushed);
+
+        _store = await LsmStore<EventKey>.OpenAsync(options, AsyncEnumerable.Empty<ReadOnlyMemory<byte>>(), cancellationToken);
+
+        _client = new ClusteredMsspClient(_node, _store);
 
         // replay Raft log entries from checkpoint to current end
-        for (var i = checkpointIndex + 1; i <= _log.LastIndex; i++) {
-            var entry = await _log.GetEntryAsync(i, cancellationToken);
+        for (var i = checkpointIndex + 1; i <= _raftLog.LastIndex; i++) {
+            var entry = await _raftLog.GetEntryAsync(i, cancellationToken);
             await _stateMachine.ApplyAsync(entry, cancellationToken);
         }
 
@@ -75,9 +89,10 @@ sealed class RaftHostedService(MsspOptions msspOptions, MsspClusterOptions clust
     public void Dispose() {
         if (_disposed) return;
         _disposed = true;
+        _client?.Dispose();
         _node?.Dispose();
         _transport?.Dispose();
-        _stateMachine?.Dispose();
-        _log?.Dispose();
+        _store?.Dispose();
+        _raftLog?.Dispose();
     }
 }

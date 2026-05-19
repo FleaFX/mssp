@@ -1,4 +1,5 @@
 using FluentAssertions;
+using MSSP.LsmTree;
 using MSSP.Raft;
 
 namespace MSSP.Cluster;
@@ -91,48 +92,59 @@ public class ClusteredMsspClientTests : IAsyncLifetime {
         var dataDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
         Directory.CreateDirectory(dataDir);
 
-        // First run: use FileRaftLog so entries persist to disk
+        // First run: write an event using FileRaftLog so entries persist to disk
         {
-            var log = await FileRaftLog.OpenAsync(dataDir);
+            var fileRaftLog = await FileRaftLog.OpenAsync(dataDir);
+            var stateMachine = new RaftLogStateMachine();
             var stateStorage = new InMemoryRaftStateStorage();
             var transport = new InMemoryRaftTransport();
-            var stateMachine = await MsspStateMachine.OpenAsync(dataDir, 1024 * 1024, 0);
             var config = new RaftNodeConfig("n1", [], 50, 100, 20);
-            var node = new RaftNode(config, log, transport, stateMachine, stateStorage);
+            var node = new RaftNode(config, fileRaftLog, transport, stateMachine, stateStorage);
             transport.Register(node);
+            var raftLog = new RaftLog(node, stateMachine);
+            var options = new LsmStoreOptions<EventKey>(dataDir, 1024 * 1024, raftLog, _ => ValueTask.CompletedTask);
+            var store = await LsmStore<EventKey>.OpenAsync(options, AsyncEnumerable.Empty<ReadOnlyMemory<byte>>(), default);
             await node.StartAsync();
+            var client = new ClusteredMsspClient(node, store);
             try {
                 var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(3);
                 while (DateTime.UtcNow < deadline && !node.IsLeader)
                     await Task.Delay(50);
 
                 node.IsLeader.Should().BeTrue();
-                var client = new ClusteredMsspClientAdapter(node, stateMachine);
                 await client.AppendAsync("stream-a", StreamRevision.NoStream, [Event("Foo", "data")]);
             } finally {
                 await node.StopAsync();
-                log.Dispose();
-                stateMachine.Dispose();
+                client.Dispose();
+                store.Dispose();
+                fileRaftLog.Dispose();
             }
         }
 
-        // Second run: reopen FileRaftLog, replay entries from checkpoint+1
+        // Second run: reopen FileRaftLog and replay entries from checkpoint+1
         {
-            var checkpointIndex = await MsspStateMachine.ReadCheckpointIndexAsync(dataDir);
-            var log2 = await FileRaftLog.OpenAsync(dataDir);
-            var stateMachine2 = await MsspStateMachine.OpenAsync(dataDir, 1024 * 1024, checkpointIndex);
+            var checkpointIndex = await RaftLogStateMachine.ReadCheckpointIndexAsync(dataDir);
+            var fileRaftLog2 = await FileRaftLog.OpenAsync(dataDir);
+            var stateMachine2 = new RaftLogStateMachine();
+            var node2 = new RaftNode(new RaftNodeConfig("n1", [], 50, 100, 20), fileRaftLog2, new InMemoryRaftTransport(), stateMachine2, new InMemoryRaftStateStorage());
+            var raftLog2 = new RaftLog(node2, stateMachine2);
+            var options2 = new LsmStoreOptions<EventKey>(dataDir, 1024 * 1024, raftLog2, _ => ValueTask.CompletedTask);
+            var store2 = await LsmStore<EventKey>.OpenAsync(options2, AsyncEnumerable.Empty<ReadOnlyMemory<byte>>(), default);
             try {
-                for (var i = checkpointIndex + 1; i <= log2.LastIndex; i++) {
-                    var entry = await log2.GetEntryAsync(i);
+                for (var i = checkpointIndex + 1; i <= fileRaftLog2.LastIndex; i++) {
+                    var entry = await fileRaftLog2.GetEntryAsync(i);
                     await stateMachine2.ApplyAsync(entry);
                 }
 
-                var scan = stateMachine2.ScanSnapshotFrom(new EventKey("stream-a", 0));
+                // wait for apply loop to process the replayed records
+                await Task.Delay(100);
+
+                var scan = store2.ScanSnapshotFrom(new EventKey("stream-a", 0));
                 var events = scan.Where(kvp => kvp.Key.StreamId == "stream-a").ToList();
                 events.Should().HaveCount(1);
             } finally {
-                log2.Dispose();
-                stateMachine2.Dispose();
+                store2.Dispose();
+                fileRaftLog2.Dispose();
                 if (Directory.Exists(dataDir)) Directory.Delete(dataDir, recursive: true);
             }
         }

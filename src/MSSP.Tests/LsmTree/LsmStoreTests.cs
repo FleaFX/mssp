@@ -1,6 +1,8 @@
 using System.Runtime.CompilerServices;
 using System.Text;
+using System.Threading.Channels;
 using FluentAssertions;
+using MSSP.Log;
 
 namespace MSSP.LsmTree;
 
@@ -21,11 +23,21 @@ public class LsmStoreTests : IAsyncLifetime {
     }
 
     LsmStoreOptions<StringKey> Options(int capacityBytes = 4096) =>
-        new(_dataDir, capacityBytes, AppendToWal, _ => ValueTask.CompletedTask);
+        new(_dataDir, capacityBytes, new CapturingLog(_captured), _ => ValueTask.CompletedTask);
 
-    ValueTask<bool> AppendToWal(ReadOnlyMemory<byte> record, CancellationToken _) {
-        _captured.Add(record.ToArray());
-        return ValueTask.FromResult(true);
+    sealed class CapturingLog(List<ReadOnlyMemory<byte>> captured) : ILog<WalRecord> {
+        readonly Channel<WalRecord> _channel = Channel.CreateUnbounded<WalRecord>(
+            new UnboundedChannelOptions { SingleReader = true });
+
+        public ValueTask<bool> TryAppendAsync(WalRecord record, CancellationToken cancellationToken = default) {
+            ReadOnlyMemory<byte> bytes = record;
+            captured.Add(bytes.ToArray());
+            _channel.Writer.TryWrite(record);
+            return ValueTask.FromResult(true);
+        }
+
+        public IAsyncEnumerator<WalRecord> GetAsyncEnumerator(CancellationToken cancellationToken = default) =>
+            _channel.Reader.ReadAllAsync(cancellationToken).GetAsyncEnumerator(cancellationToken);
     }
 
     static async IAsyncEnumerable<ReadOnlyMemory<byte>> Empty(
@@ -150,7 +162,7 @@ public class LsmStoreTests : IAsyncLifetime {
     public class CompactAsyncTests : LsmStoreTests {
         // Disable auto-compaction by default so tests can assert exact SST file counts.
         LsmStoreOptions<StringKey> Options(int capacityBytes = 4096, int compactionThreshold = int.MaxValue) =>
-            new(_dataDir, capacityBytes, AppendToWal, _ => ValueTask.CompletedTask, compactionThreshold);
+            new(_dataDir, capacityBytes, new CapturingLog(_captured), _ => ValueTask.CompletedTask, compactionThreshold);
 
         [Fact]
         public async Task NoOp_WhenFewerThanTwoSstFiles() {

@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using MSSP.Log;
+using MSSP.LsmTree;
 
 namespace MSSP.Embedded;
 

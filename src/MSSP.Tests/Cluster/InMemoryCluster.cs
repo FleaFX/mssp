@@ -1,9 +1,10 @@
+using MSSP.LsmTree;
 using MSSP.Raft;
 
 namespace MSSP.Cluster;
 
 sealed class InMemoryCluster : IAsyncDisposable {
-    public record NodeHandle(RaftNode Node, MsspStateMachine StateMachine, ClusteredMsspClientAdapter Client);
+    public record NodeHandle(RaftNode Node, ClusteredMsspClient Client, LsmStore<EventKey> Store);
 
     readonly List<NodeHandle> _nodes = [];
 
@@ -21,15 +22,25 @@ sealed class InMemoryCluster : IAsyncDisposable {
             var dataDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
             Directory.CreateDirectory(dataDir);
 
-            var stateMachine = await MsspStateMachine.OpenAsync(dataDir, memTableCapacityBytes, 0, ct);
+            var stateMachine = new RaftLogStateMachine();
             var log = new InMemoryRaftLog();
             var stateStorage = new InMemoryRaftStateStorage();
             var config = new RaftNodeConfig(nodeId, peers, 50, 100, 20);
             var node = new RaftNode(config, log, transport, stateMachine, stateStorage);
             transport.Register(node);
 
-            var client = new ClusteredMsspClientAdapter(node, stateMachine);
-            cluster._nodes.Add(new NodeHandle(node, stateMachine, client));
+            var raftLog = new RaftLog(node, stateMachine);
+
+            var options = new LsmStoreOptions<EventKey>(
+                dataDir,
+                memTableCapacityBytes,
+                raftLog,
+                _ => ValueTask.CompletedTask);
+
+            var store = await LsmStore<EventKey>.OpenAsync(options, AsyncEnumerable.Empty<ReadOnlyMemory<byte>>(), ct);
+
+            var client = new ClusteredMsspClient(node, store);
+            cluster._nodes.Add(new NodeHandle(node, client, store));
         }
 
         foreach (var h in cluster._nodes)
@@ -51,32 +62,9 @@ sealed class InMemoryCluster : IAsyncDisposable {
     public async ValueTask DisposeAsync() {
         foreach (var h in _nodes)
             await h.Node.StopAsync();
-        foreach (var h in _nodes)
-            h.StateMachine.Dispose();
-    }
-}
-
-// Adapter: wraps RaftNode + MsspStateMachine as IMsspClient without RaftHostedService
-sealed class ClusteredMsspClientAdapter(RaftNode node, MsspStateMachine stateMachine) : IMsspClient {
-    public async ValueTask AppendAsync(StreamId streamId, StreamRevision expectedRevision, IEnumerable<EventData> events, CancellationToken ct = default) {
-        if (!node.IsLeader)
-            throw new NotLeaderException(node.LeaderHint);
-        var payload = AppendCommand.Serialize(streamId.Value, (long)expectedRevision, events);
-        var result = await node.ProposeAsync(payload, ct);
-        if (result.IsOccConflict)
-            throw new OptimisticConcurrencyException(streamId, expectedRevision);
-    }
-
-    public async IAsyncEnumerable<RecordedEvent> ReadAsync(StreamId streamId, StreamRevision from = default, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default) {
-        if (!node.IsLeader)
-            throw new NotLeaderException(node.LeaderHint);
-        var startKey = new EventKey(streamId.Value, 0UL);
-        var scan = stateMachine.ScanSnapshotFrom(startKey);
-        foreach (var (key, value) in scan) {
-            if (ct.IsCancellationRequested) yield break;
-            if (key.StreamId != streamId.Value) break;
-            if (key.Revision < from || value is null) continue;
-            yield return ((EventValue)value.Value).ToRecordedEvent(key);
+        foreach (var h in _nodes) {
+            h.Client.Dispose();
+            h.Store.Dispose();
         }
     }
 }

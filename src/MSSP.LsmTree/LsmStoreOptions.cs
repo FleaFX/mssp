@@ -1,11 +1,19 @@
+using MSSP.Log;
+
 namespace MSSP.LsmTree;
+
+/// <summary>
+/// Invoked after each MemTable flush, e.g. to rotate the WAL so flushed records are no longer replayed on recovery.
+/// </summary>
+/// <param name="cancellationToken">Token to cancel the callback.</param>
+delegate ValueTask MemTableFlushedDelegate(CancellationToken cancellationToken);
 
 /// <summary>
 /// Configuration for opening or creating a <see cref="LsmStore{TKey}"/>.
 /// </summary>
 /// <param name="DataDirectory">The directory in which SST files are stored.</param>
 /// <param name="CapacityBytes">The maximum size of the MemTable before it is flushed to an SST file.</param>
-/// <param name="WalAppend">Delegate used to append records to the WAL.</param>
+/// <param name="Log">The write-ahead log used to accept and commit records.</param>
 /// <param name="OnFlushed">Callback invoked after each MemTable flush, e.g. to rotate the WAL.</param>
 /// <param name="CompactionThreshold">
 /// Number of SST files that triggers automatic compaction after a flush.
@@ -18,7 +26,7 @@ namespace MSSP.LsmTree;
 readonly record struct LsmStoreOptions<TKey>(
     string DataDirectory,
     int CapacityBytes,
-    WalAppendDelegate WalAppend,
+    ILog<WalRecord> Log,
     MemTableFlushedDelegate OnFlushed,
     int CompactionThreshold = 4,
     ISstAccess<TKey>? SstAccess = null

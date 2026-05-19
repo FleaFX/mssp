@@ -33,8 +33,7 @@ public static class MsspClusterBuilderExtensions {
             builder.Services.Remove(d);
 
         builder.Services.AddSingleton<RaftHostedService>();
-        builder.Services.AddSingleton<ClusteredMsspClient>();
-        builder.Services.AddSingleton<IMsspClient>(sp => sp.GetRequiredService<ClusteredMsspClient>());
+        builder.Services.AddSingleton<IMsspClient>(sp => sp.GetRequiredService<RaftHostedService>().Client);
         builder.Services.AddHostedService(sp => sp.GetRequiredService<RaftHostedService>());
 
         return builder;

@@ -28,7 +28,8 @@ public sealed class EmbeddedMsspClient : IMsspClient, IDisposable {
     public static async ValueTask<EmbeddedMsspClient> OpenAsync(string dataDirectory, int memTableCapacityBytes = 64 * 1024 * 1024, ISstAccess<EventKey>? sst = null, CancellationToken ct = default) {
         Directory.CreateDirectory(dataDirectory);
         var wal = WalManager.Open(dataDirectory);
-        var options = new LsmStoreOptions<EventKey>(dataDirectory, memTableCapacityBytes, wal.AppendAsync, wal.RotateAsync, SstAccess: sst);
+        var log = new EmbeddedLog(wal);
+        var options = new LsmStoreOptions<EventKey>(dataDirectory, memTableCapacityBytes, log, _ => ValueTask.CompletedTask, SstAccess: sst);
         var store = await LsmStore<EventKey>.OpenAsync(options, wal.ReadAllAsync(ct), ct);
         return new EmbeddedMsspClient(store, wal);
     }

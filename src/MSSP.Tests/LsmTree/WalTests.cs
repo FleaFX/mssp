@@ -1,6 +1,5 @@
 using System.Text;
 using FluentAssertions;
-using MSSP.Log;
 
 namespace MSSP.LsmTree;
 
@@ -9,15 +8,15 @@ public class WalRecoveryTests {
     static string Text(ReadOnlyMemory<byte> b) => Encoding.UTF8.GetString(b.Span);
 
     [Fact]
-    public async Task Recovery_RestoresWrittenEntries() {
-        using var walLog = new StreamSegment<WalRecord>(new MemoryStream());
-        using var original = new MemTable<StringKey>(4096, (bytes, ct) => walLog.TryAppendAsync(new WalRecord(bytes), ct));
-        await original.TryWriteAsync(new StringKey("a"), Bytes("value-a"));
-        await original.TryWriteAsync(new StringKey("b"), Bytes("value-b"));
+    public void Recovery_RestoresWrittenEntries() {
+        var walRecords = new[] {
+            WalRecord.From(new StringKey("a"), Bytes("value-a")),
+            WalRecord.From(new StringKey("b"), Bytes("value-b")),
+        };
 
-        using var recovered = new MemTable<StringKey>(4096, (_, _) => ValueTask.FromResult(true));
-        await foreach (var record in walLog)
-            recovered.ApplyRecord(record.Bytes);
+        using var recovered = new MemTable<StringKey>(4096);
+        foreach (var record in walRecords)
+            recovered.ApplyRecord(record);
 
         recovered.Count.Should().Be(2);
         recovered.TryGet(new StringKey("a"), out var va).Should().BeTrue();
@@ -27,47 +26,39 @@ public class WalRecoveryTests {
     }
 
     [Fact]
-    public async Task Recovery_RestoresTombstone() {
-        using var walLog = new StreamSegment<WalRecord>(new MemoryStream());
-        using var original = new MemTable<StringKey>(4096, (bytes, ct) => walLog.TryAppendAsync(new WalRecord(bytes), ct));
-        await original.TryWriteAsync(new StringKey("x"), Bytes("value"));
-        await original.TryDeleteAsync(new StringKey("x"));
+    public void Recovery_RestoresTombstone() {
+        var walRecords = new[] {
+            WalRecord.From(new StringKey("x"), Bytes("value")),
+            WalRecord.Tombstone(new StringKey("x")),
+        };
 
-        using var recovered = new MemTable<StringKey>(4096, (_, _) => ValueTask.FromResult(true));
-        await foreach (var record in walLog)
-            recovered.ApplyRecord(record.Bytes);
+        using var recovered = new MemTable<StringKey>(4096);
+        foreach (var record in walRecords)
+            recovered.ApplyRecord(record);
 
         recovered.TryGet(new StringKey("x"), out var value).Should().BeTrue();
         value.Should().BeNull();
     }
 
     [Fact]
-    public async Task Recovery_LastWriteWins_OnDuplicateKey() {
-        using var walLog = new StreamSegment<WalRecord>(new MemoryStream());
-        using var original = new MemTable<StringKey>(4096, (bytes, ct) => walLog.TryAppendAsync(new WalRecord(bytes), ct));
-        await original.TryWriteAsync(new StringKey("k"), Bytes("first"));
-        await original.TryWriteAsync(new StringKey("k"), Bytes("second"));
+    public void Recovery_LastWriteWins_OnDuplicateKey() {
+        var walRecords = new[] {
+            WalRecord.From(new StringKey("k"), Bytes("first")),
+            WalRecord.From(new StringKey("k"), Bytes("second")),
+        };
 
-        using var recovered = new MemTable<StringKey>(4096, (_, _) => ValueTask.FromResult(true));
-        await foreach (var record in walLog)
-            recovered.ApplyRecord(record.Bytes);
+        using var recovered = new MemTable<StringKey>(4096);
+        foreach (var record in walRecords)
+            recovered.ApplyRecord(record);
 
         recovered.TryGet(new StringKey("k"), out var value).Should().BeTrue();
         Text(value!.Value).Should().Be("second");
     }
 
     [Fact]
-    public async Task Recovery_EmptyWal_ProducesEmptyMemTable() {
-        using var walLog = new StreamSegment<WalRecord>(new MemoryStream());
-        using var recovered = new MemTable<StringKey>(4096, (_, _) => ValueTask.FromResult(true));
-        await foreach (var record in walLog)
-            recovered.ApplyRecord(record.Bytes);
+    public void Recovery_EmptyWal_ProducesEmptyMemTable() {
+        using var recovered = new MemTable<StringKey>(4096);
 
         recovered.Count.Should().Be(0);
     }
-}
-
-readonly record struct WalRecord(ReadOnlyMemory<byte> Bytes) : ILogRecord<WalRecord> {
-    public static implicit operator ReadOnlyMemory<byte>(WalRecord record) => record.Bytes;
-    public static implicit operator WalRecord(ReadOnlyMemory<byte> memory) => new(memory);
 }
