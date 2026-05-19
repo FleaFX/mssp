@@ -140,6 +140,8 @@ sealed class ClusteredMsspClient(RaftNode node, LsmStore<EventKey> store, RaftCl
     /// <inheritdoc/>
     public void Dispose() {
         _writeLock.Dispose();
-        _leaderChannel?.Dispose();
+        lock (_leaderClientLock) {
+            _leaderChannel?.Dispose();
+        }
     }
 }
