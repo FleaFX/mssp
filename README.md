@@ -95,7 +95,7 @@ Events are stored in a log-structured merge tree:
 - [x] Bloom filters (`.bf` sidecar per SST file, opt-in via `BloomFilteredSstAccess<TKey>`)
 - [x] Range queries in SkipList (`Scan(TKey from)` positions in O(log n) via skip list levels)
 - [x] Client-server mode (gRPC, contract-first; `MSSP.Server` + `MSSP.Client`)
-- [ ] Cluster mode (Raft consensus)
+- [x] Cluster mode (Raft consensus)
 
 ## Building
 
