@@ -4,6 +4,16 @@ using Grpc.Core;
 using AppendRequest = MSSP.Grpc.AppendRequest;
 using ReadRequest = MSSP.Grpc.ReadRequest;
 using GrpcEventData = MSSP.Grpc.EventData;
+using SubscribeRequest = MSSP.Grpc.SubscribeRequest;
+using GrpcSubscriptionEvent = MSSP.Grpc.SubscriptionEvent;
+using GrpcSubscriptionFilter = MSSP.Grpc.SubscriptionFilter;
+using GrpcAllFilter = MSSP.Grpc.AllFilter;
+using GrpcStreamIdFilter = MSSP.Grpc.StreamIdFilter;
+using GrpcStreamPrefixFilter = MSSP.Grpc.StreamPrefixFilter;
+using GrpcStreamPatternFilter = MSSP.Grpc.StreamPatternFilter;
+using GrpcEventTypeFilter = MSSP.Grpc.EventTypeFilter;
+using GrpcEventTypePatternFilter = MSSP.Grpc.EventTypePatternFilter;
+using GrpcAndFilter = MSSP.Grpc.AndFilter;
 using MsspClient = MSSP.Grpc.Mssp.MsspClient;
 
 namespace MSSP.Client;
@@ -43,6 +53,40 @@ sealed class RemoteMsspClient(MsspClient grpcClient) : IMsspClient {
     }
 
     /// <inheritdoc/>
-    public IAsyncEnumerable<SubscriptionEvent> SubscribeAsync(SubscriptionFilter filter, GlobalPosition fromPosition = default, CancellationToken ct = default) =>
-        throw new NotSupportedException("Subscriptions over gRPC are not yet implemented.");
+    public async IAsyncEnumerable<SubscriptionEvent> SubscribeAsync(
+        SubscriptionFilter filter,
+        GlobalPosition fromPosition = default,
+        [EnumeratorCancellation] CancellationToken ct = default) {
+
+        var request = new SubscribeRequest { Filter = ToProto(filter), FromPosition = fromPosition.Value };
+        using var call = grpcClient.Subscribe(request, cancellationToken: ct);
+        while (await call.ResponseStream.MoveNext(ct)) {
+            var e = call.ResponseStream.Current;
+            yield return new SubscriptionEvent(
+                new StreamId(e.StreamId),
+                e.Revision,
+                e.EventType,
+                e.Data.Memory,
+                new DateTimeOffset(DateTimeOffset.UnixEpoch.Ticks + e.TimestampNs / 100L, TimeSpan.Zero),
+                new GlobalPosition(e.Position));
+        }
+    }
+
+    static GrpcSubscriptionFilter ToProto(SubscriptionFilter filter) => filter switch {
+        SubscriptionFilter.AllFilter =>
+            new GrpcSubscriptionFilter { All = new GrpcAllFilter() },
+        SubscriptionFilter.StreamIdFilter f =>
+            new GrpcSubscriptionFilter { StreamIdFilter = new GrpcStreamIdFilter { StreamId = f.Id.Value } },
+        SubscriptionFilter.StreamPrefixFilter f =>
+            new GrpcSubscriptionFilter { StreamPrefix = new GrpcStreamPrefixFilter { Prefix = f.Prefix } },
+        SubscriptionFilter.StreamPatternFilter f =>
+            new GrpcSubscriptionFilter { StreamPattern = new GrpcStreamPatternFilter { Pattern = f.Pattern.ToString() } },
+        SubscriptionFilter.EventTypeFilter f =>
+            new GrpcSubscriptionFilter { EventTypeFilter = new GrpcEventTypeFilter { EventType = f.EventType } },
+        SubscriptionFilter.EventTypePatternFilter f =>
+            new GrpcSubscriptionFilter { EventTypePattern = new GrpcEventTypePatternFilter { Pattern = f.Pattern.ToString() } },
+        SubscriptionFilter.AndFilter f =>
+            new GrpcSubscriptionFilter { And = new GrpcAndFilter { Filters = { ToProto(f.Left), ToProto(f.Right) } } },
+        _ => new GrpcSubscriptionFilter { All = new GrpcAllFilter() }
+    };
 }

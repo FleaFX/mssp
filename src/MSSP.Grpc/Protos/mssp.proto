@@ -5,8 +5,9 @@ option csharp_namespace = "MSSP.Grpc";
 package mssp;
 
 service Mssp {
-  rpc Append (AppendRequest) returns (AppendResponse);
-  rpc Read   (ReadRequest)   returns (stream RecordedEvent);
+  rpc Append    (AppendRequest)    returns (AppendResponse);
+  rpc Read      (ReadRequest)      returns (stream RecordedEvent);
+  rpc Subscribe (SubscribeRequest) returns (stream SubscriptionEvent);
 }
 
 message AppendRequest {
@@ -34,3 +35,37 @@ message RecordedEvent {
   bytes  data         = 4;
   int64  timestamp_ns = 5;
 }
+
+message SubscribeRequest {
+  SubscriptionFilter filter        = 1;
+  uint64             from_position = 2;
+}
+
+message SubscriptionEvent {
+  string stream_id    = 1;
+  uint64 revision     = 2;
+  string event_type   = 3;
+  bytes  data         = 4;
+  int64  timestamp_ns = 5;
+  uint64 position     = 6;
+}
+
+message SubscriptionFilter {
+  oneof kind {
+    AllFilter              all                = 1;
+    StreamIdFilter         stream_id_filter   = 2;
+    StreamPrefixFilter     stream_prefix      = 3;
+    StreamPatternFilter    stream_pattern     = 4;
+    EventTypeFilter        event_type_filter  = 5;
+    EventTypePatternFilter event_type_pattern = 6;
+    AndFilter              and                = 7;
+  }
+}
+
+message AllFilter              {}
+message StreamIdFilter         { string stream_id  = 1; }
+message StreamPrefixFilter     { string prefix     = 1; }
+message StreamPatternFilter    { string pattern    = 1; }
+message EventTypeFilter        { string event_type = 1; }
+message EventTypePatternFilter { string pattern    = 1; }
+message AndFilter              { repeated SubscriptionFilter filters = 1; }
