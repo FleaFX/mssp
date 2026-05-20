@@ -8,9 +8,9 @@ namespace MSSP.Cluster;
 public class ClusteredMsspClientTests : IAsyncLifetime {
     InMemoryCluster _cluster = null!;
 
-    public async Task InitializeAsync() => _cluster = await InMemoryCluster.CreateAsync();
+    public async ValueTask InitializeAsync() => _cluster = await InMemoryCluster.CreateAsync();
 
-    public async Task DisposeAsync() => await _cluster.DisposeAsync();
+    public async ValueTask DisposeAsync() => await _cluster.DisposeAsync();
 
     static EventData Event(string type, string payload) =>
         new(type, System.Text.Encoding.UTF8.GetBytes(payload));

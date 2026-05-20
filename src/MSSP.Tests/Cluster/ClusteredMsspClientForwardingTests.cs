@@ -20,7 +20,7 @@ public class ClusteredMsspClientForwardingTests : IAsyncLifetime {
     string _followerDataDir = null!;
     InMemoryCluster.NodeHandle _leader = null!;
 
-    public async Task InitializeAsync() {
+    public async ValueTask InitializeAsync() {
         _cluster = await InMemoryCluster.CreateAsync(nodeCount: 2);
         _leader = await _cluster.WaitForLeaderAsync();
         var follower = _cluster.Nodes.First(h => h.Node != _leader.Node);
@@ -54,7 +54,7 @@ public class ClusteredMsspClientForwardingTests : IAsyncLifetime {
         _followerClient = new ClusteredMsspClient(follower.Node, _followerLocal, peers);
     }
 
-    public async Task DisposeAsync() {
+    public async ValueTask DisposeAsync() {
         _followerClient?.Dispose();
         _followerLocal?.Dispose();
         if (_leaderServer is not null) await _leaderServer.DisposeAsync();

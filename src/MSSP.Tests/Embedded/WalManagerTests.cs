@@ -7,16 +7,16 @@ public class WalManagerTests : IAsyncLifetime {
     readonly string _dataDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
     WalManager _wal = null!;
 
-    public Task InitializeAsync() {
+    public ValueTask InitializeAsync() {
         Directory.CreateDirectory(_dataDir);
         _wal = WalManager.Open(_dataDir);
-        return Task.CompletedTask;
+        return ValueTask.CompletedTask;
     }
 
-    public Task DisposeAsync() {
+    public ValueTask DisposeAsync() {
         _wal.Dispose();
         Directory.Delete(_dataDir, recursive: true);
-        return Task.CompletedTask;
+        return ValueTask.CompletedTask;
     }
 
     static ReadOnlyMemory<byte> Bytes(string s) => Encoding.UTF8.GetBytes(s);
