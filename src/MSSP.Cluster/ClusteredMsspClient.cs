@@ -75,9 +75,6 @@ sealed class ClusteredMsspClient(
         GlobalPosition fromPosition = default,
         [EnumeratorCancellation] CancellationToken ct = default) {
 
-        if (!node.IsLeader)
-            throw new NotSupportedException("Subscriptions are only supported on the Raft leader node.");
-
         await foreach (var e in local.SubscribeAsync(filter, fromPosition, ct))
             yield return e;
     }

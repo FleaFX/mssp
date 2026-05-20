@@ -57,15 +57,41 @@ public class SubscribeAsyncTests : IAsyncLifetime {
     }
 
     [Fact]
-    public async Task Follower_ThrowsNotSupportedException() {
+    public async Task Follower_CatchUp_YieldsHistoricalEvents() {
         var leader = await _cluster.WaitForLeaderAsync();
         var follower = _cluster.Nodes.First(h => h.Node != leader.Node);
 
-        var act = async () => await follower.Client
-            .SubscribeAsync(SubscriptionFilter.All)
-            .GetAsyncEnumerator()
-            .MoveNextAsync();
+        await leader.Client.AppendAsync("stream-a", StreamRevision.NoStream, [Event("A", "1"), Event("B", "2")]);
 
-        await act.Should().ThrowAsync<NotSupportedException>();
+        // Wait for Raft to replicate and apply the committed entries on the follower.
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (DateTime.UtcNow < deadline && follower.Local.CurrentPosition.Value < 2)
+            await Task.Delay(20);
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var events = await CollectAsync(
+            follower.Client.SubscribeAsync(SubscriptionFilter.All, ct: cts.Token),
+            2);
+
+        events.Should().HaveCount(2);
+        events.Select(e => e.EventType).Should().Equal("A", "B");
+    }
+
+    [Fact]
+    public async Task Follower_LiveEvent_IsDelivered() {
+        var leader = await _cluster.WaitForLeaderAsync();
+        var follower = _cluster.Nodes.First(h => h.Node != leader.Node);
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var collectTask = CollectAsync(follower.Client.SubscribeAsync(SubscriptionFilter.All, ct: cts.Token), 1);
+
+        // Give the subscription a moment to enter the live phase before writing.
+        await Task.Delay(50);
+        await leader.Client.AppendAsync("stream-a", StreamRevision.NoStream, [Event("LiveFromLeader", "x")]);
+
+        var events = await collectTask;
+
+        events.Should().HaveCount(1);
+        events[0].EventType.Should().Be("LiveFromLeader");
     }
 }

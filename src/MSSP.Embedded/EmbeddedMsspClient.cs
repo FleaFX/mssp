@@ -15,6 +15,12 @@ public sealed class EmbeddedMsspClient(
     readonly RevisionIndex _revisions = new();
 
     /// <summary>
+    /// The <see cref="GlobalPosition"/> of the most recently applied event on this node.
+    /// On a follower, this reflects entries received via Raft replication.
+    /// </summary>
+    public GlobalPosition CurrentPosition => subscriptions.CurrentPosition;
+
+    /// <summary>
     /// Opens or creates an embedded event store at the given <paramref name="dataDirectory"/>,
     /// recovering any unflushed writes from the WAL.
     /// </summary>
