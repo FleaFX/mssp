@@ -91,11 +91,6 @@ public sealed class SubscriptionPipeline : ILsmStore<EventKey>, ISubscriptionPro
     public IEnumerable<SubscriptionEvent> ScanFrom(GlobalPosition from, Func<EventKey, SubscriptionEvent>? resolver = null)
         => _subscriptionLog.ScanFrom(from, resolver);
 
-    /// <summary>
-    /// Completes all active subscription channels. Called on shutdown.
-    /// </summary>
-    public void CompleteAll() => _bus.CompleteAll();
-
     /// <inheritdoc/>
     public void Dispose() {
         _bus.CompleteAll();

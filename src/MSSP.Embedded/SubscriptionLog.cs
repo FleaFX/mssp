@@ -193,13 +193,6 @@ public sealed partial class SubscriptionLog : IDisposable {
         }
     }
 
-    /// <summary>
-    /// Returns paths of sealed segments whose last event is before <paramref name="cutoffPosition"/>.
-    /// These are safe to archive or delete.
-    /// </summary>
-    public IReadOnlyList<string> GetArchivablePaths(GlobalPosition cutoffPosition) =>
-        _sealed.Where(s => s.End < cutoffPosition).Select(s => s.Path).ToList();
-
     void OpenNewSegment(GlobalPosition startPosition) {
         _activePath = Path.Combine(_dataDirectory, $"{FilePrefix}{startPosition.Value:D20}{FileSuffix}");
         _activeStart = startPosition;
