@@ -83,17 +83,32 @@ public sealed class LogDrivenStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKe
             await foreach (var record in _log.WithCancellation(ct)) {
                 ReadOnlyMemory<byte> bytes = record;
                 var span = bytes.Span;
-                if (span.Length < 5) goto signal;
+
+                if (span.Length < 5) {
+                    if (_pending.TryDequeue(out var badTcs))
+                        badTcs.TrySetException(new InvalidDataException("Malformed WAL record: too short."));
+                    continue;
+                }
+
                 var keyLen = BinaryPrimitives.ReadInt32LittleEndian(span[1..]);
-                if (keyLen < 0 || 5 + keyLen > span.Length) goto signal;
+                if (keyLen < 0 || 5 + keyLen > span.Length) {
+                    if (_pending.TryDequeue(out var badTcs))
+                        badTcs.TrySetException(new InvalidDataException("Malformed WAL record: invalid key length."));
+                    continue;
+                }
 
                 TKey key = bytes.Slice(5, keyLen);
                 // Copy value slice to a mutable Memory<byte> so inner decorators can read/write it.
-                var value = bytes.Slice(5 + keyLen).ToArray();
+                var value = bytes[(5 + keyLen)..].ToArray();
 
-                await _inner.WriteAsync(key, value, ct);
+                try {
+                    await _inner.WriteAsync(key, value, ct);
+                } catch (Exception ex) when (ex is not OperationCanceledException) {
+                    if (_pending.TryDequeue(out var failedTcs))
+                        failedTcs.TrySetException(ex);
+                    throw;
+                }
 
-                signal:
                 if (_pending.TryDequeue(out var tcs))
                     tcs.SetResult(true);
             }
@@ -108,7 +123,9 @@ public sealed class LogDrivenStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKe
     /// <inheritdoc/>
     public void Dispose() {
         _loopCts?.Cancel();
-        _loopTask?.GetAwaiter().GetResult();
+        // Swallow: the loop exits cleanly on cancellation; any unexpected exception was
+        // already propagated to the caller via the TCS before the loop exited.
+        try { _loopTask?.GetAwaiter().GetResult(); } catch { }
         while (_pending.TryDequeue(out var tcs))
             tcs.TrySetCanceled();
         _loopCts?.Dispose();

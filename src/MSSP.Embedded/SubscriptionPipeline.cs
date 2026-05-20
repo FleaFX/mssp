@@ -47,6 +47,10 @@ public sealed class SubscriptionPipeline : ILsmStore<EventKey>, ISubscriptionPro
     /// replays) are forwarded to the inner store only, keeping the subscription log idempotent.
     /// Must be called while holding the write lock.
     /// </summary>
+    /// <remarks>
+    /// <paramref name="value"/> must be at least 8 bytes long; the last 8 bytes are read as the
+    /// <see cref="GlobalPosition"/> written by <see cref="GlobalPositionDecorator"/>.
+    /// </remarks>
     public async ValueTask WriteAsync(EventKey key, Memory<byte> value, CancellationToken ct) {
         var pos = new GlobalPosition(BinaryPrimitives.ReadUInt64LittleEndian(value.Span[^8..]));
 

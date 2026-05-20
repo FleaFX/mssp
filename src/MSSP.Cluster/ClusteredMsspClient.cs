@@ -13,8 +13,10 @@ namespace MSSP.Cluster;
 
 /// <summary>
 /// <see cref="IMsspClient"/> implementation that routes writes through the Raft leader.
-/// When this node is the leader, requests are handled locally via <see cref="EmbeddedMsspClient"/>.
-/// When it is a follower, requests are transparently forwarded to the leader over gRPC.
+/// When this node is the leader, all requests are handled locally via <see cref="EmbeddedMsspClient"/>.
+/// When it is a follower, write and read requests are transparently forwarded to the leader over gRPC;
+/// subscriptions are served locally from the follower's own apply log, so every node can host
+/// subscribers without adding load to the leader.
 /// </summary>
 sealed class ClusteredMsspClient(
     RaftNode node,

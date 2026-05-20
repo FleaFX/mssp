@@ -11,8 +11,15 @@ namespace MSSP.Embedded;
 /// continues from the last position recorded in the subscription log.
 /// </summary>
 /// <remarks>
+/// <para>
+/// Every value passed to <see cref="WriteAsync"/> must be at least 8 bytes long; the last 8 bytes
+/// are reserved for the <see cref="GlobalPosition"/> and are overwritten unconditionally.
+/// <see cref="EventValue.From"/> always satisfies this contract.
+/// </para>
+/// <para>
 /// Must be called while the caller holds the write lock.
 /// Scans are forwarded transparently to the inner store.
+/// </para>
 /// </remarks>
 public sealed class GlobalPositionDecorator(
     ILsmStore<EventKey> inner,
