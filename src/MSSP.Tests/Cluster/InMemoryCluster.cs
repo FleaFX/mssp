@@ -26,7 +26,7 @@ sealed class InMemoryCluster : IAsyncDisposable {
             var stateMachine = new RaftLogStateMachine();
             var log = new InMemoryRaftLog();
             var stateStorage = new InMemoryRaftStateStorage();
-            var config = new RaftNodeConfig(nodeId, peers, 300, 600, 50);
+            var config = new RaftNodeConfig(nodeId, peers, 1000, 2000, 100);
             var node = new RaftNode(config, log, transport, stateMachine, stateStorage);
             transport.Register(node);
 
