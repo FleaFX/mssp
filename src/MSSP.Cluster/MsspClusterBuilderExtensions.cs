@@ -27,12 +27,14 @@ public static class MsspClusterBuilderExtensions {
         var toRemove = builder.Services
             .Where(d =>
                 d.ImplementationType == typeof(MsspHostedService) ||
+                d.ServiceType == typeof(EmbeddedMsspClient) ||
                 d.ServiceType == typeof(IMsspClient))
             .ToList();
         foreach (var d in toRemove)
             builder.Services.Remove(d);
 
         builder.Services.AddSingleton<RaftHostedService>();
+        builder.Services.AddSingleton<EmbeddedMsspClient>(sp => sp.GetRequiredService<RaftHostedService>().Local);
         builder.Services.AddSingleton<IMsspClient>(sp => sp.GetRequiredService<RaftHostedService>().Client);
         builder.Services.AddHostedService(sp => sp.GetRequiredService<RaftHostedService>());
 

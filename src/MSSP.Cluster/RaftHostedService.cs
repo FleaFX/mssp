@@ -1,6 +1,6 @@
 using Microsoft.Extensions.Hosting;
 using MSSP.Embedded;
-using MSSP.LsmTree;
+using MSSP.Storage;
 using MSSP.Raft;
 
 namespace MSSP.Cluster;
@@ -14,7 +14,7 @@ sealed class RaftHostedService(MsspOptions msspOptions, MsspClusterOptions clust
     FileRaftLog? _raftLog;
     RaftLog? _log;
     RaftLogStateMachine? _stateMachine;
-    LsmStore<EventKey>? _store;
+    EmbeddedMsspClient? _local;
     ClusteredMsspClient? _client;
     RaftNode? _node;
     RaftGrpcTransport? _transport;
@@ -27,6 +27,13 @@ sealed class RaftHostedService(MsspOptions msspOptions, MsspClusterOptions clust
     /// <exception cref="InvalidOperationException">Thrown if accessed before <see cref="StartAsync"/> completes.</exception>
     public RaftNode Node =>
         _node ?? throw new InvalidOperationException("Raft node is not available before the host has started.");
+
+    /// <summary>
+    /// Gets the local <see cref="EmbeddedMsspClient"/> for this cluster node.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">Thrown if accessed before <see cref="StartAsync"/> completes.</exception>
+    public EmbeddedMsspClient Local =>
+        _local ?? throw new InvalidOperationException("Local client is not available before the host has started.");
 
     /// <summary>
     /// Gets the <see cref="IMsspClient"/> for this cluster node.
@@ -59,15 +66,22 @@ sealed class RaftHostedService(MsspOptions msspOptions, MsspClusterOptions clust
         MemTableFlushedDelegate onFlushed = async ct =>
             await RaftLogStateMachine.WriteCheckpointAsync(dataDir, capturedStateMachine.LastAppliedIndex, ct);
 
-        var options = new LsmStoreOptions<EventKey>(
+        var lsmOptions = new LsmStoreOptions<EventKey>(
             dataDir,
             msspOptions.MemTableCapacityBytes,
-            _log,
             onFlushed);
 
-        _store = await LsmStore<EventKey>.OpenAsync(options, AsyncEnumerable.Empty<ReadOnlyMemory<byte>>(), cancellationToken);
+        var lsmStore = await LsmStore<EventKey>.OpenAsync(lsmOptions, AsyncEnumerable.Empty<ReadOnlyMemory<byte>>(), cancellationToken);
 
-        _client = new ClusteredMsspClient(_node, _store, clusterOptions.Peers);
+        var subscriptionLog = SubscriptionLog.Open(
+            dataDir,
+            msspOptions.SubscriptionLogFormat,
+            msspOptions.SubscriptionLogSegmentSizeBytes);
+        var pipeline = new SubscriptionPipeline(lsmStore, subscriptionLog);
+        var logDriven = LogDrivenStore<EventKey>.Create(_log, pipeline, msspOptions.MemTableCapacityBytes);
+        _local = new EmbeddedMsspClient(store: new GlobalPositionDecorator(logDriven, pipeline), subscriptions: pipeline);
+
+        _client = new ClusteredMsspClient(_node, _local, clusterOptions.Peers);
 
         // replay Raft log entries from checkpoint to current end
         for (var i = checkpointIndex + 1; i <= _raftLog.LastIndex; i++) {
@@ -90,9 +104,9 @@ sealed class RaftHostedService(MsspOptions msspOptions, MsspClusterOptions clust
         if (_disposed) return;
         _disposed = true;
         _client?.Dispose();
+        _local?.Dispose();
         _node?.Dispose();
         _transport?.Dispose();
-        _store?.Dispose();
         _raftLog?.Dispose();
     }
 }

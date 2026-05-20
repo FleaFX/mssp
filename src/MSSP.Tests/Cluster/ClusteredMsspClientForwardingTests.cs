@@ -4,11 +4,11 @@ using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Logging;
-using MSSP.LsmTree;
+using MSSP.Embedded;
 using MSSP.Raft;
 using MSSP.Server;
+using MSSP.Storage;
 
 namespace MSSP.Cluster;
 
@@ -16,6 +16,8 @@ public class ClusteredMsspClientForwardingTests : IAsyncLifetime {
     InMemoryCluster _cluster = null!;
     WebApplication _leaderServer = null!;
     ClusteredMsspClient _followerClient = null!;
+    EmbeddedMsspClient _followerLocal = null!;
+    string _followerDataDir = null!;
     InMemoryCluster.NodeHandle _leader = null!;
 
     public async Task InitializeAsync() {
@@ -39,13 +41,26 @@ public class ClusteredMsspClientForwardingTests : IAsyncLifetime {
             .Addresses.First();
 
         var peers = new[] { new RaftClusterMember(_leader.Node.NodeId, new Uri(address)) };
-        _followerClient = new ClusteredMsspClient(follower.Node, follower.Store, peers);
+        _followerDataDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+        Directory.CreateDirectory(_followerDataDir);
+        var followerStateMachine = new RaftLogStateMachine();
+        var followerRaftLog = new RaftLog(follower.Node, followerStateMachine);
+        var followerLsmOptions = new LsmStoreOptions<EventKey>(_followerDataDir, 1024, _ => ValueTask.CompletedTask);
+        var followerStore = await LsmStore<EventKey>.OpenAsync(followerLsmOptions, AsyncEnumerable.Empty<ReadOnlyMemory<byte>>(), default);
+        var followerSubLog = SubscriptionLog.Open(_followerDataDir, SubscriptionLogFormat.FullPayload, 64 * 1024 * 1024);
+        var followerPipeline = new SubscriptionPipeline(followerStore, followerSubLog);
+        var followerLogDriven = LogDrivenStore<EventKey>.Create(followerRaftLog, followerPipeline, 1024);
+        _followerLocal = new EmbeddedMsspClient(store: new GlobalPositionDecorator(followerLogDriven, followerPipeline), subscriptions: followerPipeline);
+        _followerClient = new ClusteredMsspClient(follower.Node, _followerLocal, peers);
     }
 
     public async Task DisposeAsync() {
         _followerClient?.Dispose();
+        _followerLocal?.Dispose();
         if (_leaderServer is not null) await _leaderServer.DisposeAsync();
         await _cluster.DisposeAsync();
+        if (_followerDataDir is not null && Directory.Exists(_followerDataDir))
+            Directory.Delete(_followerDataDir, recursive: true);
     }
 
     static EventData Event(string type, string payload) =>

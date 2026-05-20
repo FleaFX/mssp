@@ -1,6 +1,6 @@
 using Microsoft.Extensions.Hosting;
 using MSSP.BloomFilters;
-using MSSP.LsmTree;
+using MSSP.Storage;
 
 namespace MSSP.Embedded;
 
@@ -13,10 +13,10 @@ public sealed class MsspHostedService(MsspOptions options) : IHostedService, IDi
     bool _disposed;
 
     /// <summary>
-    /// Gets the <see cref="IMsspClient"/> once the host has started.
+    /// Gets the <see cref="EmbeddedMsspClient"/> once the host has started.
     /// </summary>
     /// <exception cref="InvalidOperationException">Thrown if accessed before <see cref="StartAsync"/> has completed.</exception>
-    internal IMsspClient Client =>
+    public EmbeddedMsspClient Client =>
         _client ?? throw new InvalidOperationException("IMsspClient is not available before the host has started.");
 
     /// <inheritdoc/>
@@ -24,7 +24,13 @@ public sealed class MsspHostedService(MsspOptions options) : IHostedService, IDi
         ISstAccess<EventKey>? sst = options.UseBloomFilters
             ? new BloomFilteredSstAccess<EventKey>(DefaultSstAccess<EventKey>.Instance)
             : null;
-        _client = await EmbeddedMsspClient.OpenAsync(options.DataDirectory, options.MemTableCapacityBytes, sst, cancellationToken);
+        _client = await EmbeddedMsspClient.OpenAsync(
+            options.DataDirectory,
+            options.MemTableCapacityBytes,
+            sst,
+            options.SubscriptionLogFormat,
+            options.SubscriptionLogSegmentSizeBytes,
+            cancellationToken);
     }
 
     /// <inheritdoc/>

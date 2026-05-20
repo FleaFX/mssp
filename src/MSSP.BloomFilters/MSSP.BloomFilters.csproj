@@ -8,7 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\MSSP.LsmTree\MSSP.LsmTree.csproj" />
+    <ProjectReference Include="..\MSSP.Storage\MSSP.Storage.csproj" />
   </ItemGroup>
 
 </Project>

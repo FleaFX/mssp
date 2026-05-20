@@ -17,8 +17,17 @@
   <ItemGroup>
     <ProjectReference Include="..\MSSP\MSSP.csproj" />
     <ProjectReference Include="..\MSSP.BloomFilters\MSSP.BloomFilters.csproj" />
-    <ProjectReference Include="..\MSSP.Log\MSSP.Log.csproj" />
-    <ProjectReference Include="..\MSSP.LsmTree\MSSP.LsmTree.csproj" />
+    <ProjectReference Include="..\MSSP.Storage\MSSP.Storage.csproj" />
+  </ItemGroup>
+
+
+  <ItemGroup>
+    <Compile Update="SubscriptionLog.FullPayloadCodec.cs">
+      <DependentUpon>SubscriptionLog.cs</DependentUpon>
+    </Compile>
+    <Compile Update="SubscriptionLog.ReferenceOnlyCodec.cs">
+      <DependentUpon>SubscriptionLog.cs</DependentUpon>
+    </Compile>
   </ItemGroup>
 
 </Project>

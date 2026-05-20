@@ -21,4 +21,17 @@ public interface IMsspClient {
     /// <param name="ct">A cancellation token.</param>
     /// <returns>An async sequence of recorded events, in order from <paramref name="from"/>.</returns>
     IAsyncEnumerable<RecordedEvent> ReadAsync(StreamId streamId, StreamRevision from = default, CancellationToken ct = default);
+
+    /// <summary>
+    /// Subscribes to an event stream, first replaying historical events from <paramref name="fromPosition"/> (catch-up),
+    /// then delivering live events as they are written.
+    /// </summary>
+    /// <param name="filter">Determines which events are delivered.</param>
+    /// <param name="fromPosition">The global position to start from. Defaults to <see cref="GlobalPosition.Start"/>.</param>
+    /// <param name="ct">A cancellation token. Cancelling this token ends the subscription.</param>
+    /// <returns>An async sequence of subscription events.</returns>
+    IAsyncEnumerable<SubscriptionEvent> SubscribeAsync(
+        SubscriptionFilter filter,
+        GlobalPosition fromPosition = default,
+        CancellationToken ct = default);
 }

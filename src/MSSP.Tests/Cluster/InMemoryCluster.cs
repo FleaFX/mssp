@@ -1,10 +1,11 @@
-using MSSP.LsmTree;
+using MSSP.Embedded;
 using MSSP.Raft;
+using MSSP.Storage;
 
 namespace MSSP.Cluster;
 
 sealed class InMemoryCluster : IAsyncDisposable {
-    public record NodeHandle(RaftNode Node, ClusteredMsspClient Client, LsmStore<EventKey> Store);
+    public record NodeHandle(RaftNode Node, ClusteredMsspClient Client, EmbeddedMsspClient Local, string DataDir);
 
     readonly List<NodeHandle> _nodes = [];
 
@@ -31,16 +32,15 @@ sealed class InMemoryCluster : IAsyncDisposable {
 
             var raftLog = new RaftLog(node, stateMachine);
 
-            var options = new LsmStoreOptions<EventKey>(
-                dataDir,
-                memTableCapacityBytes,
-                raftLog,
-                _ => ValueTask.CompletedTask);
+            var lsmOptions = new LsmStoreOptions<EventKey>(dataDir, memTableCapacityBytes, _ => ValueTask.CompletedTask);
+            var store = await LsmStore<EventKey>.OpenAsync(lsmOptions, AsyncEnumerable.Empty<ReadOnlyMemory<byte>>(), ct);
 
-            var store = await LsmStore<EventKey>.OpenAsync(options, AsyncEnumerable.Empty<ReadOnlyMemory<byte>>(), ct);
-
-            var client = new ClusteredMsspClient(node, store, []);
-            cluster._nodes.Add(new NodeHandle(node, client, store));
+            var subLog = SubscriptionLog.Open(dataDir, SubscriptionLogFormat.FullPayload, 64 * 1024 * 1024);
+            var pipeline = new SubscriptionPipeline(store, subLog);
+            var logDriven = LogDrivenStore<EventKey>.Create(raftLog, pipeline, memTableCapacityBytes);
+            var local = new EmbeddedMsspClient(store: new GlobalPositionDecorator(logDriven, pipeline), subscriptions: pipeline);
+            var client = new ClusteredMsspClient(node, local, []);
+            cluster._nodes.Add(new NodeHandle(node, client, local, dataDir));
         }
 
         foreach (var h in cluster._nodes)
@@ -64,7 +64,9 @@ sealed class InMemoryCluster : IAsyncDisposable {
             await h.Node.StopAsync();
         foreach (var h in _nodes) {
             h.Client.Dispose();
-            h.Store.Dispose();
+            h.Local.Dispose();
+            if (Directory.Exists(h.DataDir))
+                Directory.Delete(h.DataDir, recursive: true);
         }
     }
 }
