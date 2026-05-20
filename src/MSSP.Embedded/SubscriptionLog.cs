@@ -17,13 +17,13 @@ namespace MSSP.Embedded;
 /// Entry format — ReferenceOnly:
 ///   [globalPosition: 8 LE][keyLen: 4 LE][key: keyLen bytes]
 /// </remarks>
-internal sealed class SubscriptionLog : IDisposable {
+public sealed partial class SubscriptionLog : IDisposable {
     const int SparseEvery = 128;
     const string FilePrefix = "subscriptions-";
     const string FileSuffix = ".log";
 
     readonly string _dataDirectory;
-    readonly SubscriptionLogFormat _format;
+    readonly IEntryCodec _codec;
     readonly long _segmentSizeBytes;
 
     // Sealed (read-only) segments, sorted by start position.
@@ -37,17 +37,22 @@ internal sealed class SubscriptionLog : IDisposable {
     int _activeEntryCount;
     FileStream? _activeStream;
 
-    internal SubscriptionLogFormat Format => _format;
+    public SubscriptionLogFormat Format => _codec.Format;
 
-    SubscriptionLog(string dataDirectory, SubscriptionLogFormat format, long segmentSizeBytes) {
+    SubscriptionLog(string dataDirectory, IEntryCodec codec, long segmentSizeBytes) {
         _dataDirectory = dataDirectory;
-        _format = format;
+        _codec = codec;
         _segmentSizeBytes = segmentSizeBytes;
     }
 
     /// <summary>Opens or creates the subscription log in <paramref name="dataDirectory"/>.</summary>
-    internal static SubscriptionLog Open(string dataDirectory, SubscriptionLogFormat format, long segmentSizeBytes) {
-        var log = new SubscriptionLog(dataDirectory, format, segmentSizeBytes);
+    public static SubscriptionLog Open(string dataDirectory, SubscriptionLogFormat format, long segmentSizeBytes) {
+        IEntryCodec codec = format switch {
+            SubscriptionLogFormat.FullPayload => FullPayloadCodec.Instance,
+            SubscriptionLogFormat.ReferenceOnly => ReferenceOnlyCodec.Instance,
+            _ => throw new ArgumentOutOfRangeException(nameof(format))
+        };
+        var log = new SubscriptionLog(dataDirectory, codec, segmentSizeBytes);
         log.LoadExistingSegments();
         return log;
     }
@@ -81,7 +86,7 @@ internal sealed class SubscriptionLog : IDisposable {
     /// Returns the position of the last written event, or <see cref="GlobalPosition.Start"/> if empty.
     /// Must be called under the write lock.
     /// </summary>
-    internal GlobalPosition GetLastPosition() {
+    public GlobalPosition GetLastPosition() {
         if (_activeStream != null) return _activeEnd;
         if (_sealed.Count > 0) return _sealed[^1].End;
         return GlobalPosition.Start;
@@ -90,7 +95,7 @@ internal sealed class SubscriptionLog : IDisposable {
     /// <summary>
     /// Appends an event to the log. Must be called under the write lock.
     /// </summary>
-    internal async ValueTask AppendAsync(GlobalPosition position, EventKey key, ReadOnlyMemory<byte> value, CancellationToken ct) {
+    public async ValueTask AppendAsync(GlobalPosition position, EventKey key, ReadOnlyMemory<byte> value, CancellationToken ct) {
         if (_activeStream == null) {
             OpenNewSegment(position);
         } else if (_activeStream.Length >= _segmentSizeBytes) {
@@ -98,22 +103,13 @@ internal sealed class SubscriptionLog : IDisposable {
         }
 
         ReadOnlyMemory<byte> keyBytes = key;
-        int entrySize = _format == SubscriptionLogFormat.FullPayload
-            ? 8 + 4 + keyBytes.Length + 4 + value.Length
-            : 8 + 4 + keyBytes.Length;
+        int headerSize = 12 + keyBytes.Length;
+        int entrySize = headerSize + _codec.PayloadSize(value);
 
         var buf = ArrayPool<byte>.Shared.Rent(entrySize);
         try {
-            var span = buf.AsSpan();
-            BinaryPrimitives.WriteUInt64LittleEndian(span, position.Value);
-            BinaryPrimitives.WriteInt32LittleEndian(span[8..], keyBytes.Length);
-            keyBytes.Span.CopyTo(span[12..]);
-
-            if (_format == SubscriptionLogFormat.FullPayload) {
-                int valueOffset = 12 + keyBytes.Length;
-                BinaryPrimitives.WriteInt32LittleEndian(span[valueOffset..], value.Length);
-                value.Span.CopyTo(span[(valueOffset + 4)..]);
-            }
+            WriteCommonHeader(buf, position, keyBytes);
+            _codec.EncodePayload(buf.AsSpan(headerSize), value);
 
             if (_activeEntryCount % SparseEvery == 0)
                 _activeSparseIndex.Add((position, _activeStream!.Position));
@@ -132,7 +128,7 @@ internal sealed class SubscriptionLog : IDisposable {
     /// Returns an <see cref="IEnumerable{T}"/> that can be safely iterated outside the write lock.
     /// Must be called while holding the write lock to capture a consistent snapshot.
     /// </summary>
-    internal IEnumerable<SubscriptionEvent> ScanFrom(
+    public IEnumerable<SubscriptionEvent> ScanFrom(
         GlobalPosition from,
         Func<EventKey, SubscriptionEvent>? resolver = null) {
 
@@ -170,9 +166,7 @@ internal sealed class SubscriptionLog : IDisposable {
         Func<EventKey, SubscriptionEvent>? resolver) {
 
         using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-
-        var startOffset = FindStartOffset(sparseIndex, from);
-        fs.Seek(startOffset, SeekOrigin.Begin);
+        fs.Seek(FindStartOffset(sparseIndex, from), SeekOrigin.Begin);
 
         var posBuf = new byte[8];
         var intBuf = new byte[4];
@@ -188,29 +182,14 @@ internal sealed class SubscriptionLog : IDisposable {
             var keyBytes = new byte[keyLen];
             if (fs.Read(keyBytes) < keyLen) yield break;
 
-            if (_format == SubscriptionLogFormat.FullPayload) {
-                if (fs.Read(intBuf) < 4) yield break;
-                var valueLen = BinaryPrimitives.ReadInt32LittleEndian(intBuf);
-                if (valueLen < 0) yield break;
-
-                var valueBytes = new byte[valueLen];
-                if (fs.Read(valueBytes) < valueLen) yield break;
-
-                if (pos >= from) {
-                    EventKey key = (ReadOnlyMemory<byte>)keyBytes;
-                    EventValue value = (ReadOnlyMemory<byte>)valueBytes;
-                    yield return value.ToSubscriptionEvent(key);
-                }
-            } else {
-                // ReferenceOnly: skip value storage, resolve via SST lookup.
-                if (pos >= from) {
-                    if (resolver == null)
-                        throw new InvalidOperationException(
-                            "A resolver is required when SubscriptionLogFormat is ReferenceOnly.");
-                    EventKey key = (ReadOnlyMemory<byte>)keyBytes;
-                    yield return resolver(key);
-                }
+            if (pos < from) {
+                if (!_codec.TrySkipPayload(fs, intBuf)) yield break;
+                continue;
             }
+
+            EventKey key = (ReadOnlyMemory<byte>)keyBytes;
+            if (!_codec.TryDecodeEvent(fs, intBuf, key, pos, resolver, out var evt)) yield break;
+            yield return evt;
         }
     }
 
@@ -218,7 +197,7 @@ internal sealed class SubscriptionLog : IDisposable {
     /// Returns paths of sealed segments whose last event is before <paramref name="cutoffPosition"/>.
     /// These are safe to archive or delete.
     /// </summary>
-    internal IReadOnlyList<string> GetArchivablePaths(GlobalPosition cutoffPosition) =>
+    public IReadOnlyList<string> GetArchivablePaths(GlobalPosition cutoffPosition) =>
         _sealed.Where(s => s.End < cutoffPosition).Select(s => s.Path).ToList();
 
     void OpenNewSegment(GlobalPosition startPosition) {
@@ -244,24 +223,19 @@ internal sealed class SubscriptionLog : IDisposable {
         int count = 0;
 
         using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-        var smallBuf = new byte[8];
+        var buf = new byte[8];
 
         while (true) {
             long entryOffset = fs.Position;
-            if (fs.Read(smallBuf, 0, 8) < 8) break;
-            var pos = new GlobalPosition(BinaryPrimitives.ReadUInt64LittleEndian(smallBuf));
+            if (fs.Read(buf, 0, 8) < 8) break;
+            var pos = new GlobalPosition(BinaryPrimitives.ReadUInt64LittleEndian(buf));
 
-            if (fs.Read(smallBuf, 0, 4) < 4) break;
-            var keyLen = BinaryPrimitives.ReadInt32LittleEndian(smallBuf);
+            if (fs.Read(buf, 0, 4) < 4) break;
+            var keyLen = BinaryPrimitives.ReadInt32LittleEndian(buf);
             if (keyLen < 0 || fs.Position + keyLen > fs.Length) break;
             fs.Seek(keyLen, SeekOrigin.Current);
 
-            if (_format == SubscriptionLogFormat.FullPayload) {
-                if (fs.Read(smallBuf, 0, 4) < 4) break;
-                var valueLen = BinaryPrimitives.ReadInt32LittleEndian(smallBuf);
-                if (valueLen < 0 || fs.Position + valueLen > fs.Length) break;
-                fs.Seek(valueLen, SeekOrigin.Current);
-            }
+            if (!_codec.TrySkipPayload(fs, buf.AsSpan(0, 4))) break;
 
             if (count % SparseEvery == 0) index.Add((pos, entryOffset));
             end = pos;
@@ -269,6 +243,12 @@ internal sealed class SubscriptionLog : IDisposable {
         }
 
         return (end, index.ToArray(), count);
+    }
+
+    static void WriteCommonHeader(Span<byte> span, GlobalPosition position, ReadOnlyMemory<byte> keyBytes) {
+        BinaryPrimitives.WriteUInt64LittleEndian(span, position.Value);
+        BinaryPrimitives.WriteInt32LittleEndian(span[8..], keyBytes.Length);
+        keyBytes.Span.CopyTo(span[12..]);
     }
 
     static long FindStartOffset((GlobalPosition Position, long ByteOffset)[] sparseIndex, GlobalPosition from) {
@@ -303,4 +283,37 @@ internal sealed class SubscriptionLog : IDisposable {
         GlobalPosition Start,
         GlobalPosition End,
         (GlobalPosition Position, long ByteOffset)[] SparseIndex);
+
+    /// <summary>
+    /// Encodes and decodes the per-entry payload section.
+    /// </summary>
+    interface IEntryCodec {
+        /// <summary>
+        /// The log format this codec handles.
+        /// </summary>
+        SubscriptionLogFormat Format { get; }
+
+        /// <summary>
+        /// Returns the number of payload bytes written for the given <paramref name="value"/>.
+        /// </summary>
+        int PayloadSize(ReadOnlyMemory<byte> value);
+
+        /// <summary>
+        /// Writes the payload for <paramref name="value"/> into <paramref name="dest"/>.
+        /// </summary>
+        void EncodePayload(Span<byte> dest, ReadOnlyMemory<byte> value);
+
+        /// <summary>
+        /// Advances <paramref name="stream"/> past the current entry's payload without decoding it.
+        /// Returns <see langword="false"/> if the stream is truncated.
+        /// </summary>
+        bool TrySkipPayload(Stream stream, Span<byte> intBuf);
+
+        /// <summary>
+        /// Reads the payload from <paramref name="stream"/> and produces a <see cref="SubscriptionEvent"/>.
+        /// Returns <see langword="false"/> if the stream is truncated.
+        /// </summary>
+        bool TryDecodeEvent(Stream stream, Span<byte> intBuf, EventKey key, GlobalPosition pos,
+            Func<EventKey, SubscriptionEvent>? resolver, out SubscriptionEvent evt);
+    }
 }

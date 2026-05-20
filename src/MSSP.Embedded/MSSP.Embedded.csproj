@@ -20,4 +20,14 @@
     <ProjectReference Include="..\MSSP.Storage\MSSP.Storage.csproj" />
   </ItemGroup>
 
+
+  <ItemGroup>
+    <Compile Update="SubscriptionLog.FullPayloadCodec.cs">
+      <DependentUpon>SubscriptionLog.cs</DependentUpon>
+    </Compile>
+    <Compile Update="SubscriptionLog.ReferenceOnlyCodec.cs">
+      <DependentUpon>SubscriptionLog.cs</DependentUpon>
+    </Compile>
+  </ItemGroup>
+
 </Project>

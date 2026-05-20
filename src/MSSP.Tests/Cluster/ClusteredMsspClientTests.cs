@@ -1,4 +1,5 @@
 using FluentAssertions;
+using MSSP.Embedded;
 using MSSP.Storage;
 using MSSP.Raft;
 
