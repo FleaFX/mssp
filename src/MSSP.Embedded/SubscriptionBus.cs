@@ -6,7 +6,7 @@ namespace MSSP.Embedded;
 /// Distributes live events to active subscriptions.
 /// All methods must be called while holding the client write lock.
 /// </summary>
-public sealed class SubscriptionBus {
+sealed class SubscriptionBus {
     readonly record struct Registration(SubscriptionFilter Filter, Channel<SubscriptionEvent> Channel);
 
     readonly List<Registration> _registrations = [];
