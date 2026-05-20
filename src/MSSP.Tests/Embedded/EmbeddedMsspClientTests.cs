@@ -6,12 +6,12 @@ public class EmbeddedMsspClientTests : IAsyncLifetime {
     readonly string _dataDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
     EmbeddedMsspClient _client = null!;
 
-    public async Task InitializeAsync() => _client = await EmbeddedMsspClient.OpenAsync(_dataDir);
+    public async ValueTask InitializeAsync() => _client = await EmbeddedMsspClient.OpenAsync(_dataDir);
 
-    public Task DisposeAsync() {
+    public ValueTask DisposeAsync() {
         _client.Dispose();
         Directory.Delete(_dataDir, recursive: true);
-        return Task.CompletedTask;
+        return ValueTask.CompletedTask;
     }
 
     static EventData Event(string type, string payload) =>
@@ -158,12 +158,12 @@ public class EmbeddedMsspClientTests : IAsyncLifetime {
         readonly string _dataDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
         EmbeddedMsspClient _tinyClient = null!;
 
-        public async Task InitializeAsync() => _tinyClient = await EmbeddedMsspClient.OpenAsync(_dataDir, memTableCapacityBytes: 128);
+        public async ValueTask InitializeAsync() => _tinyClient = await EmbeddedMsspClient.OpenAsync(_dataDir, memTableCapacityBytes: 128);
 
-        public Task DisposeAsync() {
+        public ValueTask DisposeAsync() {
             _tinyClient.Dispose();
             Directory.Delete(_dataDir, recursive: true);
-            return Task.CompletedTask;
+            return ValueTask.CompletedTask;
         }
 
         static EventData Event(string type, string payload) =>

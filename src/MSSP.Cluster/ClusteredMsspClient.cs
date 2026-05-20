@@ -31,20 +31,29 @@ sealed class ClusteredMsspClient(
     /// <inheritdoc/>
     public async ValueTask AppendAsync(StreamId streamId, StreamRevision expectedRevision, IEnumerable<EventData> events, CancellationToken ct = default) {
         if (!node.IsLeader) {
-            var leaderHint = await WaitForLeaderHintAsync(ct);
-            var grpcClient = GetOrCreateLeaderClient(leaderHint);
-            var request = new AppendRequest { StreamId = streamId.Value, ExpectedRevision = (long)expectedRevision };
-            foreach (var e in events)
-                request.Events.Add(new GrpcEventData { EventType = e.EventType, Data = ByteString.CopyFrom(e.Data.Span) });
-            try {
-                await grpcClient.AppendAsync(request, cancellationToken: ct);
-            } catch (RpcException ex) when (ex.StatusCode == StatusCode.FailedPrecondition) {
-                throw new OptimisticConcurrencyException(streamId, expectedRevision);
-            }
+            await ForwardAppendAsync(streamId, expectedRevision, events, ct);
             return;
         }
 
-        await local.AppendAsync(streamId, expectedRevision, events, ct);
+        try {
+            await local.AppendAsync(streamId, expectedRevision, events, ct);
+        } catch (NotLeaderException) {
+            // Lost leadership between the IsLeader check and ProposeAsync — forward to the new leader.
+            await ForwardAppendAsync(streamId, expectedRevision, events, ct);
+        }
+    }
+
+    async ValueTask ForwardAppendAsync(StreamId streamId, StreamRevision expectedRevision, IEnumerable<EventData> events, CancellationToken ct) {
+        var leaderHint = await WaitForLeaderHintAsync(ct);
+        var grpcClient = GetOrCreateLeaderClient(leaderHint);
+        var request = new AppendRequest { StreamId = streamId.Value, ExpectedRevision = (long)expectedRevision };
+        foreach (var e in events)
+            request.Events.Add(new GrpcEventData { EventType = e.EventType, Data = ByteString.CopyFrom(e.Data.Span) });
+        try {
+            await grpcClient.AppendAsync(request, cancellationToken: ct);
+        } catch (RpcException ex) when (ex.StatusCode == StatusCode.FailedPrecondition) {
+            throw new OptimisticConcurrencyException(streamId, expectedRevision);
+        }
     }
 
     /// <inheritdoc/>

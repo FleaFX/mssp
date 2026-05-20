@@ -10,13 +10,12 @@ namespace MSSP.Cluster;
 /// </summary>
 sealed class RaftLog(RaftNode node, RaftLogStateMachine stateMachine) : ILog<WalRecord> {
     /// <inheritdoc/>
+    /// <exception cref="NotLeaderException">
+    /// Thrown when this node is not the Raft leader. Callers should forward the request to the
+    /// current leader rather than treating this as a fatal error.
+    /// </exception>
     public async ValueTask<bool> TryAppendAsync(WalRecord record, CancellationToken cancellationToken = default) {
-        ReadOnlyMemory<byte> payload = record;
-        try {
-            await node.ProposeAsync(payload, cancellationToken);
-        } catch (NotLeaderException) {
-            return false;
-        }
+        await node.ProposeAsync((ReadOnlyMemory<byte>)record, cancellationToken);
         return true;
     }
 

@@ -9,15 +9,15 @@ public class LsmStoreTests : IAsyncLifetime {
     readonly string _dataDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
     LsmStore<StringKey> _store = null!;
 
-    public async Task InitializeAsync() {
+    public async ValueTask InitializeAsync() {
         Directory.CreateDirectory(_dataDir);
         _store = await LsmStore<StringKey>.OpenAsync(LsmOptions(), Empty(), default);
     }
 
-    public Task DisposeAsync() {
+    public ValueTask DisposeAsync() {
         _store.Dispose();
         Directory.Delete(_dataDir, recursive: true);
-        return Task.CompletedTask;
+        return ValueTask.CompletedTask;
     }
 
     LsmStoreOptions<StringKey> LsmOptions(int capacityBytes = 4096, int compactionThreshold = 4) =>

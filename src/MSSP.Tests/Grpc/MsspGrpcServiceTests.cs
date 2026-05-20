@@ -20,7 +20,7 @@ public class MsspGrpcServiceTests : IAsyncLifetime {
     IMsspClient _client = null!;
     MsspGrpcClient _rawClient = null!;
 
-    public async Task InitializeAsync() {
+    public async ValueTask InitializeAsync() {
         _embedded = await EmbeddedMsspClient.OpenAsync(_dataDir);
 
         var builder = WebApplication.CreateBuilder();
@@ -41,7 +41,7 @@ public class MsspGrpcServiceTests : IAsyncLifetime {
         _rawClient = new MsspGrpcClient(_channel);
     }
 
-    public async Task DisposeAsync() {
+    public async ValueTask DisposeAsync() {
         _channel?.Dispose();
         if (_app is not null) await _app.DisposeAsync();
         _embedded?.Dispose();
