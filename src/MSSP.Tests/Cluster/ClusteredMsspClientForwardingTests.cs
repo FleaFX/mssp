@@ -77,16 +77,6 @@ public class ClusteredMsspClientForwardingTests : IAsyncLifetime {
     }
 
     [Fact]
-    public async Task Follower_ForwardsRead_ToLeader() {
-        await _leader.Client.AppendAsync("stream-a", StreamRevision.NoStream, [Event("SeedEvent", "data")]);
-
-        var events = await _followerClient.ReadAsync("stream-a").ToListAsync();
-
-        events.Should().HaveCount(1);
-        events[0].EventType.Should().Be("SeedEvent");
-    }
-
-    [Fact]
     public async Task Follower_ForwardsOccConflict_ThrowsOptimisticConcurrencyException() {
         await _followerClient.AppendAsync("stream-a", StreamRevision.NoStream, [Event("First", "data")]);
 

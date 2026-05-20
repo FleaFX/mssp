@@ -5,18 +5,17 @@ using Grpc.Net.Client;
 using MSSP.Embedded;
 using MSSP.Raft;
 using AppendRequest = MSSP.Grpc.AppendRequest;
-using ReadRequest = MSSP.Grpc.ReadRequest;
 using GrpcEventData = MSSP.Grpc.EventData;
 using GrpcMsspClient = MSSP.Grpc.Mssp.MsspClient;
 
 namespace MSSP.Cluster;
 
 /// <summary>
-/// <see cref="IMsspClient"/> implementation that routes writes through the Raft leader.
+/// <see cref="IMsspClient"/> implementation for cluster nodes.
 /// When this node is the leader, all requests are handled locally via <see cref="EmbeddedMsspClient"/>.
-/// When it is a follower, write and read requests are transparently forwarded to the leader over gRPC;
-/// subscriptions are served locally from the follower's own apply log, so every node can host
-/// subscribers without adding load to the leader.
+/// When it is a follower, writes are transparently forwarded to the leader over gRPC.
+/// Reads and subscriptions are always served from the local node — the follower's LSM store contains
+/// only committed entries, so data is always durable, and the local copy avoids adding read load to the leader.
 /// </summary>
 sealed class ClusteredMsspClient(
     RaftNode node,
@@ -50,23 +49,6 @@ sealed class ClusteredMsspClient(
 
     /// <inheritdoc/>
     public async IAsyncEnumerable<RecordedEvent> ReadAsync(StreamId streamId, StreamRevision from = default, [EnumeratorCancellation] CancellationToken ct = default) {
-        if (!node.IsLeader) {
-            var leaderHint = await WaitForLeaderHintAsync(ct);
-            var grpcClient = GetOrCreateLeaderClient(leaderHint);
-            var request = new ReadRequest { StreamId = streamId.Value, FromRevision = (ulong)(long)from };
-            using var call = grpcClient.Read(request, cancellationToken: ct);
-            while (await call.ResponseStream.MoveNext(ct)) {
-                var e = call.ResponseStream.Current;
-                yield return new RecordedEvent(
-                    new StreamId(e.StreamId),
-                    e.Revision,
-                    e.EventType,
-                    e.Data.Memory,
-                    new DateTimeOffset(DateTimeOffset.UnixEpoch.Ticks + e.TimestampNs / 100L, TimeSpan.Zero));
-            }
-            yield break;
-        }
-
         await foreach (var e in local.ReadAsync(streamId, from, ct))
             yield return e;
     }
