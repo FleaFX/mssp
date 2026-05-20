@@ -51,15 +51,17 @@ public sealed class LogDrivenStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKe
         var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         _pending.Enqueue(tcs);
 
+        bool appended;
         try {
-            if (!await _log.TryAppendAsync(WalRecord.From(key, value), ct)) {
-                _pending.TryDequeue(out _);
-                throw new InvalidOperationException("WAL append failed.");
-            }
-        } catch (Exception ex) when (ex is not InvalidOperationException) {
+            appended = await _log.TryAppendAsync(WalRecord.From(key, value), ct);
+        } catch {
             _pending.TryDequeue(out _);
-            tcs.TrySetException(ex);
             throw;
+        }
+
+        if (!appended) {
+            _pending.TryDequeue(out _);
+            throw new InvalidOperationException("WAL append failed.");
         }
 
         await tcs.Task.WaitAsync(ct);

@@ -5,9 +5,9 @@ using MSSP.Storage;
 namespace MSSP.Embedded;
 
 /// <summary>
-/// Decorator around <see cref="ILsmStore{TKey}"/> that transparently assigns a <see cref="GlobalPosition"/>
-/// to each written event, appends it to the <see cref="SubscriptionLog"/>, and publishes it to the
-/// <see cref="SubscriptionBus"/> — without the client being aware of any of this.
+/// Decorator around <see cref="ILsmStore{TKey}"/> that reads the <see cref="GlobalPosition"/>
+/// embedded in each written value, appends the event to the <see cref="SubscriptionLog"/>, and
+/// publishes it to the <see cref="SubscriptionBus"/> — without the client being aware of any of this.
 /// </summary>
 /// <remarks>
 /// All methods that mutate state must be called while the caller holds the write lock.
@@ -63,15 +63,11 @@ public sealed class SubscriptionPipeline : ILsmStore<EventKey>, ISubscriptionPro
         }
     }
 
-    /// <summary>
-    /// <inheritdoc cref="ILsmStore{TKey}.ScanSnapshotFrom"/>
-    /// </summary>
+    /// <inheritdoc/>
     public IEnumerable<KeyValuePair<EventKey, ReadOnlyMemory<byte>?>> ScanSnapshotFrom(EventKey from)
         => _inner.ScanSnapshotFrom(from);
 
-    /// <summary>
-    /// <inheritdoc cref="ILsmStore{TKey}.ScanAllFrom"/>
-    /// </summary>
+    /// <inheritdoc/>
     public IEnumerable<KeyValuePair<EventKey, ReadOnlyMemory<byte>?>> ScanAllFrom(EventKey from)
         => _inner.ScanAllFrom(from);
 
