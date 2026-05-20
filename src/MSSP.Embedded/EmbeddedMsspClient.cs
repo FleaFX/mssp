@@ -7,18 +7,12 @@ namespace MSSP.Embedded;
 /// <summary>
 /// An embedded, single-process implementation of <see cref="IMsspClient"/> that stores events on the local filesystem.
 /// </summary>
-public sealed class EmbeddedMsspClient : IMsspClient, IDisposable {
+public sealed class EmbeddedMsspClient(
+    ILsmStore<EventKey> store,
+    ISubscriptionProvider subscriptions
+): IMsspClient, IDisposable {
     readonly SemaphoreSlim _writeLock = new(1, 1);
     readonly RevisionIndex _revisions = new();
-    readonly ILsmStore<EventKey> _store;
-    readonly ISubscriptionProvider _subscriptions;
-    readonly WalManager _wal;
-
-    EmbeddedMsspClient(ILsmStore<EventKey> store, ISubscriptionProvider subscriptions, WalManager wal) {
-        _store = store;
-        _subscriptions = subscriptions;
-        _wal = wal;
-    }
 
     /// <summary>
     /// Opens or creates an embedded event store at the given <paramref name="dataDirectory"/>,
@@ -48,7 +42,7 @@ public sealed class EmbeddedMsspClient : IMsspClient, IDisposable {
         var subscriptionLog = SubscriptionLog.Open(dataDirectory, subscriptionLogFormat, subscriptionLogSegmentSizeBytes);
         var pipeline = new SubscriptionPipeline(store, subscriptionLog);
 
-        return new EmbeddedMsspClient(pipeline, pipeline, wal);
+        return new EmbeddedMsspClient(store: pipeline, subscriptions: pipeline);
     }
 
     /// <inheritdoc/>
@@ -69,7 +63,7 @@ public sealed class EmbeddedMsspClient : IMsspClient, IDisposable {
 
             foreach (var eventData in events) {
                 var key = new EventKey(streamId.Value, baseRevision + offset++);
-                await _store.WriteAsync(key, EventValue.From(eventData, timestamp), ct);
+                await store.WriteAsync(key, EventValue.From(eventData, timestamp), ct);
                 _revisions.Set(streamId.Value, key.Revision);
             }
         } finally {
@@ -84,7 +78,7 @@ public sealed class EmbeddedMsspClient : IMsspClient, IDisposable {
 
         await _writeLock.WaitAsync(ct);
         try {
-            scan = _store.ScanSnapshotFrom(startKey);
+            scan = store.ScanSnapshotFrom(startKey);
         } finally {
             _writeLock.Release();
         }
@@ -109,9 +103,9 @@ public sealed class EmbeddedMsspClient : IMsspClient, IDisposable {
 
         await _writeLock.WaitAsync(ct);
         try {
-            catchUpPosition = _subscriptions.CurrentPosition;
-            liveChannel = _subscriptions.Register(filter);
-            catchUpScan = _subscriptions.ScanFrom(fromPosition, BuildResolver());
+            catchUpPosition = subscriptions.CurrentPosition;
+            liveChannel = subscriptions.Register(filter);
+            catchUpScan = subscriptions.ScanFrom(fromPosition, BuildResolver());
         } finally {
             _writeLock.Release();
         }
@@ -135,7 +129,7 @@ public sealed class EmbeddedMsspClient : IMsspClient, IDisposable {
             if (liveChannel != null) {
                 await _writeLock.WaitAsync(CancellationToken.None);
                 try {
-                    _subscriptions.Unregister(liveChannel);
+                    subscriptions.Unregister(liveChannel);
                 } finally {
                     _writeLock.Release();
                 }
@@ -146,9 +140,9 @@ public sealed class EmbeddedMsspClient : IMsspClient, IDisposable {
     // For FullPayload format the log contains full event data; no resolver needed.
     // For ReferenceOnly the log stores only EventKey pointers, resolved here via SST scan.
     Func<EventKey, SubscriptionEvent>? BuildResolver() {
-        if (_subscriptions.LogFormat == SubscriptionLogFormat.FullPayload) return null;
+        if (subscriptions.LogFormat == SubscriptionLogFormat.FullPayload) return null;
         return key => {
-            foreach (var (k, v) in _store.ScanSnapshotFrom(key)) {
+            foreach (var (k, v) in store.ScanSnapshotFrom(key)) {
                 if (!k.Equals(key)) break;
                 if (v is null) break;
                 return ((EventValue)v.Value).ToSubscriptionEvent(k);
@@ -161,7 +155,7 @@ public sealed class EmbeddedMsspClient : IMsspClient, IDisposable {
         ulong? max = null;
         var startKey = new EventKey(streamId, 0UL);
 
-        foreach (var (key, _) in _store.ScanAllFrom(startKey)) {
+        foreach (var (key, _) in store.ScanAllFrom(startKey)) {
             if (key.StreamId != streamId) break;
             max = key.Revision;
         }
@@ -171,8 +165,7 @@ public sealed class EmbeddedMsspClient : IMsspClient, IDisposable {
 
     /// <inheritdoc/>
     public void Dispose() {
-        _store.Dispose();
+        store.Dispose();
         _writeLock.Dispose();
-        _wal.Dispose();
     }
 }

@@ -234,5 +234,6 @@ public sealed class LsmStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKey> {
             tcs.TrySetCanceled();
         _memTable.Dispose();
         _loopCts?.Dispose();
+        (_log as IDisposable)?.Dispose();
     }
 }

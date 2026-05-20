@@ -107,7 +107,8 @@ public class ClusteredMsspClientTests : IAsyncLifetime {
             await node.StartAsync();
             var subLog = SubscriptionLog.Open(dataDir, SubscriptionLogFormat.FullPayload, 64 * 1024 * 1024);
             var pipeline = new SubscriptionPipeline(store, subLog);
-            var client = new ClusteredMsspClient(node, pipeline, pipeline, []);
+            var local = new EmbeddedMsspClient(pipeline, pipeline);
+            var client = new ClusteredMsspClient(node, local, []);
             try {
                 var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(3);
                 while (DateTime.UtcNow < deadline && !node.IsLeader)
@@ -118,7 +119,7 @@ public class ClusteredMsspClientTests : IAsyncLifetime {
             } finally {
                 await node.StopAsync();
                 client.Dispose();
-                pipeline.Dispose();
+                local.Dispose();
                 fileRaftLog.Dispose();
             }
         }

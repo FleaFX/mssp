@@ -21,7 +21,8 @@ public static class MsspServiceCollectionExtensions {
         configure(options);
         services.AddSingleton(options);
         services.AddSingleton<MsspHostedService>();
-        services.AddSingleton<IMsspClient>(sp => sp.GetRequiredService<MsspHostedService>().Client);
+        services.AddSingleton<EmbeddedMsspClient>(sp => sp.GetRequiredService<MsspHostedService>().Client);
+        services.AddSingleton<IMsspClient>(sp => sp.GetRequiredService<EmbeddedMsspClient>());
         services.AddHostedService(sp => sp.GetRequiredService<MsspHostedService>());
         return new MsspBuilder(services);
     }

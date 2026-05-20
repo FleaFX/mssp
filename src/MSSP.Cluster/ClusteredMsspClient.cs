@@ -1,11 +1,9 @@
 using System.Runtime.CompilerServices;
-using System.Threading.Channels;
 using Google.Protobuf;
 using Grpc.Core;
 using Grpc.Net.Client;
 using MSSP.Embedded;
 using MSSP.Raft;
-using MSSP.Storage;
 using AppendRequest = MSSP.Grpc.AppendRequest;
 using ReadRequest = MSSP.Grpc.ReadRequest;
 using GrpcEventData = MSSP.Grpc.EventData;
@@ -15,18 +13,15 @@ namespace MSSP.Cluster;
 
 /// <summary>
 /// <see cref="IMsspClient"/> implementation that routes writes through the Raft leader.
-/// When this node is the leader, requests are handled locally. When it is a follower,
-/// requests are transparently forwarded to the leader over gRPC.
+/// When this node is the leader, requests are handled locally via <see cref="EmbeddedMsspClient"/>.
+/// When it is a follower, requests are transparently forwarded to the leader over gRPC.
 /// </summary>
 sealed class ClusteredMsspClient(
     RaftNode node,
-    ILsmStore<EventKey> store,
-    ISubscriptionProvider subscriptions,
+    EmbeddedMsspClient local,
     RaftClusterMember[] peers
 ) : IMsspClient, IDisposable {
 
-    readonly SemaphoreSlim _writeLock = new(1, 1);
-    readonly RevisionIndex _revisions = new();
     readonly Lock _leaderClientLock = new();
     GrpcChannel? _leaderChannel;
     GrpcMsspClient? _leaderGrpcClient;
@@ -48,28 +43,7 @@ sealed class ClusteredMsspClient(
             return;
         }
 
-        await _writeLock.WaitAsync(ct);
-        try {
-            if (!_revisions.Contains(streamId.Value)) {
-                var (exists, revision) = LookupCurrentRevision(streamId.Value);
-                if (exists) _revisions.Set(streamId.Value, revision);
-            }
-
-            if (!_revisions.CheckConcurrency(streamId.Value, expectedRevision))
-                throw new OptimisticConcurrencyException(streamId, expectedRevision);
-
-            var baseRevision = _revisions.TryGet(streamId.Value, out var current) ? current + 1 : 0UL;
-            var timestamp = DateTimeOffset.UtcNow;
-            var offset = 0UL;
-
-            foreach (var eventData in events) {
-                var key = new EventKey(streamId.Value, baseRevision + offset++);
-                await store.WriteAsync(key, EventValue.From(eventData, timestamp), ct);
-                _revisions.Set(streamId.Value, key.Revision);
-            }
-        } finally {
-            _writeLock.Release();
-        }
+        await local.AppendAsync(streamId, expectedRevision, events, ct);
     }
 
     /// <inheritdoc/>
@@ -91,22 +65,8 @@ sealed class ClusteredMsspClient(
             yield break;
         }
 
-        IEnumerable<KeyValuePair<EventKey, ReadOnlyMemory<byte>?>> scan;
-        var startKey = new EventKey(streamId.Value, 0UL);
-
-        await _writeLock.WaitAsync(ct);
-        try {
-            scan = store.ScanSnapshotFrom(startKey);
-        } finally {
-            _writeLock.Release();
-        }
-
-        foreach (var (key, value) in scan) {
-            if (ct.IsCancellationRequested) yield break;
-            if (key.StreamId != streamId.Value) break;
-            if (key.Revision < from || value is null) continue;
-            yield return ((EventValue)value.Value).ToRecordedEvent(key);
-        }
+        await foreach (var e in local.ReadAsync(streamId, from, ct))
+            yield return e;
     }
 
     /// <inheritdoc/>
@@ -118,52 +78,8 @@ sealed class ClusteredMsspClient(
         if (!node.IsLeader)
             throw new NotSupportedException("Subscriptions are only supported on the Raft leader node.");
 
-        ChannelReader<SubscriptionEvent>? liveChannel = null;
-        IEnumerable<SubscriptionEvent> catchUpScan;
-        GlobalPosition catchUpPosition;
-
-        await _writeLock.WaitAsync(ct);
-        try {
-            catchUpPosition = subscriptions.CurrentPosition;
-            liveChannel = subscriptions.Register(filter);
-            catchUpScan = subscriptions.ScanFrom(fromPosition, BuildResolver());
-        } finally {
-            _writeLock.Release();
-        }
-
-        try {
-            foreach (var evt in catchUpScan) {
-                if (ct.IsCancellationRequested) yield break;
-                if (evt.Position > catchUpPosition) break;
-                if (filter.Matches(evt)) yield return evt;
-            }
-
-            await foreach (var evt in liveChannel!.ReadAllAsync(ct)) {
-                if (evt.Position <= catchUpPosition) continue;
-                yield return evt;
-            }
-        } finally {
-            if (liveChannel != null) {
-                await _writeLock.WaitAsync(CancellationToken.None);
-                try {
-                    subscriptions.Unregister(liveChannel);
-                } finally {
-                    _writeLock.Release();
-                }
-            }
-        }
-    }
-
-    Func<EventKey, SubscriptionEvent>? BuildResolver() {
-        if (subscriptions.LogFormat == SubscriptionLogFormat.FullPayload) return null;
-        return key => {
-            foreach (var (k, v) in store.ScanSnapshotFrom(key)) {
-                if (!k.Equals(key)) break;
-                if (v is null) break;
-                return ((EventValue)v.Value).ToSubscriptionEvent(k);
-            }
-            throw new InvalidOperationException($"Event {key.StreamId}@{key.Revision} not found in store.");
-        };
+        await foreach (var e in local.SubscribeAsync(filter, fromPosition, ct))
+            yield return e;
     }
 
     async ValueTask<string> WaitForLeaderHintAsync(CancellationToken ct) {
@@ -192,18 +108,8 @@ sealed class ClusteredMsspClient(
         }
     }
 
-    (bool exists, ulong revision) LookupCurrentRevision(string streamId) {
-        ulong? max = null;
-        foreach (var (key, _) in store.ScanAllFrom(new EventKey(streamId, 0UL))) {
-            if (key.StreamId != streamId) break;
-            max = key.Revision;
-        }
-        return (max.HasValue, max ?? 0UL);
-    }
-
     /// <inheritdoc/>
     public void Dispose() {
-        _writeLock.Dispose();
         lock (_leaderClientLock) {
             _leaderChannel?.Dispose();
         }

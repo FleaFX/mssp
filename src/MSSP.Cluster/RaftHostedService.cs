@@ -14,7 +14,7 @@ sealed class RaftHostedService(MsspOptions msspOptions, MsspClusterOptions clust
     FileRaftLog? _raftLog;
     RaftLog? _log;
     RaftLogStateMachine? _stateMachine;
-    SubscriptionPipeline? _pipeline;
+    EmbeddedMsspClient? _local;
     ClusteredMsspClient? _client;
     RaftNode? _node;
     RaftGrpcTransport? _transport;
@@ -27,6 +27,13 @@ sealed class RaftHostedService(MsspOptions msspOptions, MsspClusterOptions clust
     /// <exception cref="InvalidOperationException">Thrown if accessed before <see cref="StartAsync"/> completes.</exception>
     public RaftNode Node =>
         _node ?? throw new InvalidOperationException("Raft node is not available before the host has started.");
+
+    /// <summary>
+    /// Gets the local <see cref="EmbeddedMsspClient"/> for this cluster node.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">Thrown if accessed before <see cref="StartAsync"/> completes.</exception>
+    public EmbeddedMsspClient Local =>
+        _local ?? throw new InvalidOperationException("Local client is not available before the host has started.");
 
     /// <summary>
     /// Gets the <see cref="IMsspClient"/> for this cluster node.
@@ -71,9 +78,10 @@ sealed class RaftHostedService(MsspOptions msspOptions, MsspClusterOptions clust
             dataDir,
             msspOptions.SubscriptionLogFormat,
             msspOptions.SubscriptionLogSegmentSizeBytes);
-        _pipeline = new SubscriptionPipeline(store, subscriptionLog);
+        var pipeline = new SubscriptionPipeline(store, subscriptionLog);
+        _local = new EmbeddedMsspClient(store: pipeline, subscriptions: pipeline);
 
-        _client = new ClusteredMsspClient(_node, _pipeline, _pipeline, clusterOptions.Peers);
+        _client = new ClusteredMsspClient(_node, _local, clusterOptions.Peers);
 
         // replay Raft log entries from checkpoint to current end
         for (var i = checkpointIndex + 1; i <= _raftLog.LastIndex; i++) {
@@ -96,7 +104,7 @@ sealed class RaftHostedService(MsspOptions msspOptions, MsspClusterOptions clust
         if (_disposed) return;
         _disposed = true;
         _client?.Dispose();
-        _pipeline?.Dispose();
+        _local?.Dispose();
         _node?.Dispose();
         _transport?.Dispose();
         _raftLog?.Dispose();

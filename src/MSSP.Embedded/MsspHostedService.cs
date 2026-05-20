@@ -13,10 +13,10 @@ public sealed class MsspHostedService(MsspOptions options) : IHostedService, IDi
     bool _disposed;
 
     /// <summary>
-    /// Gets the <see cref="IMsspClient"/> once the host has started.
+    /// Gets the <see cref="EmbeddedMsspClient"/> once the host has started.
     /// </summary>
     /// <exception cref="InvalidOperationException">Thrown if accessed before <see cref="StartAsync"/> has completed.</exception>
-    internal IMsspClient Client =>
+    public EmbeddedMsspClient Client =>
         _client ?? throw new InvalidOperationException("IMsspClient is not available before the host has started.");
 
     /// <inheritdoc/>

@@ -9,7 +9,7 @@ namespace MSSP.Embedded;
 /// successful <see cref="TryAppendAsync"/> call publishes the record to the
 /// <see cref="IAsyncEnumerable{T}"/> side without delay.
 /// </summary>
-sealed class EmbeddedLog : ILog<WalRecord> {
+sealed class EmbeddedLog : ILog<WalRecord>, IDisposable {
     readonly WalManager _wal;
     readonly Channel<WalRecord> _channel = Channel.CreateUnbounded<WalRecord>(new UnboundedChannelOptions {
         SingleReader = true,
@@ -31,4 +31,7 @@ sealed class EmbeddedLog : ILog<WalRecord> {
     /// <inheritdoc/>
     public IAsyncEnumerator<WalRecord> GetAsyncEnumerator(CancellationToken cancellationToken = default) =>
         _channel.Reader.ReadAllAsync(cancellationToken).GetAsyncEnumerator(cancellationToken);
+
+    /// <inheritdoc/>
+    public void Dispose() => _wal.Dispose();
 }
