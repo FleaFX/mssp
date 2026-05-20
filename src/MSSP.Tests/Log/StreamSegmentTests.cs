@@ -44,15 +44,6 @@ public class StreamSegmentTests {
             result.Should().BeFalse();
         }
 
-        [Fact]
-        public async Task Returns_False_AfterComplete() {
-            using var log = new StreamSegment<TestLogRecord>(new MemoryStream());
-            log.Complete();
-
-            var result = await log.TryAppendAsync(new TestLogRecord(new byte[] { 0x01 }));
-
-            result.Should().BeFalse();
-        }
     }
 
     public class Enumerate : StreamSegmentTests {

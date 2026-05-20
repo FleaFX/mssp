@@ -16,9 +16,8 @@ namespace MSSP.Log;
 /// For on-disk durability, open the underlying file with <see cref="FileOptions.WriteThrough"/>.
 /// The stream must be seekable for enumeration to work.
 /// </remarks>
-public sealed class StreamSegment<TRecord> : ILogSegment<TRecord> where TRecord : ILogRecord<TRecord> {
+public sealed class StreamSegment<TRecord> : IAsyncEnumerable<TRecord>, IDisposable where TRecord : ILogRecord<TRecord> {
     readonly Stream _stream;
-    volatile bool _completed;
 
     /// <summary>
     /// Creates a <see cref="StreamSegment{TRecord}"/> that appends to <paramref name="stream"/>.
@@ -28,8 +27,6 @@ public sealed class StreamSegment<TRecord> : ILogSegment<TRecord> where TRecord 
 
     /// <inheritdoc/>
     public async ValueTask<bool> TryAppendAsync(TRecord record, CancellationToken cancellationToken = default) {
-        if (_completed) return false;
-
         ReadOnlyMemory<byte> bytes = record;
         var buf = ArrayPool<byte>.Shared.Rent(4 + bytes.Length + 4);
         try {
@@ -47,10 +44,7 @@ public sealed class StreamSegment<TRecord> : ILogSegment<TRecord> where TRecord 
     }
 
     /// <inheritdoc/>
-    public void Complete() => _completed = true;
-
-    /// <inheritdoc/>
-    async IAsyncEnumerator<TRecord> IAsyncEnumerable<TRecord>.GetAsyncEnumerator(CancellationToken cancellationToken) {
+    public async IAsyncEnumerator<TRecord> GetAsyncEnumerator(CancellationToken cancellationToken = default) {
         if (!_stream.CanSeek) yield break;
 
         _stream.Position = 0;
@@ -74,6 +68,5 @@ public sealed class StreamSegment<TRecord> : ILogSegment<TRecord> where TRecord 
         }
     }
 
-    /// <inheritdoc/>
     public void Dispose() => _stream.Dispose();
 }
