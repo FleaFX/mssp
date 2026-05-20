@@ -7,9 +7,11 @@ namespace MSSP.Storage;
 sealed class DefaultSstAccess<TKey> : ISstAccess<TKey> where TKey : IKey<TKey> {
     internal static readonly DefaultSstAccess<TKey> Instance = new();
 
+    /// <inheritdoc />
     public ISstReader<TKey> OpenReader(string sstPath) =>
         new SstReader<TKey>(new FileStream(sstPath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096));
 
+    /// <inheritdoc />
     public async ValueTask WriteAsync(IEnumerable<KeyValuePair<TKey, ReadOnlyMemory<byte>?>> entries, string sstPath, CancellationToken ct) {
         var tmpPath = sstPath + ".tmp";
         {
@@ -19,5 +21,6 @@ sealed class DefaultSstAccess<TKey> : ISstAccess<TKey> where TKey : IKey<TKey> {
         File.Move(tmpPath, sstPath);
     }
 
+    /// <inheritdoc />
     public void Delete(string sstPath) => File.Delete(sstPath);
 }
