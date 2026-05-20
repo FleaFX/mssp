@@ -7,11 +7,10 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using MSSP.Client;
 using MSSP.Embedded;
-using AppendRequest = MSSP.Grpc.AppendRequest;
-using ReadRequest = MSSP.Grpc.ReadRequest;
+using MSSP.Server;
 using MsspGrpcClient = MSSP.Grpc.Mssp.MsspClient;
 
-namespace MSSP.Server;
+namespace MSSP.Grpc;
 
 public class MsspGrpcServiceTests : IAsyncLifetime {
     readonly string _dataDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
@@ -50,7 +49,7 @@ public class MsspGrpcServiceTests : IAsyncLifetime {
             Directory.Delete(_dataDir, recursive: true);
     }
 
-    static EventData Event(string type, string payload) =>
+    static MSSP.EventData Event(string type, string payload) =>
         new(type, System.Text.Encoding.UTF8.GetBytes(payload));
 
     public class AppendAsync : MsspGrpcServiceTests {
@@ -91,7 +90,7 @@ public class MsspGrpcServiceTests : IAsyncLifetime {
         [Fact]
         public async Task PreservesStreamIdEventTypePayloadAndRevision() {
             var payload = "hello world"u8.ToArray();
-            await _client.AppendAsync("stream-a", StreamRevision.NoStream, [new EventData("MyEvent", payload)]);
+            await _client.AppendAsync("stream-a", StreamRevision.NoStream, [new MSSP.EventData("MyEvent", payload)]);
 
             var events = await _client.ReadAsync("stream-a").ToListAsync();
 

@@ -7,8 +7,7 @@
   </Folder>
   <Project Path="MSSP/MSSP.csproj" />
   <Folder Name="/Storage/">
-    <Project Path="MSSP.Log/MSSP.Log.csproj" />
-    <Project Path="MSSP.LsmTree/MSSP.LsmTree.csproj" />
+    <Project Path="MSSP.Storage/MSSP.Storage.csproj" />
     <Project Path="MSSP.BloomFilters/MSSP.BloomFilters.csproj" />
   </Folder>
   <Folder Name="/Embedded/">

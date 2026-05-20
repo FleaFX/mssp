@@ -4,7 +4,7 @@ using Google.Protobuf;
 using Grpc.Core;
 using Grpc.Net.Client;
 using MSSP.Embedded;
-using MSSP.LsmTree;
+using MSSP.Storage;
 using MSSP.Raft;
 using AppendRequest = MSSP.Grpc.AppendRequest;
 using ReadRequest = MSSP.Grpc.ReadRequest;

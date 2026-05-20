@@ -8,7 +8,11 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\MSSP.Storage\MSSP.Storage.csproj" />
+    <PackageReference Include="System.IO.Hashing" Version="10.0.7" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\MSSP\MSSP.csproj" />
   </ItemGroup>
 
 </Project>

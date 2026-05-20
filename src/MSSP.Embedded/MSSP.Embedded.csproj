@@ -17,8 +17,7 @@
   <ItemGroup>
     <ProjectReference Include="..\MSSP\MSSP.csproj" />
     <ProjectReference Include="..\MSSP.BloomFilters\MSSP.BloomFilters.csproj" />
-    <ProjectReference Include="..\MSSP.Log\MSSP.Log.csproj" />
-    <ProjectReference Include="..\MSSP.LsmTree\MSSP.LsmTree.csproj" />
+    <ProjectReference Include="..\MSSP.Storage\MSSP.Storage.csproj" />
   </ItemGroup>
 
 </Project>
