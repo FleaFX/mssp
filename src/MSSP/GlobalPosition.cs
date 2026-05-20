@@ -12,15 +12,23 @@ public readonly record struct GlobalPosition(ulong Value) : IComparable<GlobalPo
     /// <inheritdoc/>
     public int CompareTo(GlobalPosition other) => Value.CompareTo(other.Value);
 
-    /// <inheritdoc/>
+    /// <summary>
+    /// Returns <see langword="true"/> if <paramref name="left"/> precedes <paramref name="right"/>.
+    /// </summary>
     public static bool operator <(GlobalPosition left, GlobalPosition right) => left.Value < right.Value;
 
-    /// <inheritdoc/>
+    /// <summary>
+    /// Returns <see langword="true"/> if <paramref name="left"/> follows <paramref name="right"/>.
+    /// </summary>
     public static bool operator >(GlobalPosition left, GlobalPosition right) => left.Value > right.Value;
 
-    /// <inheritdoc/>
+    /// <summary>
+    /// Returns <see langword="true"/> if <paramref name="left"/> precedes or equals <paramref name="right"/>.
+    /// </summary>
     public static bool operator <=(GlobalPosition left, GlobalPosition right) => left.Value <= right.Value;
 
-    /// <inheritdoc/>
+    /// <summary>
+    /// Returns <see langword="true"/> if <paramref name="left"/> follows or equals <paramref name="right"/>.
+    /// </summary>
     public static bool operator >=(GlobalPosition left, GlobalPosition right) => left.Value >= right.Value;
 }

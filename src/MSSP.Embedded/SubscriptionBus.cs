@@ -11,6 +11,9 @@ public sealed class SubscriptionBus {
 
     readonly List<Registration> _registrations = [];
 
+    /// <summary>
+    /// Registers a new subscription channel for <paramref name="filter"/> and returns its reader.
+    /// </summary>
     public ChannelReader<SubscriptionEvent> Register(SubscriptionFilter filter) {
         var channel = Channel.CreateUnbounded<SubscriptionEvent>(
             new UnboundedChannelOptions { SingleReader = true, SingleWriter = true });
@@ -18,25 +21,33 @@ public sealed class SubscriptionBus {
         return channel.Reader;
     }
 
+    /// <summary>
+    /// Writes <paramref name="evt"/> to every registered channel whose filter matches it.
+    /// </summary>
     public void Publish(SubscriptionEvent evt) {
-        foreach (var reg in _registrations)
-            if (reg.Filter.Matches(evt))
-                reg.Channel.Writer.TryWrite(evt);
+        foreach (var reg in _registrations.Where(reg => reg.Filter.Matches(evt)))
+            reg.Channel.Writer.TryWrite(evt);
     }
 
+    /// <summary>
+    /// Completes all active subscription channels and clears the registration list.
+    /// </summary>
     public void CompleteAll() {
         foreach (var reg in _registrations)
             reg.Channel.Writer.TryComplete();
         _registrations.Clear();
     }
 
+    /// <summary>
+    /// Completes and removes the channel identified by <paramref name="reader"/>.
+    /// </summary>
     public void Unregister(ChannelReader<SubscriptionEvent> reader) {
-        for (int i = 0; i < _registrations.Count; i++) {
-            if (ReferenceEquals(_registrations[i].Channel.Reader, reader)) {
-                _registrations[i].Channel.Writer.TryComplete();
-                _registrations.RemoveAt(i);
-                return;
-            }
+        for (var i = 0; i < _registrations.Count; i++) {
+            if (!ReferenceEquals(_registrations[i].Channel.Reader, reader)) continue;
+
+            _registrations[i].Channel.Writer.TryComplete();
+            _registrations.RemoveAt(i);
+            return;
         }
     }
 }
