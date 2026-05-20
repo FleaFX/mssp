@@ -5,7 +5,7 @@ using MSSP.Raft;
 namespace MSSP.Cluster;
 
 sealed class InMemoryCluster : IAsyncDisposable {
-    public record NodeHandle(RaftNode Node, ClusteredMsspClient Client, LsmStore<EventKey> Store);
+    public record NodeHandle(RaftNode Node, ClusteredMsspClient Client, SubscriptionPipeline Pipeline);
 
     readonly List<NodeHandle> _nodes = [];
 
@@ -41,8 +41,9 @@ sealed class InMemoryCluster : IAsyncDisposable {
             var store = await LsmStore<EventKey>.OpenAsync(options, AsyncEnumerable.Empty<ReadOnlyMemory<byte>>(), ct);
 
             var subLog = SubscriptionLog.Open(dataDir, SubscriptionLogFormat.FullPayload, 64 * 1024 * 1024);
-            var client = new ClusteredMsspClient(node, store, [], subLog, 0);
-            cluster._nodes.Add(new NodeHandle(node, client, store));
+            var pipeline = new SubscriptionPipeline(store, subLog);
+            var client = new ClusteredMsspClient(node, pipeline, pipeline, []);
+            cluster._nodes.Add(new NodeHandle(node, client, pipeline));
         }
 
         foreach (var h in cluster._nodes)
@@ -66,7 +67,7 @@ sealed class InMemoryCluster : IAsyncDisposable {
             await h.Node.StopAsync();
         foreach (var h in _nodes) {
             h.Client.Dispose();
-            h.Store.Dispose();
+            h.Pipeline.Dispose();
         }
     }
 }

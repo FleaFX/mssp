@@ -3,7 +3,7 @@ using System.Collections.Concurrent;
 
 namespace MSSP.Storage;
 
-sealed class LsmStore<TKey> : IDisposable where TKey : IKey<TKey> {
+public sealed class LsmStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKey> {
     readonly string _dataDirectory;
     readonly int _capacityBytes;
     readonly int _compactionThreshold;
@@ -47,7 +47,7 @@ sealed class LsmStore<TKey> : IDisposable where TKey : IKey<TKey> {
     /// Serialises <paramref name="key"/> and <paramref name="value"/> as a WAL record, appends it to the log,
     /// then waits until the apply loop has committed the record to the MemTable.
     /// </summary>
-    internal async ValueTask WriteAsync(TKey key, ReadOnlyMemory<byte> value, CancellationToken ct) {
+    public async ValueTask WriteAsync(TKey key, ReadOnlyMemory<byte> value, CancellationToken ct) {
         ReadOnlyMemory<byte> keyBytes = key;
         var entrySize = keyBytes.Length + value.Length;
 
@@ -74,7 +74,7 @@ sealed class LsmStore<TKey> : IDisposable where TKey : IKey<TKey> {
     /// <summary>
     /// Scans SST files then the MemTable, starting at <paramref name="from"/>. Safe to call under the write lock.
     /// </summary>
-    internal IEnumerable<KeyValuePair<TKey, ReadOnlyMemory<byte>?>> ScanAllFrom(TKey from) {
+    public IEnumerable<KeyValuePair<TKey, ReadOnlyMemory<byte>?>> ScanAllFrom(TKey from) {
         foreach (var sstPath in _sstFiles) {
             using var reader = _sst.OpenReader(sstPath);
             foreach (var entry in reader.Scan(from))
@@ -88,7 +88,7 @@ sealed class LsmStore<TKey> : IDisposable where TKey : IKey<TKey> {
     /// Captures a snapshot of the current store state immediately, then yields lazily.
     /// Safe to iterate after releasing the write lock.
     /// </summary>
-    internal IEnumerable<KeyValuePair<TKey, ReadOnlyMemory<byte>?>> ScanSnapshotFrom(TKey from) {
+    public IEnumerable<KeyValuePair<TKey, ReadOnlyMemory<byte>?>> ScanSnapshotFrom(TKey from) {
         var sstFiles = _sstFiles.ToArray();
         var memTable = _memTable;
 

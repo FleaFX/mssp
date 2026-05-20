@@ -14,7 +14,7 @@ sealed class RaftHostedService(MsspOptions msspOptions, MsspClusterOptions clust
     FileRaftLog? _raftLog;
     RaftLog? _log;
     RaftLogStateMachine? _stateMachine;
-    LsmStore<EventKey>? _store;
+    SubscriptionPipeline? _pipeline;
     ClusteredMsspClient? _client;
     RaftNode? _node;
     RaftGrpcTransport? _transport;
@@ -65,15 +65,15 @@ sealed class RaftHostedService(MsspOptions msspOptions, MsspClusterOptions clust
             _log,
             onFlushed);
 
-        _store = await LsmStore<EventKey>.OpenAsync(options, AsyncEnumerable.Empty<ReadOnlyMemory<byte>>(), cancellationToken);
+        var store = await LsmStore<EventKey>.OpenAsync(options, AsyncEnumerable.Empty<ReadOnlyMemory<byte>>(), cancellationToken);
 
         var subscriptionLog = SubscriptionLog.Open(
             dataDir,
             msspOptions.SubscriptionLogFormat,
             msspOptions.SubscriptionLogSegmentSizeBytes);
-        var globalSequence = subscriptionLog.GetLastPosition().Value;
+        _pipeline = new SubscriptionPipeline(store, subscriptionLog);
 
-        _client = new ClusteredMsspClient(_node, _store, clusterOptions.Peers, subscriptionLog, globalSequence);
+        _client = new ClusteredMsspClient(_node, _pipeline, _pipeline, clusterOptions.Peers);
 
         // replay Raft log entries from checkpoint to current end
         for (var i = checkpointIndex + 1; i <= _raftLog.LastIndex; i++) {
@@ -96,9 +96,9 @@ sealed class RaftHostedService(MsspOptions msspOptions, MsspClusterOptions clust
         if (_disposed) return;
         _disposed = true;
         _client?.Dispose();
+        _pipeline?.Dispose();
         _node?.Dispose();
         _transport?.Dispose();
-        _store?.Dispose();
         _raftLog?.Dispose();
     }
 }

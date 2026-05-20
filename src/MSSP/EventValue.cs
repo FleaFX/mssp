@@ -7,7 +7,10 @@ namespace MSSP;
 /// The binary encoding of a single event's payload as stored in the MemTable and SST files.
 /// </summary>
 /// <remarks>
-/// Binary layout: [typeLen: 4 bytes LE] [type: UTF-8] [timestamp: 8 bytes LE ms] [globalPosition: 8 bytes LE] [data bytes]
+/// Binary layout: [typeLen: 4 bytes LE] [type: UTF-8] [timestamp: 8 bytes LE ms] [data bytes] [reserved: 8 bytes LE]
+///
+/// The last 8 bytes are a reserved slot written by the infrastructure layer (e.g. <c>SubscriptionPipeline</c>)
+/// to store the <see cref="GlobalPosition"/>. They are zero when the value leaves <see cref="From"/>.
 /// </remarks>
 public readonly struct EventValue {
     readonly ReadOnlyMemory<byte> _bytes;
@@ -15,28 +18,27 @@ public readonly struct EventValue {
     EventValue(ReadOnlyMemory<byte> bytes) => _bytes = bytes;
 
     /// <summary>
-    /// Encodes <paramref name="eventData"/>, <paramref name="timestamp"/>, and <paramref name="position"/> into a binary value.
+    /// Encodes <paramref name="eventData"/> and <paramref name="timestamp"/> into a binary value.
+    /// The last 8 bytes (reserved slot) are left as zero; the caller is responsible for injecting
+    /// the <see cref="GlobalPosition"/> before persisting.
     /// </summary>
-    public static EventValue From(EventData eventData, DateTimeOffset timestamp, GlobalPosition position) {
+    public static EventValue From(EventData eventData, DateTimeOffset timestamp) {
         var typeBytes = Encoding.UTF8.GetBytes(eventData.EventType);
-        var buffer = new byte[4 + typeBytes.Length + 8 + 8 + eventData.Data.Length];
+        var buffer = new byte[4 + typeBytes.Length + 8 + eventData.Data.Length + 8];
         var span = buffer.AsSpan();
         BinaryPrimitives.WriteInt32LittleEndian(span, typeBytes.Length);
         typeBytes.CopyTo(span[4..]);
         BinaryPrimitives.WriteInt64LittleEndian(span[(4 + typeBytes.Length)..], timestamp.ToUnixTimeMilliseconds());
-        BinaryPrimitives.WriteUInt64LittleEndian(span[(4 + typeBytes.Length + 8)..], position.Value);
-        eventData.Data.Span.CopyTo(span[(4 + typeBytes.Length + 16)..]);
+        eventData.Data.Span.CopyTo(span[(4 + typeBytes.Length + 8)..]);
+        // last 8 bytes default to zero (reserved slot)
         return new(buffer);
     }
 
     /// <summary>
-    /// Reads the <see cref="GlobalPosition"/> without fully decoding the value.
+    /// Reads the <see cref="GlobalPosition"/> from the reserved slot (last 8 bytes).
     /// </summary>
-    public GlobalPosition ReadPosition() {
-        var span = _bytes.Span;
-        var typeLen = BinaryPrimitives.ReadInt32LittleEndian(span);
-        return new GlobalPosition(BinaryPrimitives.ReadUInt64LittleEndian(span[(4 + typeLen + 8)..]));
-    }
+    public GlobalPosition ReadPosition() =>
+        new(BinaryPrimitives.ReadUInt64LittleEndian(_bytes.Span[^8..]));
 
     /// <summary>
     /// Decodes this value back into a <see cref="RecordedEvent"/> using <paramref name="key"/> for the stream context.
@@ -46,7 +48,7 @@ public readonly struct EventValue {
         var typeLen = BinaryPrimitives.ReadInt32LittleEndian(span);
         var eventType = Encoding.UTF8.GetString(span.Slice(4, typeLen));
         var timestamp = DateTimeOffset.FromUnixTimeMilliseconds(BinaryPrimitives.ReadInt64LittleEndian(span[(4 + typeLen)..]));
-        return new RecordedEvent(key.StreamId, key.Revision, eventType, _bytes[(4 + typeLen + 16)..], timestamp);
+        return new RecordedEvent(key.StreamId, key.Revision, eventType, _bytes[(4 + typeLen + 8)..^8], timestamp);
     }
 
     /// <summary>
@@ -57,8 +59,7 @@ public readonly struct EventValue {
         var typeLen = BinaryPrimitives.ReadInt32LittleEndian(span);
         var eventType = Encoding.UTF8.GetString(span.Slice(4, typeLen));
         var timestamp = DateTimeOffset.FromUnixTimeMilliseconds(BinaryPrimitives.ReadInt64LittleEndian(span[(4 + typeLen)..]));
-        var position = new GlobalPosition(BinaryPrimitives.ReadUInt64LittleEndian(span[(4 + typeLen + 8)..]));
-        return new SubscriptionEvent(key.StreamId, key.Revision, eventType, _bytes[(4 + typeLen + 16)..], timestamp, position);
+        return new SubscriptionEvent(key.StreamId, key.Revision, eventType, _bytes[(4 + typeLen + 8)..^8], timestamp, ReadPosition());
     }
 
     /// <inheritdoc/>

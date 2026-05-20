@@ -10,17 +10,14 @@ namespace MSSP.Embedded;
 public sealed class EmbeddedMsspClient : IMsspClient, IDisposable {
     readonly SemaphoreSlim _writeLock = new(1, 1);
     readonly RevisionIndex _revisions = new();
-    readonly LsmStore<EventKey> _store;
+    readonly ILsmStore<EventKey> _store;
+    readonly ISubscriptionProvider _subscriptions;
     readonly WalManager _wal;
-    readonly SubscriptionBus _bus = new();
-    readonly SubscriptionLog _subscriptionLog;
-    ulong _globalSequence;
 
-    EmbeddedMsspClient(LsmStore<EventKey> store, WalManager wal, SubscriptionLog subscriptionLog, ulong globalSequence) {
+    EmbeddedMsspClient(ILsmStore<EventKey> store, ISubscriptionProvider subscriptions, WalManager wal) {
         _store = store;
+        _subscriptions = subscriptions;
         _wal = wal;
-        _subscriptionLog = subscriptionLog;
-        _globalSequence = globalSequence;
     }
 
     /// <summary>
@@ -49,9 +46,9 @@ public sealed class EmbeddedMsspClient : IMsspClient, IDisposable {
         var store = await LsmStore<EventKey>.OpenAsync(options, wal.ReadAllAsync(ct), ct);
 
         var subscriptionLog = SubscriptionLog.Open(dataDirectory, subscriptionLogFormat, subscriptionLogSegmentSizeBytes);
-        var globalSequence = subscriptionLog.GetLastPosition().Value;
+        var pipeline = new SubscriptionPipeline(store, subscriptionLog);
 
-        return new EmbeddedMsspClient(store, wal, subscriptionLog, globalSequence);
+        return new EmbeddedMsspClient(pipeline, pipeline, wal);
     }
 
     /// <inheritdoc/>
@@ -72,12 +69,9 @@ public sealed class EmbeddedMsspClient : IMsspClient, IDisposable {
 
             foreach (var eventData in events) {
                 var key = new EventKey(streamId.Value, baseRevision + offset++);
-                var globalPos = new GlobalPosition(++_globalSequence);
-                ReadOnlyMemory<byte> value = EventValue.From(eventData, timestamp, globalPos);
+                ReadOnlyMemory<byte> value = EventValue.From(eventData, timestamp);
                 await _store.WriteAsync(key, value, ct);
-                await _subscriptionLog.AppendAsync(globalPos, key, value, ct);
                 _revisions.Set(streamId.Value, key.Revision);
-                _bus.Publish(((EventValue)value).ToSubscriptionEvent(key));
             }
         } finally {
             _writeLock.Release();
@@ -116,9 +110,9 @@ public sealed class EmbeddedMsspClient : IMsspClient, IDisposable {
 
         await _writeLock.WaitAsync(ct);
         try {
-            catchUpPosition = new GlobalPosition(_globalSequence);
-            liveChannel = _bus.Register(filter);
-            catchUpScan = _subscriptionLog.ScanFrom(fromPosition, BuildResolver());
+            catchUpPosition = _subscriptions.CurrentPosition;
+            liveChannel = _subscriptions.Register(filter);
+            catchUpScan = _subscriptions.ScanFrom(fromPosition, BuildResolver());
         } finally {
             _writeLock.Release();
         }
@@ -142,7 +136,7 @@ public sealed class EmbeddedMsspClient : IMsspClient, IDisposable {
             if (liveChannel != null) {
                 await _writeLock.WaitAsync(CancellationToken.None);
                 try {
-                    _bus.Unregister(liveChannel);
+                    _subscriptions.Unregister(liveChannel);
                 } finally {
                     _writeLock.Release();
                 }
@@ -153,7 +147,7 @@ public sealed class EmbeddedMsspClient : IMsspClient, IDisposable {
     // For FullPayload format the log contains full event data; no resolver needed.
     // For ReferenceOnly the log stores only EventKey pointers, resolved here via SST scan.
     Func<EventKey, SubscriptionEvent>? BuildResolver() {
-        if (_subscriptionLog.Format == SubscriptionLogFormat.FullPayload) return null;
+        if (_subscriptions.LogFormat == SubscriptionLogFormat.FullPayload) return null;
         return key => {
             foreach (var (k, v) in _store.ScanSnapshotFrom(key)) {
                 if (!k.Equals(key)) break;
@@ -178,10 +172,8 @@ public sealed class EmbeddedMsspClient : IMsspClient, IDisposable {
 
     /// <inheritdoc/>
     public void Dispose() {
-        _bus.CompleteAll();
-        _writeLock.Dispose();
         _store.Dispose();
+        _writeLock.Dispose();
         _wal.Dispose();
-        _subscriptionLog.Dispose();
     }
 }

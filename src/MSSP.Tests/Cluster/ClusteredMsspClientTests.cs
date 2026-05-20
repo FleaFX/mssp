@@ -105,8 +105,9 @@ public class ClusteredMsspClientTests : IAsyncLifetime {
             var options = new LsmStoreOptions<EventKey>(dataDir, 1024 * 1024, raftLog, _ => ValueTask.CompletedTask);
             var store = await LsmStore<EventKey>.OpenAsync(options, AsyncEnumerable.Empty<ReadOnlyMemory<byte>>(), default);
             await node.StartAsync();
-            var subLog = SubscriptionLog.Open(dataDir, MSSP.Embedded.SubscriptionLogFormat.FullPayload, 64 * 1024 * 1024);
-            var client = new ClusteredMsspClient(node, store, [], subLog, 0);
+            var subLog = SubscriptionLog.Open(dataDir, SubscriptionLogFormat.FullPayload, 64 * 1024 * 1024);
+            var pipeline = new SubscriptionPipeline(store, subLog);
+            var client = new ClusteredMsspClient(node, pipeline, pipeline, []);
             try {
                 var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(3);
                 while (DateTime.UtcNow < deadline && !node.IsLeader)
@@ -117,7 +118,7 @@ public class ClusteredMsspClientTests : IAsyncLifetime {
             } finally {
                 await node.StopAsync();
                 client.Dispose();
-                store.Dispose();
+                pipeline.Dispose();
                 fileRaftLog.Dispose();
             }
         }

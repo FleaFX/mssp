@@ -8,6 +8,7 @@ using Microsoft.Extensions.Logging;
 using MSSP.Embedded;
 using MSSP.Raft;
 using MSSP.Server;
+using MSSP.Storage;
 
 namespace MSSP.Cluster;
 
@@ -15,6 +16,8 @@ public class ClusteredMsspClientForwardingTests : IAsyncLifetime {
     InMemoryCluster _cluster = null!;
     WebApplication _leaderServer = null!;
     ClusteredMsspClient _followerClient = null!;
+    SubscriptionPipeline _followerPipeline = null!;
+    string _followerDataDir = null!;
     InMemoryCluster.NodeHandle _leader = null!;
 
     public async Task InitializeAsync() {
@@ -38,16 +41,24 @@ public class ClusteredMsspClientForwardingTests : IAsyncLifetime {
             .Addresses.First();
 
         var peers = new[] { new RaftClusterMember(_leader.Node.NodeId, new Uri(address)) };
-        var followerDataDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
-        Directory.CreateDirectory(followerDataDir);
-        var subLog = SubscriptionLog.Open(followerDataDir, MSSP.Embedded.SubscriptionLogFormat.FullPayload, 64 * 1024 * 1024);
-        _followerClient = new ClusteredMsspClient(follower.Node, follower.Store, peers, subLog, 0);
+        _followerDataDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+        Directory.CreateDirectory(_followerDataDir);
+        var followerStateMachine = new RaftLogStateMachine();
+        var followerRaftLog = new RaftLog(follower.Node, followerStateMachine);
+        var followerOptions = new LsmStoreOptions<EventKey>(_followerDataDir, 1024, followerRaftLog, _ => ValueTask.CompletedTask);
+        var followerStore = await LsmStore<EventKey>.OpenAsync(followerOptions, AsyncEnumerable.Empty<ReadOnlyMemory<byte>>(), default);
+        var followerSubLog = SubscriptionLog.Open(_followerDataDir, SubscriptionLogFormat.FullPayload, 64 * 1024 * 1024);
+        _followerPipeline = new SubscriptionPipeline(followerStore, followerSubLog);
+        _followerClient = new ClusteredMsspClient(follower.Node, _followerPipeline, _followerPipeline, peers);
     }
 
     public async Task DisposeAsync() {
         _followerClient?.Dispose();
+        _followerPipeline?.Dispose();
         if (_leaderServer is not null) await _leaderServer.DisposeAsync();
         await _cluster.DisposeAsync();
+        if (_followerDataDir is not null && Directory.Exists(_followerDataDir))
+            Directory.Delete(_followerDataDir, recursive: true);
     }
 
     static EventData Event(string type, string payload) =>

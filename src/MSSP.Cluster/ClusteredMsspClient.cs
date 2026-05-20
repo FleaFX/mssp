@@ -4,8 +4,8 @@ using Google.Protobuf;
 using Grpc.Core;
 using Grpc.Net.Client;
 using MSSP.Embedded;
-using MSSP.Storage;
 using MSSP.Raft;
+using MSSP.Storage;
 using AppendRequest = MSSP.Grpc.AppendRequest;
 using ReadRequest = MSSP.Grpc.ReadRequest;
 using GrpcEventData = MSSP.Grpc.EventData;
@@ -20,16 +20,14 @@ namespace MSSP.Cluster;
 /// </summary>
 sealed class ClusteredMsspClient(
     RaftNode node,
-    LsmStore<EventKey> store,
-    RaftClusterMember[] peers,
-    SubscriptionLog subscriptionLog,
-    ulong globalSequence) : IMsspClient, IDisposable {
+    ILsmStore<EventKey> store,
+    ISubscriptionProvider subscriptions,
+    RaftClusterMember[] peers
+) : IMsspClient, IDisposable {
 
     readonly SemaphoreSlim _writeLock = new(1, 1);
     readonly RevisionIndex _revisions = new();
-    readonly SubscriptionBus _bus = new();
     readonly Lock _leaderClientLock = new();
-    ulong _globalSequence = globalSequence;
     GrpcChannel? _leaderChannel;
     GrpcMsspClient? _leaderGrpcClient;
     string? _cachedLeaderNodeId;
@@ -66,12 +64,9 @@ sealed class ClusteredMsspClient(
 
             foreach (var eventData in events) {
                 var key = new EventKey(streamId.Value, baseRevision + offset++);
-                var globalPos = new GlobalPosition(++_globalSequence);
-                ReadOnlyMemory<byte> value = EventValue.From(eventData, timestamp, globalPos);
+                ReadOnlyMemory<byte> value = EventValue.From(eventData, timestamp);
                 await store.WriteAsync(key, value, ct);
-                await subscriptionLog.AppendAsync(globalPos, key, value, ct);
                 _revisions.Set(streamId.Value, key.Revision);
-                _bus.Publish(((EventValue)value).ToSubscriptionEvent(key));
             }
         } finally {
             _writeLock.Release();
@@ -130,9 +125,9 @@ sealed class ClusteredMsspClient(
 
         await _writeLock.WaitAsync(ct);
         try {
-            catchUpPosition = new GlobalPosition(_globalSequence);
-            liveChannel = _bus.Register(filter);
-            catchUpScan = subscriptionLog.ScanFrom(fromPosition, BuildResolver());
+            catchUpPosition = subscriptions.CurrentPosition;
+            liveChannel = subscriptions.Register(filter);
+            catchUpScan = subscriptions.ScanFrom(fromPosition, BuildResolver());
         } finally {
             _writeLock.Release();
         }
@@ -152,7 +147,7 @@ sealed class ClusteredMsspClient(
             if (liveChannel != null) {
                 await _writeLock.WaitAsync(CancellationToken.None);
                 try {
-                    _bus.Unregister(liveChannel);
+                    subscriptions.Unregister(liveChannel);
                 } finally {
                     _writeLock.Release();
                 }
@@ -161,7 +156,7 @@ sealed class ClusteredMsspClient(
     }
 
     Func<EventKey, SubscriptionEvent>? BuildResolver() {
-        if (subscriptionLog.Format == SubscriptionLogFormat.FullPayload) return null;
+        if (subscriptions.LogFormat == SubscriptionLogFormat.FullPayload) return null;
         return key => {
             foreach (var (k, v) in store.ScanSnapshotFrom(key)) {
                 if (!k.Equals(key)) break;
@@ -209,9 +204,7 @@ sealed class ClusteredMsspClient(
 
     /// <inheritdoc/>
     public void Dispose() {
-        _bus.CompleteAll();
         _writeLock.Dispose();
-        subscriptionLog.Dispose();
         lock (_leaderClientLock) {
             _leaderChannel?.Dispose();
         }

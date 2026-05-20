@@ -62,7 +62,7 @@ public sealed partial class SubscriptionLog : IDisposable {
             .OrderBy(f => f)
             .ToArray();
 
-        for (int i = 0; i < files.Length; i++) {
+        for (var i = 0; i < files.Length; i++) {
             var path = files[i];
             var startPos = ParseStartPosition(path);
             var isLast = i == files.Length - 1;
@@ -103,8 +103,8 @@ public sealed partial class SubscriptionLog : IDisposable {
         }
 
         ReadOnlyMemory<byte> keyBytes = key;
-        int headerSize = 12 + keyBytes.Length;
-        int entrySize = headerSize + _codec.PayloadSize(value);
+        var headerSize = 12 + keyBytes.Length;
+        var entrySize = headerSize + _codec.PayloadSize(value);
 
         var buf = ArrayPool<byte>.Shared.Rent(entrySize);
         try {
@@ -220,13 +220,13 @@ public sealed partial class SubscriptionLog : IDisposable {
     (GlobalPosition End, (GlobalPosition Position, long ByteOffset)[] SparseIndex, int EntryCount) ScanForIndex(string path) {
         var index = new List<(GlobalPosition, long)>();
         var end = GlobalPosition.Start;
-        int count = 0;
+        var count = 0;
 
         using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
         var buf = new byte[8];
 
         while (true) {
-            long entryOffset = fs.Position;
+            var entryOffset = fs.Position;
             if (fs.Read(buf, 0, 8) < 8) break;
             var pos = new GlobalPosition(BinaryPrimitives.ReadUInt64LittleEndian(buf));
 
@@ -255,7 +255,7 @@ public sealed partial class SubscriptionLog : IDisposable {
         if (sparseIndex.Length == 0) return 0;
         int lo = 0, hi = sparseIndex.Length - 1;
         while (lo < hi) {
-            int mid = (lo + hi + 1) / 2;
+            var mid = (lo + hi + 1) / 2;
             if (sparseIndex[mid].Position <= from) lo = mid;
             else hi = mid - 1;
         }
@@ -267,7 +267,7 @@ public sealed partial class SubscriptionLog : IDisposable {
         return ulong.Parse(name.AsSpan(FilePrefix.Length));
     }
 
-    static FileStream OpenForAppend(string path) => new FileStream(
+    static FileStream OpenForAppend(string path) => new(
         path,
         FileMode.OpenOrCreate,
         FileAccess.Write,
@@ -283,37 +283,4 @@ public sealed partial class SubscriptionLog : IDisposable {
         GlobalPosition Start,
         GlobalPosition End,
         (GlobalPosition Position, long ByteOffset)[] SparseIndex);
-
-    /// <summary>
-    /// Encodes and decodes the per-entry payload section.
-    /// </summary>
-    interface IEntryCodec {
-        /// <summary>
-        /// The log format this codec handles.
-        /// </summary>
-        SubscriptionLogFormat Format { get; }
-
-        /// <summary>
-        /// Returns the number of payload bytes written for the given <paramref name="value"/>.
-        /// </summary>
-        int PayloadSize(ReadOnlyMemory<byte> value);
-
-        /// <summary>
-        /// Writes the payload for <paramref name="value"/> into <paramref name="dest"/>.
-        /// </summary>
-        void EncodePayload(Span<byte> dest, ReadOnlyMemory<byte> value);
-
-        /// <summary>
-        /// Advances <paramref name="stream"/> past the current entry's payload without decoding it.
-        /// Returns <see langword="false"/> if the stream is truncated.
-        /// </summary>
-        bool TrySkipPayload(Stream stream, Span<byte> intBuf);
-
-        /// <summary>
-        /// Reads the payload from <paramref name="stream"/> and produces a <see cref="SubscriptionEvent"/>.
-        /// Returns <see langword="false"/> if the stream is truncated.
-        /// </summary>
-        bool TryDecodeEvent(Stream stream, Span<byte> intBuf, EventKey key, GlobalPosition pos,
-            Func<EventKey, SubscriptionEvent>? resolver, out SubscriptionEvent evt);
-    }
 }
