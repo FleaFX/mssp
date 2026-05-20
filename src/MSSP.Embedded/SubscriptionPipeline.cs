@@ -45,17 +45,13 @@ public sealed class SubscriptionPipeline : ILsmStore<EventKey>, ISubscriptionPro
     /// subscription log, and publishes to the bus.
     /// Must be called while holding the write lock.
     /// </summary>
-    public async ValueTask WriteAsync(EventKey key, ReadOnlyMemory<byte> value, CancellationToken ct) {
+    public async ValueTask WriteAsync(EventKey key, Memory<byte> value, CancellationToken ct) {
         var pos = new GlobalPosition(++_globalSequence);
+        BinaryPrimitives.WriteUInt64LittleEndian(value.Span[^8..], pos.Value);
 
-        var buffer = new byte[value.Length];
-        value.CopyTo(buffer);
-        BinaryPrimitives.WriteUInt64LittleEndian(buffer.AsSpan()[^8..], pos.Value);
-        ReadOnlyMemory<byte> injected = buffer;
-
-        await _inner.WriteAsync(key, injected, ct);
-        await _subscriptionLog.AppendAsync(pos, key, injected, ct);
-        _bus.Publish(((EventValue)injected).ToSubscriptionEvent(key));
+        await _inner.WriteAsync(key, value, ct);
+        await _subscriptionLog.AppendAsync(pos, key, value, ct);
+        _bus.Publish(((EventValue)value).ToSubscriptionEvent(key));
     }
 
     /// <summary>

@@ -69,8 +69,7 @@ public sealed class EmbeddedMsspClient : IMsspClient, IDisposable {
 
             foreach (var eventData in events) {
                 var key = new EventKey(streamId.Value, baseRevision + offset++);
-                ReadOnlyMemory<byte> value = EventValue.From(eventData, timestamp);
-                await _store.WriteAsync(key, value, ct);
+                await _store.WriteAsync(key, EventValue.From(eventData, timestamp), ct);
                 _revisions.Set(streamId.Value, key.Revision);
             }
         } finally {

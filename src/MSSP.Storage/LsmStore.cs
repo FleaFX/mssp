@@ -47,7 +47,7 @@ public sealed class LsmStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKey> {
     /// Serialises <paramref name="key"/> and <paramref name="value"/> as a WAL record, appends it to the log,
     /// then waits until the apply loop has committed the record to the MemTable.
     /// </summary>
-    public async ValueTask WriteAsync(TKey key, ReadOnlyMemory<byte> value, CancellationToken ct) {
+    public async ValueTask WriteAsync(TKey key, Memory<byte> value, CancellationToken ct) {
         ReadOnlyMemory<byte> keyBytes = key;
         var entrySize = keyBytes.Length + value.Length;
 

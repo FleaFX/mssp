@@ -22,7 +22,7 @@ public readonly struct EventValue {
     /// The last 8 bytes (reserved slot) are left as zero; the caller is responsible for injecting
     /// the <see cref="GlobalPosition"/> before persisting.
     /// </summary>
-    public static EventValue From(EventData eventData, DateTimeOffset timestamp) {
+    public static Memory<byte> From(EventData eventData, DateTimeOffset timestamp) {
         var typeBytes = Encoding.UTF8.GetBytes(eventData.EventType);
         var buffer = new byte[4 + typeBytes.Length + 8 + eventData.Data.Length + 8];
         var span = buffer.AsSpan();
@@ -31,7 +31,7 @@ public readonly struct EventValue {
         BinaryPrimitives.WriteInt64LittleEndian(span[(4 + typeBytes.Length)..], timestamp.ToUnixTimeMilliseconds());
         eventData.Data.Span.CopyTo(span[(4 + typeBytes.Length + 8)..]);
         // last 8 bytes default to zero (reserved slot)
-        return new(buffer);
+        return buffer;
     }
 
     /// <summary>
@@ -67,4 +67,7 @@ public readonly struct EventValue {
 
     /// <inheritdoc/>
     public static implicit operator EventValue(ReadOnlyMemory<byte> bytes) => new(bytes);
+
+    /// <inheritdoc/>
+    public static implicit operator EventValue(Memory<byte> bytes) => new(bytes);
 }

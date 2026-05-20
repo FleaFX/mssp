@@ -52,7 +52,7 @@ public class LsmStoreTests : IAsyncLifetime {
             yield return record;
     }
 
-    static ReadOnlyMemory<byte> Bytes(string s) => Encoding.UTF8.GetBytes(s);
+    static Memory<byte> Bytes(string s) => Encoding.UTF8.GetBytes(s);
 
     public class OpenAsync : LsmStoreTests {
         [Fact]
