@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Threading.Channels;
 using MSSP.LsmTree;
 
 namespace MSSP.Embedded;
@@ -11,10 +12,15 @@ public sealed class EmbeddedMsspClient : IMsspClient, IDisposable {
     readonly RevisionIndex _revisions = new();
     readonly LsmStore<EventKey> _store;
     readonly WalManager _wal;
+    readonly SubscriptionBus _bus = new();
+    readonly SubscriptionLog _subscriptionLog;
+    ulong _globalSequence;
 
-    EmbeddedMsspClient(LsmStore<EventKey> store, WalManager wal) {
+    EmbeddedMsspClient(LsmStore<EventKey> store, WalManager wal, SubscriptionLog subscriptionLog, ulong globalSequence) {
         _store = store;
         _wal = wal;
+        _subscriptionLog = subscriptionLog;
+        _globalSequence = globalSequence;
     }
 
     /// <summary>
@@ -23,15 +29,29 @@ public sealed class EmbeddedMsspClient : IMsspClient, IDisposable {
     /// </summary>
     /// <param name="dataDirectory">The directory in which to store WAL and SST files.</param>
     /// <param name="memTableCapacityBytes">The maximum size of the in-memory write buffer before it is flushed to an SST file.</param>
+    /// <param name="sst">Optional SST access decorator (e.g. bloom filter layer).</param>
+    /// <param name="subscriptionLogFormat">The format of the subscription log entries.</param>
+    /// <param name="subscriptionLogSegmentSizeBytes">Maximum size of a single subscription log segment.</param>
     /// <param name="ct">Token to cancel the open operation.</param>
     /// <returns>An <see cref="EmbeddedMsspClient"/> ready for use.</returns>
-    public static async ValueTask<EmbeddedMsspClient> OpenAsync(string dataDirectory, int memTableCapacityBytes = 64 * 1024 * 1024, ISstAccess<EventKey>? sst = null, CancellationToken ct = default) {
+    public static async ValueTask<EmbeddedMsspClient> OpenAsync(
+        string dataDirectory,
+        int memTableCapacityBytes = 64 * 1024 * 1024,
+        ISstAccess<EventKey>? sst = null,
+        SubscriptionLogFormat subscriptionLogFormat = SubscriptionLogFormat.FullPayload,
+        long subscriptionLogSegmentSizeBytes = 64 * 1024 * 1024,
+        CancellationToken ct = default) {
+
         Directory.CreateDirectory(dataDirectory);
         var wal = WalManager.Open(dataDirectory);
         var log = new EmbeddedLog(wal);
         var options = new LsmStoreOptions<EventKey>(dataDirectory, memTableCapacityBytes, log, _ => ValueTask.CompletedTask, SstAccess: sst);
         var store = await LsmStore<EventKey>.OpenAsync(options, wal.ReadAllAsync(ct), ct);
-        return new EmbeddedMsspClient(store, wal);
+
+        var subscriptionLog = SubscriptionLog.Open(dataDirectory, subscriptionLogFormat, subscriptionLogSegmentSizeBytes);
+        var globalSequence = subscriptionLog.GetLastPosition().Value;
+
+        return new EmbeddedMsspClient(store, wal, subscriptionLog, globalSequence);
     }
 
     /// <inheritdoc/>
@@ -52,9 +72,12 @@ public sealed class EmbeddedMsspClient : IMsspClient, IDisposable {
 
             foreach (var eventData in events) {
                 var key = new EventKey(streamId.Value, baseRevision + offset++);
-                ReadOnlyMemory<byte> value = EventValue.From(eventData, timestamp);
+                var globalPos = new GlobalPosition(++_globalSequence);
+                ReadOnlyMemory<byte> value = EventValue.From(eventData, timestamp, globalPos);
                 await _store.WriteAsync(key, value, ct);
+                await _subscriptionLog.AppendAsync(globalPos, key, value, ct);
                 _revisions.Set(streamId.Value, key.Revision);
+                _bus.Publish(((EventValue)value).ToSubscriptionEvent(key));
             }
         } finally {
             _writeLock.Release();
@@ -81,6 +104,66 @@ public sealed class EmbeddedMsspClient : IMsspClient, IDisposable {
         }
     }
 
+    /// <inheritdoc/>
+    public async IAsyncEnumerable<SubscriptionEvent> SubscribeAsync(
+        SubscriptionFilter filter,
+        GlobalPosition fromPosition = default,
+        [EnumeratorCancellation] CancellationToken ct = default) {
+
+        ChannelReader<SubscriptionEvent>? liveChannel = null;
+        IEnumerable<SubscriptionEvent> catchUpScan;
+        GlobalPosition catchUpPosition;
+
+        await _writeLock.WaitAsync(ct);
+        try {
+            catchUpPosition = new GlobalPosition(_globalSequence);
+            liveChannel = _bus.Register(filter);
+            catchUpScan = _subscriptionLog.ScanFrom(fromPosition, BuildResolver());
+        } finally {
+            _writeLock.Release();
+        }
+
+        try {
+            // CATCH-UP: replay historical events from the subscription log.
+            // The log is ordered by GlobalPosition, so we can break on first entry past the snapshot.
+            foreach (var evt in catchUpScan) {
+                if (ct.IsCancellationRequested) yield break;
+                if (evt.Position > catchUpPosition) break;
+                if (filter.Matches(evt)) yield return evt;
+            }
+
+            // LIVE: deliver events written after the catch-up snapshot.
+            // The overlap guard skips any events already delivered in catch-up.
+            await foreach (var evt in liveChannel!.ReadAllAsync(ct)) {
+                if (evt.Position <= catchUpPosition) continue;
+                yield return evt;
+            }
+        } finally {
+            if (liveChannel != null) {
+                await _writeLock.WaitAsync(CancellationToken.None);
+                try {
+                    _bus.Unregister(liveChannel);
+                } finally {
+                    _writeLock.Release();
+                }
+            }
+        }
+    }
+
+    // For FullPayload format the log contains full event data; no resolver needed.
+    // For ReferenceOnly the log stores only EventKey pointers, resolved here via SST scan.
+    Func<EventKey, SubscriptionEvent>? BuildResolver() {
+        if (_subscriptionLog.Format == SubscriptionLogFormat.FullPayload) return null;
+        return key => {
+            foreach (var (k, v) in _store.ScanSnapshotFrom(key)) {
+                if (!k.Equals(key)) break;
+                if (v is null) break;
+                return ((EventValue)v.Value).ToSubscriptionEvent(k);
+            }
+            throw new InvalidOperationException($"Event {key.StreamId}@{key.Revision} not found in store.");
+        };
+    }
+
     (bool exists, ulong revision) LookupCurrentRevision(string streamId) {
         ulong? max = null;
         var startKey = new EventKey(streamId, 0UL);
@@ -95,8 +178,10 @@ public sealed class EmbeddedMsspClient : IMsspClient, IDisposable {
 
     /// <inheritdoc/>
     public void Dispose() {
+        _bus.CompleteAll();
         _writeLock.Dispose();
         _store.Dispose();
         _wal.Dispose();
+        _subscriptionLog.Dispose();
     }
 }

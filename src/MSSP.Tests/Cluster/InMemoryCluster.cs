@@ -1,3 +1,4 @@
+using MSSP.Embedded;
 using MSSP.LsmTree;
 using MSSP.Raft;
 
@@ -39,7 +40,8 @@ sealed class InMemoryCluster : IAsyncDisposable {
 
             var store = await LsmStore<EventKey>.OpenAsync(options, AsyncEnumerable.Empty<ReadOnlyMemory<byte>>(), ct);
 
-            var client = new ClusteredMsspClient(node, store, []);
+            var subLog = SubscriptionLog.Open(dataDir, SubscriptionLogFormat.FullPayload, 64 * 1024 * 1024);
+            var client = new ClusteredMsspClient(node, store, [], subLog, 0);
             cluster._nodes.Add(new NodeHandle(node, client, store));
         }
 

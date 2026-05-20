@@ -24,7 +24,13 @@ public sealed class MsspHostedService(MsspOptions options) : IHostedService, IDi
         ISstAccess<EventKey>? sst = options.UseBloomFilters
             ? new BloomFilteredSstAccess<EventKey>(DefaultSstAccess<EventKey>.Instance)
             : null;
-        _client = await EmbeddedMsspClient.OpenAsync(options.DataDirectory, options.MemTableCapacityBytes, sst, cancellationToken);
+        _client = await EmbeddedMsspClient.OpenAsync(
+            options.DataDirectory,
+            options.MemTableCapacityBytes,
+            sst,
+            options.SubscriptionLogFormat,
+            options.SubscriptionLogSegmentSizeBytes,
+            cancellationToken);
     }
 
     /// <inheritdoc/>

@@ -39,7 +39,10 @@ public class ClusteredMsspClientForwardingTests : IAsyncLifetime {
             .Addresses.First();
 
         var peers = new[] { new RaftClusterMember(_leader.Node.NodeId, new Uri(address)) };
-        _followerClient = new ClusteredMsspClient(follower.Node, follower.Store, peers);
+        var followerDataDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+        Directory.CreateDirectory(followerDataDir);
+        var subLog = SubscriptionLog.Open(followerDataDir, MSSP.Embedded.SubscriptionLogFormat.FullPayload, 64 * 1024 * 1024);
+        _followerClient = new ClusteredMsspClient(follower.Node, follower.Store, peers, subLog, 0);
     }
 
     public async Task DisposeAsync() {

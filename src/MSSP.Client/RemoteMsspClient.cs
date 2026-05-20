@@ -41,4 +41,8 @@ sealed class RemoteMsspClient(MsspClient grpcClient) : IMsspClient {
                 new DateTimeOffset(DateTimeOffset.UnixEpoch.Ticks + e.TimestampNs / 100L, TimeSpan.Zero));
         }
     }
+
+    /// <inheritdoc/>
+    public IAsyncEnumerable<SubscriptionEvent> SubscribeAsync(SubscriptionFilter filter, GlobalPosition fromPosition = default, CancellationToken ct = default) =>
+        throw new NotSupportedException("Subscriptions over gRPC are not yet implemented.");
 }

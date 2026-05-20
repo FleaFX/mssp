@@ -20,4 +20,19 @@ public sealed class MsspOptions {
     /// to skip unnecessary disk reads during point lookups. Defaults to <c>true</c>.
     /// </summary>
     public bool UseBloomFilters { get; set; } = true;
+
+    /// <summary>
+    /// The format used for subscription log entries.
+    /// <see cref="SubscriptionLogFormat.FullPayload"/> (the default) stores the complete event alongside
+    /// the key and enables purely sequential catch-up reads.
+    /// <see cref="SubscriptionLogFormat.ReferenceOnly"/> stores only the key pointer and is more
+    /// disk-efficient but requires SST lookups during catch-up.
+    /// </summary>
+    public SubscriptionLogFormat SubscriptionLogFormat { get; set; } = SubscriptionLogFormat.FullPayload;
+
+    /// <summary>
+    /// Maximum size in bytes of a single subscription log segment before a new segment is started.
+    /// Smaller segments are easier to archive individually. Defaults to 64 MiB.
+    /// </summary>
+    public long SubscriptionLogSegmentSizeBytes { get; set; } = 64 * 1024 * 1024;
 }

@@ -67,7 +67,13 @@ sealed class RaftHostedService(MsspOptions msspOptions, MsspClusterOptions clust
 
         _store = await LsmStore<EventKey>.OpenAsync(options, AsyncEnumerable.Empty<ReadOnlyMemory<byte>>(), cancellationToken);
 
-        _client = new ClusteredMsspClient(_node, _store, clusterOptions.Peers);
+        var subscriptionLog = SubscriptionLog.Open(
+            dataDir,
+            msspOptions.SubscriptionLogFormat,
+            msspOptions.SubscriptionLogSegmentSizeBytes);
+        var globalSequence = subscriptionLog.GetLastPosition().Value;
+
+        _client = new ClusteredMsspClient(_node, _store, clusterOptions.Peers, subscriptionLog, globalSequence);
 
         // replay Raft log entries from checkpoint to current end
         for (var i = checkpointIndex + 1; i <= _raftLog.LastIndex; i++) {
