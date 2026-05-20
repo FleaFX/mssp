@@ -68,6 +68,9 @@ public class SubscribeAsyncTests : IAsyncLifetime {
         while (DateTime.UtcNow < deadline && follower.Local.CurrentPosition.Value < 2)
             await Task.Delay(20);
 
+        follower.Local.CurrentPosition.Value.Should().BeGreaterThanOrEqualTo(2,
+            "both events must be replicated to the follower before subscribing");
+
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var events = await CollectAsync(
             follower.Client.SubscribeAsync(SubscriptionFilter.All, ct: cts.Token),

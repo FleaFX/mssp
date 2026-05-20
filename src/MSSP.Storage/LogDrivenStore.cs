@@ -31,6 +31,9 @@ public sealed class LogDrivenStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKe
     /// Creates a <see cref="LogDrivenStore{TKey}"/> wrapping <paramref name="inner"/> and
     /// immediately starts the apply loop.
     /// </summary>
+    /// <param name="log">The write-ahead log that durably persists records before they are applied.</param>
+    /// <param name="inner">The inner store that receives applied records; typically a decorator chain ending in <see cref="LsmStore{TKey}"/>.</param>
+    /// <param name="capacityBytes">Maximum combined key+value size for a single record; matches the MemTable capacity of the inner store.</param>
     public static LogDrivenStore<TKey> Create(ILog<WalRecord> log, ILsmStore<TKey> inner, int capacityBytes) {
         var store = new LogDrivenStore<TKey>(log, inner, capacityBytes);
         store.StartApplyLoop();
