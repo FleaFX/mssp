@@ -28,6 +28,27 @@ public class ClusteredMsspClientTests : IAsyncLifetime {
     }
 
     [Fact]
+    public async Task Follower_ServesRead_Locally() {
+        var leader = await _cluster.WaitForLeaderAsync();
+        var follower = _cluster.Nodes.First(h => h.Node != leader.Node);
+
+        await leader.Client.AppendAsync("stream-a", StreamRevision.NoStream, [Event("Foo", "bar")]);
+
+        // Wait for Raft to replicate and apply on the follower.
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (DateTime.UtcNow < deadline && follower.Local.CurrentPosition.Value < 1)
+            await Task.Delay(20);
+
+        follower.Local.CurrentPosition.Value.Should().BeGreaterThanOrEqualTo(1,
+            "the event must be replicated to the follower before reading");
+
+        var events = await follower.Client.ReadAsync("stream-a").ToListAsync();
+
+        events.Should().HaveCount(1);
+        events[0].EventType.Should().Be("Foo");
+    }
+
+    [Fact]
     public async Task Follower_ThrowsTimeoutException_WhenForwardingNotConfigured() {
         var leader = await _cluster.WaitForLeaderAsync();
         var follower = _cluster.Nodes.First(h => h.Node != leader.Node);
