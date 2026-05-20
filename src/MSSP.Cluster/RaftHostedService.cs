@@ -66,20 +66,20 @@ sealed class RaftHostedService(MsspOptions msspOptions, MsspClusterOptions clust
         MemTableFlushedDelegate onFlushed = async ct =>
             await RaftLogStateMachine.WriteCheckpointAsync(dataDir, capturedStateMachine.LastAppliedIndex, ct);
 
-        var options = new LsmStoreOptions<EventKey>(
+        var lsmOptions = new LsmStoreOptions<EventKey>(
             dataDir,
             msspOptions.MemTableCapacityBytes,
-            _log,
             onFlushed);
 
-        var store = await LsmStore<EventKey>.OpenAsync(options, AsyncEnumerable.Empty<ReadOnlyMemory<byte>>(), cancellationToken);
+        var lsmStore = await LsmStore<EventKey>.OpenAsync(lsmOptions, AsyncEnumerable.Empty<ReadOnlyMemory<byte>>(), cancellationToken);
 
         var subscriptionLog = SubscriptionLog.Open(
             dataDir,
             msspOptions.SubscriptionLogFormat,
             msspOptions.SubscriptionLogSegmentSizeBytes);
-        var pipeline = new SubscriptionPipeline(store, subscriptionLog);
-        _local = new EmbeddedMsspClient(store: pipeline, subscriptions: pipeline);
+        var pipeline = new SubscriptionPipeline(lsmStore, subscriptionLog);
+        var logDriven = LogDrivenStore<EventKey>.Create(_log, pipeline, msspOptions.MemTableCapacityBytes);
+        _local = new EmbeddedMsspClient(store: new GlobalPositionDecorator(logDriven, pipeline), subscriptions: pipeline);
 
         _client = new ClusteredMsspClient(_node, _local, clusterOptions.Peers);
 

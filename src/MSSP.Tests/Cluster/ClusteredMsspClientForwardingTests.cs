@@ -45,11 +45,12 @@ public class ClusteredMsspClientForwardingTests : IAsyncLifetime {
         Directory.CreateDirectory(_followerDataDir);
         var followerStateMachine = new RaftLogStateMachine();
         var followerRaftLog = new RaftLog(follower.Node, followerStateMachine);
-        var followerOptions = new LsmStoreOptions<EventKey>(_followerDataDir, 1024, followerRaftLog, _ => ValueTask.CompletedTask);
-        var followerStore = await LsmStore<EventKey>.OpenAsync(followerOptions, AsyncEnumerable.Empty<ReadOnlyMemory<byte>>(), default);
+        var followerLsmOptions = new LsmStoreOptions<EventKey>(_followerDataDir, 1024, _ => ValueTask.CompletedTask);
+        var followerStore = await LsmStore<EventKey>.OpenAsync(followerLsmOptions, AsyncEnumerable.Empty<ReadOnlyMemory<byte>>(), default);
         var followerSubLog = SubscriptionLog.Open(_followerDataDir, SubscriptionLogFormat.FullPayload, 64 * 1024 * 1024);
         var followerPipeline = new SubscriptionPipeline(followerStore, followerSubLog);
-        _followerLocal = new EmbeddedMsspClient(followerPipeline, followerPipeline);
+        var followerLogDriven = LogDrivenStore<EventKey>.Create(followerRaftLog, followerPipeline, 1024);
+        _followerLocal = new EmbeddedMsspClient(store: new GlobalPositionDecorator(followerLogDriven, followerPipeline), subscriptions: followerPipeline);
         _followerClient = new ClusteredMsspClient(follower.Node, _followerLocal, peers);
     }
 

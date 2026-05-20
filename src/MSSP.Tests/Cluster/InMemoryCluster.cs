@@ -32,17 +32,13 @@ sealed class InMemoryCluster : IAsyncDisposable {
 
             var raftLog = new RaftLog(node, stateMachine);
 
-            var options = new LsmStoreOptions<EventKey>(
-                dataDir,
-                memTableCapacityBytes,
-                raftLog,
-                _ => ValueTask.CompletedTask);
-
-            var store = await LsmStore<EventKey>.OpenAsync(options, AsyncEnumerable.Empty<ReadOnlyMemory<byte>>(), ct);
+            var lsmOptions = new LsmStoreOptions<EventKey>(dataDir, memTableCapacityBytes, _ => ValueTask.CompletedTask);
+            var store = await LsmStore<EventKey>.OpenAsync(lsmOptions, AsyncEnumerable.Empty<ReadOnlyMemory<byte>>(), ct);
 
             var subLog = SubscriptionLog.Open(dataDir, SubscriptionLogFormat.FullPayload, 64 * 1024 * 1024);
             var pipeline = new SubscriptionPipeline(store, subLog);
-            var local = new EmbeddedMsspClient(pipeline, pipeline);
+            var logDriven = LogDrivenStore<EventKey>.Create(raftLog, pipeline, memTableCapacityBytes);
+            var local = new EmbeddedMsspClient(store: new GlobalPositionDecorator(logDriven, pipeline), subscriptions: pipeline);
             var client = new ClusteredMsspClient(node, local, []);
             cluster._nodes.Add(new NodeHandle(node, client, local));
         }

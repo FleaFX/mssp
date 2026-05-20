@@ -36,13 +36,14 @@ public sealed class EmbeddedMsspClient(
         Directory.CreateDirectory(dataDirectory);
         var wal = WalManager.Open(dataDirectory);
         var log = new EmbeddedLog(wal);
-        var options = new LsmStoreOptions<EventKey>(dataDirectory, memTableCapacityBytes, log, _ => ValueTask.CompletedTask, SstAccess: sst);
-        var store = await LsmStore<EventKey>.OpenAsync(options, wal.ReadAllAsync(ct), ct);
+        var lsmOptions = new LsmStoreOptions<EventKey>(dataDirectory, memTableCapacityBytes, _ => ValueTask.CompletedTask, SstAccess: sst);
+        var lsmStore = await LsmStore<EventKey>.OpenAsync(lsmOptions, wal.ReadAllAsync(ct), ct);
 
         var subscriptionLog = SubscriptionLog.Open(dataDirectory, subscriptionLogFormat, subscriptionLogSegmentSizeBytes);
-        var pipeline = new SubscriptionPipeline(store, subscriptionLog);
+        var pipeline = new SubscriptionPipeline(lsmStore, subscriptionLog);
+        var logDriven = LogDrivenStore<EventKey>.Create(log, pipeline, memTableCapacityBytes);
 
-        return new EmbeddedMsspClient(store: pipeline, subscriptions: pipeline);
+        return new EmbeddedMsspClient(store: new GlobalPositionDecorator(logDriven, pipeline), subscriptions: pipeline);
     }
 
     /// <inheritdoc/>

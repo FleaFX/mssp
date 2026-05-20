@@ -5,7 +5,7 @@ namespace MSSP.Storage;
 /// <summary>
 /// A single record in the write-ahead log; wraps an opaque byte payload.
 /// </summary>
-readonly struct WalRecord : ILogRecord<WalRecord> {
+public readonly struct WalRecord : ILogRecord<WalRecord> {
     readonly ReadOnlyMemory<byte> _data;
 
     WalRecord(ReadOnlyMemory<byte> data) => _data = data;

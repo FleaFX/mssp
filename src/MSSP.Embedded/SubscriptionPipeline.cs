@@ -40,18 +40,23 @@ public sealed class SubscriptionPipeline : ILsmStore<EventKey>, ISubscriptionPro
     public SubscriptionLogFormat LogFormat => _subscriptionLog.Format;
 
     /// <summary>
-    /// Assigns the next <see cref="GlobalPosition"/>, injects it into the reserved slot of
-    /// <paramref name="value"/> (last 8 bytes), writes to the inner store, appends to the
-    /// subscription log, and publishes to the bus.
+    /// Reads the <see cref="GlobalPosition"/> from the reserved slot of <paramref name="value"/>
+    /// (last 8 bytes, written by <see cref="GlobalPositionDecorator"/> before log commit), writes
+    /// to the inner store, and — when the position is new — appends to the subscription log and
+    /// publishes to the bus. Positions already present in the subscription log (i.e. recovery
+    /// replays) are forwarded to the inner store only, keeping the subscription log idempotent.
     /// Must be called while holding the write lock.
     /// </summary>
     public async ValueTask WriteAsync(EventKey key, Memory<byte> value, CancellationToken ct) {
-        var pos = new GlobalPosition(++_globalSequence);
-        BinaryPrimitives.WriteUInt64LittleEndian(value.Span[^8..], pos.Value);
+        var pos = new GlobalPosition(BinaryPrimitives.ReadUInt64LittleEndian(value.Span[^8..]));
 
         await _inner.WriteAsync(key, value, ct);
-        await _subscriptionLog.AppendAsync(pos, key, value, ct);
-        _bus.Publish(((EventValue)value).ToSubscriptionEvent(key));
+
+        if (pos.Value > _globalSequence) {
+            _globalSequence = pos.Value;
+            await _subscriptionLog.AppendAsync(pos, key, value, ct);
+            _bus.Publish(((EventValue)value).ToSubscriptionEvent(key));
+        }
     }
 
     /// <summary>

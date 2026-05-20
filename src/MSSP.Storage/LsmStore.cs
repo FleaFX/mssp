@@ -1,5 +1,4 @@
 using System.Buffers.Binary;
-using System.Collections.Concurrent;
 
 namespace MSSP.Storage;
 
@@ -7,20 +6,15 @@ public sealed class LsmStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKey> {
     readonly string _dataDirectory;
     readonly int _capacityBytes;
     readonly int _compactionThreshold;
-    readonly ILog<WalRecord> _log;
     readonly MemTableFlushedDelegate _onFlushed;
     readonly ISstAccess<TKey> _sst;
     readonly List<string> _sstFiles;
-    readonly ConcurrentQueue<TaskCompletionSource<bool>> _pending = new();
-    CancellationTokenSource? _loopCts;
-    Task? _loopTask;
     MemTable<TKey> _memTable;
 
-    LsmStore(string dataDirectory, int capacityBytes, int compactionThreshold, List<string> sstFiles, ILog<WalRecord> log, MemTableFlushedDelegate onFlushed, ISstAccess<TKey> sst) {
+    LsmStore(string dataDirectory, int capacityBytes, int compactionThreshold, List<string> sstFiles, MemTableFlushedDelegate onFlushed, ISstAccess<TKey> sst) {
         _dataDirectory = dataDirectory;
         _capacityBytes = capacityBytes;
         _compactionThreshold = compactionThreshold;
-        _log = log;
         _onFlushed = onFlushed;
         _sst = sst;
         _sstFiles = sstFiles;
@@ -29,7 +23,7 @@ public sealed class LsmStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKey> {
 
     /// <summary>
     /// Opens or creates a <see cref="LsmStore{TKey}"/> at <see cref="LsmStoreOptions{TKey}.DataDirectory"/>,
-    /// replays any WAL records not yet reflected in the SST files, then starts the apply loop.
+    /// replaying any WAL records not yet reflected in the SST files.
     /// </summary>
     internal static async ValueTask<LsmStore<TKey>> OpenAsync(LsmStoreOptions<TKey> options, IAsyncEnumerable<ReadOnlyMemory<byte>> walRecords, CancellationToken ct) {
         if (options.CapacityBytes <= 0)
@@ -37,15 +31,14 @@ public sealed class LsmStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKey> {
 
         var sstFiles = Directory.EnumerateFiles(options.DataDirectory, "*.sst").OrderBy(f => f).ToList();
         var sst = options.SstAccess ?? DefaultSstAccess<TKey>.Instance;
-        var store = new LsmStore<TKey>(options.DataDirectory, options.CapacityBytes, options.CompactionThreshold, sstFiles, options.Log, options.OnFlushed, sst);
+        var store = new LsmStore<TKey>(options.DataDirectory, options.CapacityBytes, options.CompactionThreshold, sstFiles, options.OnFlushed, sst);
         await store.RecoverAsync(walRecords, ct);
-        store.StartApplyLoop();
         return store;
     }
 
     /// <summary>
-    /// Serialises <paramref name="key"/> and <paramref name="value"/> as a WAL record, appends it to the log,
-    /// then waits until the apply loop has committed the record to the MemTable.
+    /// Applies <paramref name="key"/> and <paramref name="value"/> directly to the MemTable,
+    /// flushing first if the table is full.
     /// </summary>
     public async ValueTask WriteAsync(TKey key, Memory<byte> value, CancellationToken ct) {
         ReadOnlyMemory<byte> keyBytes = key;
@@ -54,21 +47,11 @@ public sealed class LsmStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKey> {
         if (entrySize > _capacityBytes)
             throw new InvalidOperationException("Single event exceeds MemTable capacity.");
 
-        var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _pending.Enqueue(tcs);
+        if (_memTable.Size + entrySize > _capacityBytes)
+            await FlushAsync(ct);
 
-        try {
-            if (!await _log.TryAppendAsync(WalRecord.From(key, value), ct)) {
-                _pending.TryDequeue(out _);
-                throw new InvalidOperationException("WAL append failed.");
-            }
-        } catch (Exception ex) when (ex is not InvalidOperationException) {
-            _pending.TryDequeue(out _);
-            tcs.TrySetException(ex);
-            throw;
-        }
-
-        await tcs.Task.WaitAsync(ct);
+        ReadOnlyMemory<byte> bytes = WalRecord.From(key, value);
+        _memTable.ApplyRecord(bytes);
     }
 
     /// <summary>
@@ -128,34 +111,6 @@ public sealed class LsmStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKey> {
             TKey key = bytes.Slice(5, keyLen);
             if (!sstKeys.Contains(key))
                 _memTable.ApplyRecord(bytes);
-        }
-    }
-
-    void StartApplyLoop() {
-        _loopCts = new CancellationTokenSource();
-        _loopTask = RunApplyLoopAsync(_loopCts.Token);
-    }
-
-    async Task RunApplyLoopAsync(CancellationToken ct) {
-        try {
-            await foreach (var record in _log.WithCancellation(ct)) {
-                ReadOnlyMemory<byte> bytes = record;
-                // WAL format: [marker:1][key_len:4][key][value] — entrySize is what MemTable tracks
-                var entrySize = bytes.Length > 5 ? bytes.Length - 5 : 0;
-
-                if (_memTable.Size + entrySize > _capacityBytes)
-                    await FlushAsync(ct);
-
-                _memTable.ApplyRecord(bytes);
-
-                if (_pending.TryDequeue(out var tcs))
-                    tcs.SetResult(true);
-            }
-        } catch (OperationCanceledException) {
-            // normal shutdown
-        } finally {
-            while (_pending.TryDequeue(out var tcs))
-                tcs.TrySetCanceled();
         }
     }
 
@@ -227,13 +182,5 @@ public sealed class LsmStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKey> {
     }
 
     /// <inheritdoc />
-    public void Dispose() {
-        _loopCts?.Cancel();
-        _loopTask?.GetAwaiter().GetResult();
-        while (_pending.TryDequeue(out var tcs))
-            tcs.TrySetCanceled();
-        _memTable.Dispose();
-        _loopCts?.Dispose();
-        (_log as IDisposable)?.Dispose();
-    }
+    public void Dispose() => _memTable.Dispose();
 }

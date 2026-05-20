@@ -1,0 +1,118 @@
+using System.Buffers.Binary;
+using System.Collections.Concurrent;
+
+namespace MSSP.Storage;
+
+/// <summary>
+/// <see cref="ILsmStore{TKey}"/> decorator that owns a write-ahead log and its apply loop.
+/// <para>
+/// On <see cref="WriteAsync"/>, the record is appended to the log and the caller waits until
+/// the apply loop has forwarded it to the inner store. On shutdown or when follower nodes
+/// receive committed entries from the Raft leader, the apply loop calls the inner store's
+/// <see cref="ILsmStore{TKey}.WriteAsync"/> directly — feeding every decorator in the inner
+/// chain (e.g. <see cref="SubscriptionPipeline"/>) on all nodes, not just the leader.
+/// </para>
+/// </summary>
+public sealed class LogDrivenStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKey> {
+    readonly ILog<WalRecord> _log;
+    readonly ILsmStore<TKey> _inner;
+    readonly int _capacityBytes;
+    readonly ConcurrentQueue<TaskCompletionSource<bool>> _pending = new();
+    CancellationTokenSource? _loopCts;
+    Task? _loopTask;
+
+    LogDrivenStore(ILog<WalRecord> log, ILsmStore<TKey> inner, int capacityBytes) {
+        _log = log;
+        _inner = inner;
+        _capacityBytes = capacityBytes;
+    }
+
+    /// <summary>
+    /// Creates a <see cref="LogDrivenStore{TKey}"/> wrapping <paramref name="inner"/> and
+    /// immediately starts the apply loop.
+    /// </summary>
+    public static LogDrivenStore<TKey> Create(ILog<WalRecord> log, ILsmStore<TKey> inner, int capacityBytes) {
+        var store = new LogDrivenStore<TKey>(log, inner, capacityBytes);
+        store.StartApplyLoop();
+        return store;
+    }
+
+    /// <summary>
+    /// Serialises <paramref name="key"/> and <paramref name="value"/> as a WAL record, appends it
+    /// to the log, then waits until the apply loop has forwarded the record to the inner store.
+    /// </summary>
+    public async ValueTask WriteAsync(TKey key, Memory<byte> value, CancellationToken ct) {
+        ReadOnlyMemory<byte> keyBytes = key;
+        var entrySize = keyBytes.Length + value.Length;
+
+        if (entrySize > _capacityBytes)
+            throw new InvalidOperationException("Single event exceeds MemTable capacity.");
+
+        var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _pending.Enqueue(tcs);
+
+        try {
+            if (!await _log.TryAppendAsync(WalRecord.From(key, value), ct)) {
+                _pending.TryDequeue(out _);
+                throw new InvalidOperationException("WAL append failed.");
+            }
+        } catch (Exception ex) when (ex is not InvalidOperationException) {
+            _pending.TryDequeue(out _);
+            tcs.TrySetException(ex);
+            throw;
+        }
+
+        await tcs.Task.WaitAsync(ct);
+    }
+
+    /// <inheritdoc/>
+    public IEnumerable<KeyValuePair<TKey, ReadOnlyMemory<byte>?>> ScanAllFrom(TKey from)
+        => _inner.ScanAllFrom(from);
+
+    /// <inheritdoc/>
+    public IEnumerable<KeyValuePair<TKey, ReadOnlyMemory<byte>?>> ScanSnapshotFrom(TKey from)
+        => _inner.ScanSnapshotFrom(from);
+
+    void StartApplyLoop() {
+        _loopCts = new CancellationTokenSource();
+        _loopTask = RunApplyLoopAsync(_loopCts.Token);
+    }
+
+    async Task RunApplyLoopAsync(CancellationToken ct) {
+        try {
+            await foreach (var record in _log.WithCancellation(ct)) {
+                ReadOnlyMemory<byte> bytes = record;
+                var span = bytes.Span;
+                if (span.Length < 5) goto signal;
+                var keyLen = BinaryPrimitives.ReadInt32LittleEndian(span[1..]);
+                if (keyLen < 0 || 5 + keyLen > span.Length) goto signal;
+
+                TKey key = bytes.Slice(5, keyLen);
+                // Copy value slice to a mutable Memory<byte> so inner decorators can read/write it.
+                var value = bytes.Slice(5 + keyLen).ToArray();
+
+                await _inner.WriteAsync(key, value, ct);
+
+                signal:
+                if (_pending.TryDequeue(out var tcs))
+                    tcs.SetResult(true);
+            }
+        } catch (OperationCanceledException) {
+            // normal shutdown
+        } finally {
+            while (_pending.TryDequeue(out var tcs))
+                tcs.TrySetCanceled();
+        }
+    }
+
+    /// <inheritdoc/>
+    public void Dispose() {
+        _loopCts?.Cancel();
+        _loopTask?.GetAwaiter().GetResult();
+        while (_pending.TryDequeue(out var tcs))
+            tcs.TrySetCanceled();
+        _loopCts?.Dispose();
+        _inner.Dispose();
+        (_log as IDisposable)?.Dispose();
+    }
+}
