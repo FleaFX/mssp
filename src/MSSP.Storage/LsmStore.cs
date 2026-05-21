@@ -25,14 +25,14 @@ public sealed class LsmStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKey> {
     /// Opens or creates a <see cref="LsmStore{TKey}"/> at <see cref="LsmStoreOptions{TKey}.DataDirectory"/>,
     /// replaying any WAL records not yet reflected in the SST files.
     /// </summary>
-    internal static async ValueTask<LsmStore<TKey>> OpenAsync(LsmStoreOptions<TKey> options, IAsyncEnumerable<ReadOnlyMemory<byte>> walRecords, CancellationToken ct) {
+    internal static async ValueTask<LsmStore<TKey>> OpenAsync(LsmStoreOptions<TKey> options, IAsyncEnumerable<ReadOnlyMemory<byte>> walRecords, CancellationToken cancellationToken) {
         if (options.CapacityBytes <= 0)
             throw new ArgumentOutOfRangeException(nameof(options), $"{nameof(LsmStoreOptions<TKey>.CapacityBytes)} must be positive.");
 
         var sstFiles = Directory.EnumerateFiles(options.DataDirectory, "*.sst").OrderBy(f => f).ToList();
         var sst = options.SstAccess ?? DefaultSstAccess<TKey>.Instance;
         var store = new LsmStore<TKey>(options.DataDirectory, options.CapacityBytes, options.CompactionThreshold, sstFiles, options.OnFlushed, sst);
-        await store.RecoverAsync(walRecords, ct);
+        await store.RecoverAsync(walRecords, cancellationToken);
         return store;
     }
 
@@ -40,7 +40,7 @@ public sealed class LsmStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKey> {
     /// Applies <paramref name="key"/> and <paramref name="value"/> directly to the MemTable,
     /// flushing first if the table is full.
     /// </summary>
-    public async ValueTask WriteAsync(TKey key, Memory<byte> value, CancellationToken ct) {
+    public async ValueTask WriteAsync(TKey key, Memory<byte> value, CancellationToken cancellationToken) {
         ReadOnlyMemory<byte> keyBytes = key;
         var entrySize = keyBytes.Length + value.Length;
 
@@ -48,7 +48,7 @@ public sealed class LsmStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKey> {
             throw new InvalidOperationException("Single event exceeds MemTable capacity.");
 
         if (_memTable.Size + entrySize > _capacityBytes)
-            await FlushAsync(ct);
+            await FlushAsync(cancellationToken);
 
         ReadOnlyMemory<byte> bytes = WalRecord.From(key, value);
         _memTable.ApplyRecord(bytes);
@@ -88,7 +88,7 @@ public sealed class LsmStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKey> {
     /// <summary>
     /// Replays WAL records into the MemTable, skipping any entries already present in SST files.
     /// </summary>
-    internal async ValueTask RecoverAsync(IAsyncEnumerable<ReadOnlyMemory<byte>> walRecords, CancellationToken ct) {
+    internal async ValueTask RecoverAsync(IAsyncEnumerable<ReadOnlyMemory<byte>> walRecords, CancellationToken cancellationToken) {
         var sstKeys = new HashSet<TKey>();
         foreach (var sstPath in _sstFiles) {
             using var reader = _sst.OpenReader(sstPath);
@@ -96,7 +96,7 @@ public sealed class LsmStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKey> {
                 sstKeys.Add(key);
         }
 
-        await foreach (var bytes in walRecords.WithCancellation(ct)) {
+        await foreach (var bytes in walRecords.WithCancellation(cancellationToken)) {
             var span = bytes.Span;
             if (span.Length < 5) continue;
             var keyLen = BinaryPrimitives.ReadInt32LittleEndian(span[1..]);
@@ -114,22 +114,22 @@ public sealed class LsmStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKey> {
         }
     }
 
-    async ValueTask FlushAsync(CancellationToken ct) {
+    async ValueTask FlushAsync(CancellationToken cancellationToken) {
         var sstPath = Path.Combine(_dataDirectory, $"{DateTimeOffset.UtcNow.Ticks:D19}.sst");
-        await _sst.WriteAsync(_memTable, sstPath, ct);
+        await _sst.WriteAsync(_memTable, sstPath, cancellationToken);
         _sstFiles.Add(sstPath);
 
-        await _onFlushed(ct);
+        await _onFlushed(cancellationToken);
         _memTable = new MemTable<TKey>(_capacityBytes);
 
         if (_sstFiles.Count >= _compactionThreshold)
-            await CompactAsync(ct);
+            await CompactAsync(cancellationToken);
     }
 
     /// <summary>
     /// Merges all SST files into a single new SST file and removes the originals.
     /// </summary>
-    internal async ValueTask CompactAsync(CancellationToken ct) {
+    internal async ValueTask CompactAsync(CancellationToken cancellationToken) {
         if (_sstFiles.Count < 2) return;
 
         var readers = new List<ISstReader<TKey>>(_sstFiles.Count);
@@ -138,7 +138,7 @@ public sealed class LsmStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKey> {
                 readers.Add(_sst.OpenReader(path));
 
             var compactedPath = Path.Combine(_dataDirectory, $"{DateTimeOffset.UtcNow.Ticks:D19}.sst");
-            await _sst.WriteAsync(MergeAll(readers), compactedPath, ct);
+            await _sst.WriteAsync(MergeAll(readers), compactedPath, cancellationToken);
 
             foreach (var reader in readers) reader.Dispose();
             readers.Clear();

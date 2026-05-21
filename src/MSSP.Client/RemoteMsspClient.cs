@@ -23,7 +23,7 @@ namespace MSSP.Client;
 /// </summary>
 sealed class RemoteMsspClient(MsspClient grpcClient) : IMsspClient {
     /// <inheritdoc/>
-    public async ValueTask AppendAsync(StreamId streamId, StreamRevision expectedRevision, IEnumerable<EventData> events, CancellationToken ct = default) {
+    public async ValueTask AppendAsync(StreamId streamId, StreamRevision expectedRevision, IEnumerable<EventData> events, CancellationToken cancellationToken = default) {
         var request = new AppendRequest {
             StreamId = streamId.Value,
             ExpectedRevision = (long)expectedRevision
@@ -31,17 +31,17 @@ sealed class RemoteMsspClient(MsspClient grpcClient) : IMsspClient {
         foreach (var e in events)
             request.Events.Add(new GrpcEventData { EventType = e.EventType, Data = ByteString.CopyFrom(e.Data.Span) });
         try {
-            await grpcClient.AppendAsync(request, cancellationToken: ct);
+            await grpcClient.AppendAsync(request, cancellationToken: cancellationToken);
         } catch (RpcException ex) when (ex.StatusCode == StatusCode.FailedPrecondition) {
             throw new OptimisticConcurrencyException(streamId, expectedRevision);
         }
     }
 
     /// <inheritdoc/>
-    public async IAsyncEnumerable<RecordedEvent> ReadAsync(StreamId streamId, StreamRevision from = default, [EnumeratorCancellation] CancellationToken ct = default) {
+    public async IAsyncEnumerable<RecordedEvent> ReadAsync(StreamId streamId, StreamRevision from = default, [EnumeratorCancellation] CancellationToken cancellationToken = default) {
         var request = new ReadRequest { StreamId = streamId.Value, FromRevision = (ulong)(long)from };
-        using var call = grpcClient.Read(request, cancellationToken: ct);
-        while (await call.ResponseStream.MoveNext(ct)) {
+        using var call = grpcClient.Read(request, cancellationToken: cancellationToken);
+        while (await call.ResponseStream.MoveNext(cancellationToken)) {
             var e = call.ResponseStream.Current;
             yield return new RecordedEvent(
                 new StreamId(e.StreamId),
@@ -56,11 +56,11 @@ sealed class RemoteMsspClient(MsspClient grpcClient) : IMsspClient {
     public async IAsyncEnumerable<SubscriptionEvent> SubscribeAsync(
         SubscriptionFilter filter,
         GlobalPosition fromPosition = default,
-        [EnumeratorCancellation] CancellationToken ct = default) {
+        [EnumeratorCancellation] CancellationToken cancellationToken = default) {
 
         var request = new SubscribeRequest { Filter = ToProto(filter), FromPosition = fromPosition.Value };
-        using var call = grpcClient.Subscribe(request, cancellationToken: ct);
-        while (await call.ResponseStream.MoveNext(ct)) {
+        using var call = grpcClient.Subscribe(request, cancellationToken: cancellationToken);
+        while (await call.ResponseStream.MoveNext(cancellationToken)) {
             var e = call.ResponseStream.Current;
             yield return new SubscriptionEvent(
                 new StreamId(e.StreamId),

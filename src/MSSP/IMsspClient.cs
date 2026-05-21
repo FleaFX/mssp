@@ -10,17 +10,17 @@ public interface IMsspClient {
     /// <param name="streamId">The stream to append to.</param>
     /// <param name="expectedRevision">The expected current revision of the stream, used for optimistic concurrency.</param>
     /// <param name="events">The events to append.</param>
-    /// <param name="ct">A cancellation token.</param>
-    ValueTask AppendAsync(StreamId streamId, StreamRevision expectedRevision, IEnumerable<EventData> events, CancellationToken ct = default);
+    /// <param name="cancellationToken">A cancellation token.</param>
+    ValueTask AppendAsync(StreamId streamId, StreamRevision expectedRevision, IEnumerable<EventData> events, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Reads events from the specified stream.
     /// </summary>
     /// <param name="streamId">The stream to read from.</param>
     /// <param name="from">The revision to start reading from. Defaults to the start of the stream.</param>
-    /// <param name="ct">A cancellation token.</param>
+    /// <param name="cancellationToken">A cancellation token.</param>
     /// <returns>An async sequence of recorded events, in order from <paramref name="from"/>.</returns>
-    IAsyncEnumerable<RecordedEvent> ReadAsync(StreamId streamId, StreamRevision from = default, CancellationToken ct = default);
+    IAsyncEnumerable<RecordedEvent> ReadAsync(StreamId streamId, StreamRevision from = default, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Subscribes to an event stream, first replaying historical events from <paramref name="fromPosition"/> (catch-up),
@@ -28,10 +28,7 @@ public interface IMsspClient {
     /// </summary>
     /// <param name="filter">Determines which events are delivered.</param>
     /// <param name="fromPosition">The global position to start from. Defaults to <see cref="GlobalPosition.Start"/>.</param>
-    /// <param name="ct">A cancellation token. Cancelling this token ends the subscription.</param>
+    /// <param name="cancellationToken">A cancellation token. Cancelling this token ends the subscription.</param>
     /// <returns>An async sequence of subscription events.</returns>
-    IAsyncEnumerable<SubscriptionEvent> SubscribeAsync(
-        SubscriptionFilter filter,
-        GlobalPosition fromPosition = default,
-        CancellationToken ct = default);
+    IAsyncEnumerable<SubscriptionEvent> SubscribeAsync(SubscriptionFilter filter, GlobalPosition fromPosition = default, CancellationToken cancellationToken = default);
 }

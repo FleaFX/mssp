@@ -124,7 +124,7 @@ sealed class ThrowingStream : Stream {
     public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
     public override void SetLength(long value) => throw new NotSupportedException();
     public override void Write(byte[] buffer, int offset, int count) => throw new IOException("Disk full");
-    public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken ct) =>
+    public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken) =>
         ValueTask.FromException(new IOException("Disk full"));
-    public override Task FlushAsync(CancellationToken ct) => Task.CompletedTask;
+    public override Task FlushAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 }

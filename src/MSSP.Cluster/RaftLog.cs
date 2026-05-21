@@ -15,7 +15,7 @@ sealed class RaftLog(RaftNode node, RaftLogStateMachine stateMachine) : ILog<Wal
     /// current leader rather than treating this as a fatal error.
     /// </exception>
     public async ValueTask<bool> TryAppendAsync(WalRecord record, CancellationToken cancellationToken = default) {
-        await node.ProposeAsync((ReadOnlyMemory<byte>)record, cancellationToken);
+        await node.ProposeAsync(record, cancellationToken);
         return true;
     }
 

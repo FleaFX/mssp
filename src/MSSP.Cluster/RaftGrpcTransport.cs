@@ -28,7 +28,7 @@ sealed class RaftGrpcTransport : IRaftTransport, IDisposable {
     }
 
     /// <inheritdoc/>
-    public async ValueTask<VoteResponse> RequestVoteAsync(string peerId, VoteRequest request, CancellationToken ct = default) {
+    public async ValueTask<VoteResponse> RequestVoteAsync(string peerId, VoteRequest request, CancellationToken cancellationToken = default) {
         var client = GetClient(peerId);
         var grpcRequest = new Grpc.VoteRequest {
             Term = request.Term,
@@ -36,12 +36,12 @@ sealed class RaftGrpcTransport : IRaftTransport, IDisposable {
             LastLogIndex = request.LastLogIndex,
             LastLogTerm = request.LastLogTerm
         };
-        var response = await client.RequestVoteAsync(grpcRequest, cancellationToken: ct);
+        var response = await client.RequestVoteAsync(grpcRequest, cancellationToken: cancellationToken);
         return new VoteResponse(response.Term, response.VoteGranted);
     }
 
     /// <inheritdoc/>
-    public async ValueTask<AppendEntriesResponse> AppendEntriesAsync(string peerId, AppendEntriesRequest request, CancellationToken ct = default) {
+    public async ValueTask<AppendEntriesResponse> AppendEntriesAsync(string peerId, AppendEntriesRequest request, CancellationToken cancellationToken = default) {
         var client = GetClient(peerId);
         var grpcRequest = new Grpc.AppendEntriesRequest {
             Term = request.Term,
@@ -56,7 +56,7 @@ sealed class RaftGrpcTransport : IRaftTransport, IDisposable {
             Type = (uint)e.Type,
             Payload = Google.Protobuf.ByteString.CopyFrom(e.Payload.Span)
         }));
-        var response = await client.AppendEntriesAsync(grpcRequest, cancellationToken: ct);
+        var response = await client.AppendEntriesAsync(grpcRequest, cancellationToken: cancellationToken);
         return new AppendEntriesResponse(response.Term, response.Success, response.ConflictIndex, response.ConflictTerm);
     }
 

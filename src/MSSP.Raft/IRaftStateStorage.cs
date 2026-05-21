@@ -13,13 +13,13 @@ public interface IRaftStateStorage {
     /// Loads the previously saved persistent state, or returns a default
     /// <see cref="RaftPersistentState"/> with term 0 and no vote if nothing has been saved yet.
     /// </summary>
-    /// <param name="ct">Token to cancel the operation.</param>
-    ValueTask<RaftPersistentState> LoadAsync(CancellationToken ct = default);
+    /// <param name="cancellationToken">Token to cancel the operation.</param>
+    ValueTask<RaftPersistentState> LoadAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Durably persists the given <paramref name="state"/> before returning.
     /// </summary>
     /// <param name="state">The state to persist.</param>
-    /// <param name="ct">Token to cancel the operation.</param>
-    ValueTask SaveAsync(RaftPersistentState state, CancellationToken ct = default);
+    /// <param name="cancellationToken">Token to cancel the operation.</param>
+    ValueTask SaveAsync(RaftPersistentState state, CancellationToken cancellationToken = default);
 }

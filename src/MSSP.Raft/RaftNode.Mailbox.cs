@@ -10,8 +10,8 @@ public sealed partial class RaftNode {
 
     void Post(Func<Task> work) => _mailbox.Writer.TryWrite(work);
 
-    async Task RunMailboxAsync(CancellationToken ct) {
-        await foreach (var work in _mailbox.Reader.ReadAllAsync(ct))
+    async Task RunMailboxAsync(CancellationToken cancellationToken) {
+        await foreach (var work in _mailbox.Reader.ReadAllAsync(cancellationToken))
             try { await work(); } catch { /* individual work items handle their own errors */ }
     }
 }

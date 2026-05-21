@@ -10,10 +10,10 @@ sealed class FileRaftStateStorage(string dataDirectory) : IRaftStateStorage {
     static string StatePath(string dir) => Path.Combine(dir, "raft-state.json");
 
     /// <inheritdoc/>
-    public async ValueTask<RaftPersistentState> LoadAsync(CancellationToken ct = default) {
+    public async ValueTask<RaftPersistentState> LoadAsync(CancellationToken cancellationToken = default) {
         var path = StatePath(dataDirectory);
         if (!File.Exists(path)) return new RaftPersistentState(0, null);
-        var json = await File.ReadAllTextAsync(path, ct);
+        var json = await File.ReadAllTextAsync(path, cancellationToken);
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
         var term = root.GetProperty("currentTerm").GetUInt64();
@@ -24,12 +24,12 @@ sealed class FileRaftStateStorage(string dataDirectory) : IRaftStateStorage {
     }
 
     /// <inheritdoc/>
-    public async ValueTask SaveAsync(RaftPersistentState state, CancellationToken ct = default) {
+    public async ValueTask SaveAsync(RaftPersistentState state, CancellationToken cancellationToken = default) {
         Directory.CreateDirectory(dataDirectory);
         var path = StatePath(dataDirectory);
         var tmp = path + ".tmp";
         var votedFor = state.VotedFor is null ? "null" : $"\"{state.VotedFor}\"";
-        await File.WriteAllTextAsync(tmp, $"{{\"currentTerm\":{state.CurrentTerm},\"votedFor\":{votedFor}}}", ct);
+        await File.WriteAllTextAsync(tmp, $"{{\"currentTerm\":{state.CurrentTerm},\"votedFor\":{votedFor}}}", cancellationToken);
         File.Move(tmp, path, overwrite: true);
     }
 }

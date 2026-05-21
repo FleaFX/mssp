@@ -59,13 +59,13 @@ public sealed partial class RaftNode(
     /// <summary>
     /// Loads durable state, starts the mailbox consumer, and begins the election timer.
     /// </summary>
-    /// <param name="ct">Token to cancel startup.</param>
-    public async Task StartAsync(CancellationToken ct = default) {
-        var state = await _stateStorage.LoadAsync(ct);
+    /// <param name="cancellationToken">Token to cancel startup.</param>
+    public async Task StartAsync(CancellationToken cancellationToken = default) {
+        var state = await _stateStorage.LoadAsync(cancellationToken);
         _currentTerm = state.CurrentTerm;
         _votedFor = state.VotedFor;
 
-        _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _mailboxTask = Task.Run(() => RunMailboxAsync(_cts.Token), _cts.Token);
 
         _role = new FollowerRole(this);
@@ -74,8 +74,8 @@ public sealed partial class RaftNode(
     /// <summary>
     /// Cancels the mailbox consumer, stops timers, and awaits any in-flight mailbox work.
     /// </summary>
-    /// <param name="ct">Token to cancel the stop operation (not used for forced cancellation — that is handled internally).</param>
-    public async Task StopAsync(CancellationToken ct = default) {
+    /// <param name="cancellationToken">Token to cancel the stop operation (not used for forced cancellation — that is handled internally).</param>
+    public async Task StopAsync(CancellationToken cancellationToken = default) {
         if (_cts is not null) {
             await _cts.CancelAsync();
             if (_mailboxTask is not null)
@@ -98,9 +98,9 @@ public sealed partial class RaftNode(
     /// committed by a quorum and applied to the state machine.
     /// </summary>
     /// <param name="command">The opaque command payload to replicate.</param>
-    /// <param name="ct">Token to cancel the proposal; cancellation does not roll back an already-committed entry.</param>
+    /// <param name="cancellationToken">Token to cancel the proposal; cancellation does not roll back an already-committed entry.</param>
     /// <exception cref="NotLeaderException">Thrown immediately if this node is not the current leader.</exception>
-    public Task<RaftApplyResult> ProposeAsync(ReadOnlyMemory<byte> command, CancellationToken ct = default) {
+    public Task<RaftApplyResult> ProposeAsync(ReadOnlyMemory<byte> command, CancellationToken cancellationToken = default) {
         var tcs = new TaskCompletionSource<RaftApplyResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         CancelTcsOnStop(tcs);
         Post(() => _role.ProposeAsync(command, tcs));
@@ -113,7 +113,7 @@ public sealed partial class RaftNode(
     /// </summary>
     /// <param name="request">The vote request sent by the candidate.</param>
     /// <param name="ct">Token to cancel waiting for the response.</param>
-    public ValueTask<VoteResponse> ReceiveVoteRequestAsync(VoteRequest request, CancellationToken ct = default) {
+    public ValueTask<VoteResponse> ReceiveVoteRequestAsync(VoteRequest request, CancellationToken cancellationToken = default) {
         var tcs = new TaskCompletionSource<VoteResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
         CancelTcsOnStop(tcs);
         Post(async () => tcs.TrySetResult(await _role.HandleVoteRequestAsync(request)));
@@ -126,7 +126,7 @@ public sealed partial class RaftNode(
     /// </summary>
     /// <param name="request">The append-entries request (or heartbeat) sent by the leader.</param>
     /// <param name="ct">Token to cancel waiting for the response.</param>
-    public ValueTask<AppendEntriesResponse> ReceiveAppendEntriesAsync(AppendEntriesRequest request, CancellationToken ct = default) {
+    public ValueTask<AppendEntriesResponse> ReceiveAppendEntriesAsync(AppendEntriesRequest request, CancellationToken cancellationToken = default) {
         var tcs = new TaskCompletionSource<AppendEntriesResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
         CancelTcsOnStop(tcs);
         Post(async () => tcs.TrySetResult(await _role.HandleAppendEntriesAsync(request)));

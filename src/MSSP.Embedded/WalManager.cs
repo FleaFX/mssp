@@ -24,14 +24,14 @@ sealed class WalManager : IDisposable {
     /// <summary>
     /// Appends a record to the WAL. Returns <see langword="false"/> if the append fails.
     /// </summary>
-    internal ValueTask<bool> AppendAsync(ReadOnlyMemory<byte> record, CancellationToken ct) =>
-        _wal.TryAppendAsync(record, ct);
+    internal ValueTask<bool> AppendAsync(ReadOnlyMemory<byte> record, CancellationToken cancellationToken) =>
+        _wal.TryAppendAsync(record, cancellationToken);
 
     /// <summary>
     /// Truncates the WAL by replacing the current file with a new empty one.
     /// Called after a MemTable flush so replayed records on next open don't include already-flushed data.
     /// </summary>
-    internal ValueTask RotateAsync(CancellationToken ct) {
+    internal ValueTask RotateAsync(CancellationToken cancellationToken) {
         // FileShare.None prevents opening the new stream before closing the old one,
         // so we dispose first. On failure to reopen, _wal is left as the disposed segment;
         // any subsequent append will fail with ObjectDisposedException, signalling the broken state.
@@ -45,9 +45,9 @@ sealed class WalManager : IDisposable {
     /// <summary>
     /// Reads all records from the WAL as raw bytes.
     /// </summary>
-    internal async IAsyncEnumerable<ReadOnlyMemory<byte>> ReadAllAsync([EnumeratorCancellation] CancellationToken ct = default) {
-        await foreach (var record in _wal.WithCancellation(ct))
-            yield return (ReadOnlyMemory<byte>)record;
+    internal async IAsyncEnumerable<ReadOnlyMemory<byte>> ReadAllAsync([EnumeratorCancellation] CancellationToken cancellationToken = default) {
+        await foreach (var record in _wal.WithCancellation(cancellationToken))
+            yield return record;
     }
 
     public void Dispose() => _wal.Dispose();

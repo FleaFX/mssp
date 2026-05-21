@@ -44,7 +44,7 @@ public sealed class LogDrivenStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKe
     /// Serialises <paramref name="key"/> and <paramref name="value"/> as a WAL record, appends it
     /// to the log, then waits until the apply loop has forwarded the record to the inner store.
     /// </summary>
-    public async ValueTask WriteAsync(TKey key, Memory<byte> value, CancellationToken ct) {
+    public async ValueTask WriteAsync(TKey key, Memory<byte> value, CancellationToken cancellationToken) {
         ReadOnlyMemory<byte> keyBytes = key;
         var entrySize = keyBytes.Length + value.Length;
 
@@ -56,7 +56,7 @@ public sealed class LogDrivenStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKe
 
         bool appended;
         try {
-            appended = await _log.TryAppendAsync(WalRecord.From(key, value), ct);
+            appended = await _log.TryAppendAsync(WalRecord.From(key, value), cancellationToken);
         } catch {
             _pending.TryDequeue(out _);
             throw;
@@ -67,7 +67,7 @@ public sealed class LogDrivenStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKe
             throw new InvalidOperationException("WAL append failed.");
         }
 
-        await tcs.Task.WaitAsync(ct);
+        await tcs.Task.WaitAsync(cancellationToken);
     }
 
     /// <inheritdoc/>
@@ -83,9 +83,9 @@ public sealed class LogDrivenStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKe
         _loopTask = RunApplyLoopAsync(_loopCts.Token);
     }
 
-    async Task RunApplyLoopAsync(CancellationToken ct) {
+    async Task RunApplyLoopAsync(CancellationToken cancellationToken) {
         try {
-            await foreach (var record in _log.WithCancellation(ct)) {
+            await foreach (var record in _log.WithCancellation(cancellationToken)) {
                 ReadOnlyMemory<byte> bytes = record;
                 var span = bytes.Span;
 
@@ -107,7 +107,7 @@ public sealed class LogDrivenStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKe
                 var value = bytes[(5 + keyLen)..].ToArray();
 
                 try {
-                    await _inner.WriteAsync(key, value, ct);
+                    await _inner.WriteAsync(key, value, cancellationToken);
                 } catch (Exception ex) when (ex is not OperationCanceledException) {
                     if (_pending.TryDequeue(out var failedTcs))
                         failedTcs.TrySetException(ex);

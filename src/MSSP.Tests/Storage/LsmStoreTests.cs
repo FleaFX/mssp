@@ -38,15 +38,12 @@ public class LsmStoreTests : IAsyncLifetime {
             _channel.Reader.ReadAllAsync(cancellationToken).GetAsyncEnumerator(cancellationToken);
     }
 
-    static async IAsyncEnumerable<ReadOnlyMemory<byte>> Empty(
-            [EnumeratorCancellation] CancellationToken ct = default) {
+    static async IAsyncEnumerable<ReadOnlyMemory<byte>> Empty([EnumeratorCancellation] CancellationToken cancellationToken = default) {
         await Task.Yield();
         yield break;
     }
 
-    static async IAsyncEnumerable<ReadOnlyMemory<byte>> Replay(
-            List<ReadOnlyMemory<byte>> captured,
-            [EnumeratorCancellation] CancellationToken ct = default) {
+    static async IAsyncEnumerable<ReadOnlyMemory<byte>> Replay(List<ReadOnlyMemory<byte>> captured, [EnumeratorCancellation] CancellationToken cancellationToken = default) {
         await Task.Yield();
         foreach (var record in captured)
             yield return record;

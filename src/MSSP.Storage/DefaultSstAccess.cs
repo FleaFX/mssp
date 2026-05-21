@@ -12,11 +12,11 @@ sealed class DefaultSstAccess<TKey> : ISstAccess<TKey> where TKey : IKey<TKey> {
         new SstReader<TKey>(new FileStream(sstPath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096));
 
     /// <inheritdoc />
-    public async ValueTask WriteAsync(IEnumerable<KeyValuePair<TKey, ReadOnlyMemory<byte>?>> entries, string sstPath, CancellationToken ct) {
+    public async ValueTask WriteAsync(IEnumerable<KeyValuePair<TKey, ReadOnlyMemory<byte>?>> entries, string sstPath, CancellationToken cancellationToken) {
         var tmpPath = sstPath + ".tmp";
         {
             await using var stream = new FileStream(tmpPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.Asynchronous);
-            await SstWriter.WriteAsync(entries, stream, cancellationToken: ct);
+            await SstWriter.WriteAsync(entries, stream, cancellationToken: cancellationToken);
         }
         File.Move(tmpPath, sstPath);
     }

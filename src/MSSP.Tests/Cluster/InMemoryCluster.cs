@@ -11,7 +11,7 @@ sealed class InMemoryCluster : IAsyncDisposable {
 
     public IReadOnlyList<NodeHandle> Nodes => _nodes;
 
-    public static async Task<InMemoryCluster> CreateAsync(int nodeCount = 3, int memTableCapacityBytes = 1024, CancellationToken ct = default) {
+    public static async Task<InMemoryCluster> CreateAsync(int nodeCount = 3, int memTableCapacityBytes = 1024, CancellationToken cancellationToken = default) {
         var cluster = new InMemoryCluster();
         var transport = new InMemoryRaftTransport();
 
@@ -33,7 +33,7 @@ sealed class InMemoryCluster : IAsyncDisposable {
             var raftLog = new RaftLog(node, stateMachine);
 
             var lsmOptions = new LsmStoreOptions<EventKey>(dataDir, memTableCapacityBytes, _ => ValueTask.CompletedTask);
-            var store = await LsmStore<EventKey>.OpenAsync(lsmOptions, AsyncEnumerable.Empty<ReadOnlyMemory<byte>>(), ct);
+            var store = await LsmStore<EventKey>.OpenAsync(lsmOptions, AsyncEnumerable.Empty<ReadOnlyMemory<byte>>(), cancellationToken);
 
             var subLog = SubscriptionLog.Open(dataDir, SubscriptionLogFormat.FullPayload, 64 * 1024 * 1024);
             var pipeline = new SubscriptionPipeline(store, subLog);
@@ -44,7 +44,7 @@ sealed class InMemoryCluster : IAsyncDisposable {
         }
 
         foreach (var h in cluster._nodes)
-            await h.Node.StartAsync(ct);
+            await h.Node.StartAsync(cancellationToken);
 
         return cluster;
     }

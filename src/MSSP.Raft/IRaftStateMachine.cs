@@ -16,11 +16,11 @@ public interface IRaftStateMachine {
     /// Applies a committed log entry to the state machine.
     /// </summary>
     /// <param name="entry">The committed entry to apply.</param>
-    /// <param name="ct">Token to cancel the operation.</param>
+    /// <param name="cancellationToken">Token to cancel the operation.</param>
     /// <returns>
     /// <c>true</c> if the entry was applied successfully;
     /// <c>false</c> if the entry was accepted by consensus but rejected by the application
     /// (e.g. an optimistic concurrency conflict).
     /// </returns>
-    ValueTask<bool> ApplyAsync(RaftLogEntry entry, CancellationToken ct = default);
+    ValueTask<bool> ApplyAsync(RaftLogEntry entry, CancellationToken cancellationToken = default);
 }

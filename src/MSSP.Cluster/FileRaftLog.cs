@@ -30,26 +30,26 @@ sealed class FileRaftLog : IRaftLog, IDisposable {
     /// partially-written tail entry before returning.
     /// </summary>
     /// <param name="dataDirectory">The directory that contains (or will contain) <c>raft.log</c>.</param>
-    /// <param name="ct">Token to cancel the open/recovery operation.</param>
-    public static async ValueTask<FileRaftLog> OpenAsync(string dataDirectory, CancellationToken ct = default) {
+    /// <param name="cancellationToken">Token to cancel the open/recovery operation.</param>
+    public static async ValueTask<FileRaftLog> OpenAsync(string dataDirectory, CancellationToken cancellationToken = default) {
         Directory.CreateDirectory(dataDirectory);
         var path = Path.Combine(dataDirectory, "raft.log");
         var file = new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite,
             FileShare.None, 4096, FileOptions.WriteThrough | FileOptions.Asynchronous);
 
         var log = new FileRaftLog(file);
-        await log.RecoverAsync(ct);
+        await log.RecoverAsync(cancellationToken);
         return log;
     }
 
-    async Task RecoverAsync(CancellationToken ct) {
+    async Task RecoverAsync(CancellationToken cancellationToken) {
         _file.Seek(0, SeekOrigin.Begin);
         var headerBuf = new byte[HeaderSize];
         var crcBuf = new byte[4];
 
         while (true) {
             var offset = _file.Position;
-            var read = await _file.ReadAsync(headerBuf, ct);
+            var read = await _file.ReadAsync(headerBuf, cancellationToken);
             if (read == 0) break;
             if (read < HeaderSize) { await TruncateTo(offset); break; }
 
@@ -61,10 +61,10 @@ sealed class FileRaftLog : IRaftLog, IDisposable {
             if (payloadLen < 0) { await TruncateTo(offset); break; }
 
             var payload = new byte[payloadLen];
-            var payloadRead = await _file.ReadAsync(payload, ct);
+            var payloadRead = await _file.ReadAsync(payload, cancellationToken);
             if (payloadRead < payloadLen) { await TruncateTo(offset); break; }
 
-            var crcRead = await _file.ReadAsync(crcBuf, ct);
+            var crcRead = await _file.ReadAsync(crcBuf, cancellationToken);
             if (crcRead < 4) { await TruncateTo(offset); break; }
 
             // verify CRC32 over header + payload
@@ -78,7 +78,7 @@ sealed class FileRaftLog : IRaftLog, IDisposable {
     }
 
     /// <inheritdoc/>
-    public async ValueTask<RaftLogEntry> GetEntryAsync(ulong index, CancellationToken ct = default) {
+    public async ValueTask<RaftLogEntry> GetEntryAsync(ulong index, CancellationToken cancellationToken = default) {
         if (index == 0 || index > LastIndex)
             throw new ArgumentOutOfRangeException(nameof(index));
 
@@ -86,7 +86,7 @@ sealed class FileRaftLog : IRaftLog, IDisposable {
         _file.Seek(offset, SeekOrigin.Begin);
 
         var headerBuf = new byte[HeaderSize];
-        await _file.ReadExactlyAsync(headerBuf, ct);
+        await _file.ReadExactlyAsync(headerBuf, cancellationToken);
 
         var term = BinaryPrimitives.ReadUInt64LittleEndian(headerBuf);
         var idx = BinaryPrimitives.ReadUInt64LittleEndian(headerBuf.AsSpan(8));
@@ -95,21 +95,21 @@ sealed class FileRaftLog : IRaftLog, IDisposable {
 
         var payload = new byte[payloadLen];
         if (payload.Length > 0)
-            await _file.ReadExactlyAsync(payload, ct);
+            await _file.ReadExactlyAsync(payload, cancellationToken);
 
         return new RaftLogEntry(term, idx, type, payload);
     }
 
     /// <inheritdoc/>
-    public async IAsyncEnumerable<RaftLogEntry> GetEntriesFromAsync(ulong fromIndex, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default) {
+    public async IAsyncEnumerable<RaftLogEntry> GetEntriesFromAsync(ulong fromIndex, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default) {
         for (var i = fromIndex; i <= LastIndex; i++) {
-            if (ct.IsCancellationRequested) yield break;
-            yield return await GetEntryAsync(i, ct);
+            if (cancellationToken.IsCancellationRequested) yield break;
+            yield return await GetEntryAsync(i, cancellationToken);
         }
     }
 
     /// <inheritdoc/>
-    public async ValueTask AppendAsync(IEnumerable<RaftLogEntry> entries, CancellationToken ct = default) {
+    public async ValueTask AppendAsync(IEnumerable<RaftLogEntry> entries, CancellationToken cancellationToken = default) {
         _file.Seek(0, SeekOrigin.End);
 
         foreach (var entry in entries) {
@@ -127,14 +127,14 @@ sealed class FileRaftLog : IRaftLog, IDisposable {
             var crc = ComputeCrc(span[..HeaderSize].ToArray(), payload);
             BinaryPrimitives.WriteUInt32LittleEndian(span[(HeaderSize + payload.Length)..], crc);
 
-            await _file.WriteAsync(buf, ct);
+            await _file.WriteAsync(buf, cancellationToken);
             _offsets.Add(offset);
             LastTerm = entry.Term;
         }
     }
 
     /// <inheritdoc/>
-    public ValueTask TruncateFromAsync(ulong fromIndex, CancellationToken ct = default) {
+    public ValueTask TruncateFromAsync(ulong fromIndex, CancellationToken cancellationToken = default) {
         if (fromIndex == 0 || fromIndex > LastIndex) return ValueTask.CompletedTask;
 
         var truncateOffset = _offsets[(int)(fromIndex - 1)];
@@ -145,8 +145,8 @@ sealed class FileRaftLog : IRaftLog, IDisposable {
     }
 
     /// <inheritdoc/>
-    public async ValueTask<ulong> GetTermAtAsync(ulong index, CancellationToken ct = default) {
-        var entry = await GetEntryAsync(index, ct);
+    public async ValueTask<ulong> GetTermAtAsync(ulong index, CancellationToken cancellationToken = default) {
+        var entry = await GetEntryAsync(index, cancellationToken);
         return entry.Term;
     }
 

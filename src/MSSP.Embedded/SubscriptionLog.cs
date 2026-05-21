@@ -95,7 +95,7 @@ public sealed partial class SubscriptionLog : IDisposable {
     /// <summary>
     /// Appends an event to the log. Must be called under the write lock.
     /// </summary>
-    public async ValueTask AppendAsync(GlobalPosition position, EventKey key, ReadOnlyMemory<byte> value, CancellationToken ct) {
+    public async ValueTask AppendAsync(GlobalPosition position, EventKey key, ReadOnlyMemory<byte> value, CancellationToken cancellationToken) {
         if (_activeStream == null) {
             OpenNewSegment(position);
         } else if (_activeStream.Length >= _segmentSizeBytes) {
@@ -114,8 +114,8 @@ public sealed partial class SubscriptionLog : IDisposable {
             if (_activeEntryCount % SparseEvery == 0)
                 _activeSparseIndex.Add((position, _activeStream!.Position));
 
-            await _activeStream!.WriteAsync(buf.AsMemory(0, entrySize), ct);
-            await _activeStream.FlushAsync(ct);
+            await _activeStream!.WriteAsync(buf.AsMemory(0, entrySize), cancellationToken);
+            await _activeStream.FlushAsync(cancellationToken);
         } finally {
             ArrayPool<byte>.Shared.Return(buf);
         }

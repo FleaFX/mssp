@@ -8,12 +8,12 @@ static class ExtensionsForCancellationToken {
     /// </summary>
     /// <returns><see langword="true"/> when cancellation was requested.</returns>
     public static ValueTaskAwaiter<bool> GetAwaiter(this CancellationToken cancellationToken) {
-        async ValueTask<bool> AsValueTask(CancellationToken ct) {
-            if (ct.IsCancellationRequested) return true;
+        async ValueTask<bool> AsValueTask(CancellationToken token) {
+            if (token.IsCancellationRequested) return true;
             var tcs = new TaskCompletionSource<bool>();
             // double-check after allocation to close the race between the first check and Register
-            if (ct.IsCancellationRequested) tcs.SetResult(true);
-            else ct.Register(s => ((TaskCompletionSource<bool>)s!).SetResult(true), tcs);
+            if (token.IsCancellationRequested) tcs.SetResult(true);
+            else token.Register(s => ((TaskCompletionSource<bool>)s!).SetResult(true), tcs);
             return await tcs.Task;
         }
 

@@ -95,9 +95,9 @@ public sealed partial class RaftNode {
             await Task.CompletedTask;
         }
 
-        async Task ReplicateToPeerAsync(string peerId, CancellationToken ct = default) {
+        async Task ReplicateToPeerAsync(string peerId, CancellationToken cancellationToken = default) {
             if (Node._role is not LeaderRole) return;
-            if (ct.IsCancellationRequested) return;
+            if (cancellationToken.IsCancellationRequested) return;
 
             ulong nextIdx;
             lock (_nextIndex) nextIdx = _nextIndex.GetValueOrDefault(peerId, Node._log.LastIndex + 1);
@@ -115,7 +115,7 @@ public sealed partial class RaftNode {
                 entries, Node._commitIndex);
 
             try {
-                var response = await Node._transport.AppendEntriesAsync(peerId, request, ct);
+                var response = await Node._transport.AppendEntriesAsync(peerId, request, cancellationToken);
                 Node.Post(async () => {
                     if (Node._role is not LeaderRole leader) return;
                     if (response.Term > Node._currentTerm) { await Node.TransitionToFollowerAsync(response.Term); return; }

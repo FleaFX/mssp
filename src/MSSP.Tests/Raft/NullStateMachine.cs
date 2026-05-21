@@ -5,7 +5,7 @@ sealed class NullStateMachine : IRaftStateMachine {
 
     public ulong LastAppliedIndex => _lastApplied;
 
-    public ValueTask<bool> ApplyAsync(RaftLogEntry entry, CancellationToken ct = default) {
+    public ValueTask<bool> ApplyAsync(RaftLogEntry entry, CancellationToken cancellationToken = default) {
         _lastApplied = entry.Index;
         return ValueTask.FromResult(true);
     }

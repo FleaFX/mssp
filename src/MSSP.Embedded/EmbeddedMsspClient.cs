@@ -29,7 +29,7 @@ public sealed class EmbeddedMsspClient(
     /// <param name="sst">Optional SST access decorator (e.g. bloom filter layer).</param>
     /// <param name="subscriptionLogFormat">The format of the subscription log entries.</param>
     /// <param name="subscriptionLogSegmentSizeBytes">Maximum size of a single subscription log segment.</param>
-    /// <param name="ct">Token to cancel the open operation.</param>
+    /// <param name="cancellationToken">Token to cancel the open operation.</param>
     /// <returns>An <see cref="EmbeddedMsspClient"/> ready for use.</returns>
     public static async ValueTask<EmbeddedMsspClient> OpenAsync(
         string dataDirectory,
@@ -37,13 +37,13 @@ public sealed class EmbeddedMsspClient(
         ISstAccess<EventKey>? sst = null,
         SubscriptionLogFormat subscriptionLogFormat = SubscriptionLogFormat.FullPayload,
         long subscriptionLogSegmentSizeBytes = 64 * 1024 * 1024,
-        CancellationToken ct = default) {
+        CancellationToken cancellationToken = default) {
 
         Directory.CreateDirectory(dataDirectory);
         var wal = WalManager.Open(dataDirectory);
         var log = new EmbeddedLog(wal);
         var lsmOptions = new LsmStoreOptions<EventKey>(dataDirectory, memTableCapacityBytes, _ => ValueTask.CompletedTask, SstAccess: sst);
-        var lsmStore = await LsmStore<EventKey>.OpenAsync(lsmOptions, wal.ReadAllAsync(ct), ct);
+        var lsmStore = await LsmStore<EventKey>.OpenAsync(lsmOptions, wal.ReadAllAsync(cancellationToken), cancellationToken);
 
         var subscriptionLog = SubscriptionLog.Open(dataDirectory, subscriptionLogFormat, subscriptionLogSegmentSizeBytes);
         var pipeline = new SubscriptionPipeline(lsmStore, subscriptionLog);
@@ -53,8 +53,8 @@ public sealed class EmbeddedMsspClient(
     }
 
     /// <inheritdoc/>
-    public async ValueTask AppendAsync(StreamId streamId, StreamRevision expectedRevision, IEnumerable<EventData> events, CancellationToken ct = default) {
-        await _writeLock.WaitAsync(ct);
+    public async ValueTask AppendAsync(StreamId streamId, StreamRevision expectedRevision, IEnumerable<EventData> events, CancellationToken cancellationToken = default) {
+        await _writeLock.WaitAsync(cancellationToken);
         try {
             if (!_revisions.Contains(streamId.Value)) {
                 var (exists, revision) = LookupCurrentRevision(streamId.Value);
@@ -70,7 +70,7 @@ public sealed class EmbeddedMsspClient(
 
             foreach (var eventData in events) {
                 var key = new EventKey(streamId.Value, baseRevision + offset++);
-                await store.WriteAsync(key, EventValue.From(eventData, timestamp), ct);
+                await store.WriteAsync(key, EventValue.From(eventData, timestamp), cancellationToken);
                 _revisions.Set(streamId.Value, key.Revision);
             }
         } finally {
@@ -79,11 +79,11 @@ public sealed class EmbeddedMsspClient(
     }
 
     /// <inheritdoc/>
-    public async IAsyncEnumerable<RecordedEvent> ReadAsync(StreamId streamId, StreamRevision from = default, [EnumeratorCancellation] CancellationToken ct = default) {
+    public async IAsyncEnumerable<RecordedEvent> ReadAsync(StreamId streamId, StreamRevision from = default, [EnumeratorCancellation] CancellationToken cancellationToken = default) {
         IEnumerable<KeyValuePair<EventKey, ReadOnlyMemory<byte>?>> scan;
         var startKey = new EventKey(streamId.Value, 0UL);
 
-        await _writeLock.WaitAsync(ct);
+        await _writeLock.WaitAsync(cancellationToken);
         try {
             scan = store.ScanSnapshotFrom(startKey);
         } finally {
@@ -91,7 +91,7 @@ public sealed class EmbeddedMsspClient(
         }
 
         foreach (var (key, value) in scan) {
-            if (ct.IsCancellationRequested) yield break;
+            if (cancellationToken.IsCancellationRequested) yield break;
             if (key.StreamId != streamId.Value) break;
             if (key.Revision < from || value is null) continue;
             yield return ((EventValue)value.Value).ToRecordedEvent(key);
@@ -102,13 +102,13 @@ public sealed class EmbeddedMsspClient(
     public async IAsyncEnumerable<SubscriptionEvent> SubscribeAsync(
         SubscriptionFilter filter,
         GlobalPosition fromPosition = default,
-        [EnumeratorCancellation] CancellationToken ct = default) {
+        [EnumeratorCancellation] CancellationToken cancellationToken = default) {
 
         ChannelReader<SubscriptionEvent>? liveChannel = null;
         IEnumerable<SubscriptionEvent> catchUpScan;
         GlobalPosition catchUpPosition;
 
-        await _writeLock.WaitAsync(ct);
+        await _writeLock.WaitAsync(cancellationToken);
         try {
             catchUpPosition = subscriptions.CurrentPosition;
             liveChannel = subscriptions.Register(filter);
@@ -121,14 +121,14 @@ public sealed class EmbeddedMsspClient(
             // CATCH-UP: replay historical events from the subscription log.
             // The log is ordered by GlobalPosition, so we can break on first entry past the snapshot.
             foreach (var evt in catchUpScan) {
-                if (ct.IsCancellationRequested) yield break;
+                if (cancellationToken.IsCancellationRequested) yield break;
                 if (evt.Position > catchUpPosition) break;
                 if (filter.Matches(evt)) yield return evt;
             }
 
             // LIVE: deliver events written after the catch-up snapshot.
             // The overlap guard skips any events already delivered in catch-up.
-            await foreach (var evt in liveChannel!.ReadAllAsync(ct)) {
+            await foreach (var evt in liveChannel!.ReadAllAsync(cancellationToken)) {
                 if (evt.Position <= catchUpPosition) continue;
                 yield return evt;
             }
