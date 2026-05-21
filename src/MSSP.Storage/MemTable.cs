@@ -43,7 +43,7 @@ sealed class MemTable<TKey>(int capacityBytes) :
     /// <returns><c>true</c> if the key exists (even as a tombstone); otherwise <c>false</c>.</returns>
     public bool TryGet(TKey key, out ReadOnlyMemory<byte>? value) {
         if (!_data.TryGet(key, out var entry)) {
-            value = default;
+            value = null;
             return false;
         }
         if (entry.IsTombstone) {

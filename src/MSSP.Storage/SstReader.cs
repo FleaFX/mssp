@@ -40,7 +40,7 @@ sealed class SstReader<TKey> : ISstReader<TKey> where TKey : IKey<TKey> {
     public bool TryGet(TKey key, [MaybeNullWhen(false)] out ReadOnlyMemory<byte>? value) {
         var blockIndex = FindBlockIndex(key);
         if (blockIndex < 0) {
-            value = default;
+            value = null;
             return false;
         }
 
@@ -60,7 +60,7 @@ sealed class SstReader<TKey> : ISstReader<TKey> where TKey : IKey<TKey> {
             if (cmp > 0) break;
         }
 
-        value = default;
+        value = null;
         return false;
     }
 

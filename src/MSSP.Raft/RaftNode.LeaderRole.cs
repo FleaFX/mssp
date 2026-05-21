@@ -19,7 +19,7 @@ public sealed partial class RaftNode {
         /// Gets or sets whether the initial no-op entry has been committed by a quorum,
         /// indicating the leader is ready to accept client proposals.
         /// </summary>
-        public bool NoOpCommitted { get; set; }
+        public bool NoOpCommitted { get; private set; }
 
         PeriodicTimer? _heartbeatTimer;
         Task? _heartbeatTask;
@@ -54,8 +54,7 @@ public sealed partial class RaftNode {
 
         /// <inheritdoc/>
         internal override void OnEntryApplied(ulong index, RaftLogEntry entry, bool success) {
-            if (_pending.TryGetValue(index, out var tcs)) {
-                _pending.Remove(index);
+            if (_pending.Remove(index, out var tcs)) {
                 if (entry.Type == RaftLogEntryType.NoOp) {
                     NoOpCommitted = true;
                     tcs.TrySetResult(new RaftApplyResult(false));

@@ -49,7 +49,7 @@ public sealed partial class RaftNode {
                                 await Node.TransitionToLeaderAsync();
                         });
                     } catch { /* peer unavailable or cancelled */ }
-                });
+                }, nodeToken);
             }
         }
 

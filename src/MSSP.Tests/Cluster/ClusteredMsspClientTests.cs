@@ -124,7 +124,7 @@ public class ClusteredMsspClientTests : IAsyncLifetime {
             transport.Register(node);
             var raftLog = new RaftLog(node, stateMachine);
             var lsmOptions = new LsmStoreOptions<EventKey>(dataDir, 1024 * 1024, _ => ValueTask.CompletedTask);
-            var store = await LsmStore<EventKey>.OpenAsync(lsmOptions, AsyncEnumerable.Empty<ReadOnlyMemory<byte>>(), default);
+            var store = await LsmStore<EventKey>.OpenAsync(lsmOptions, AsyncEnumerable.Empty<ReadOnlyMemory<byte>>(), CancellationToken.None);
             await node.StartAsync();
             var subLog = SubscriptionLog.Open(dataDir, SubscriptionLogFormat.FullPayload, 64 * 1024 * 1024);
             var pipeline = new SubscriptionPipeline(store, subLog);
@@ -154,7 +154,7 @@ public class ClusteredMsspClientTests : IAsyncLifetime {
             var node2 = new RaftNode(new RaftNodeConfig("n1", [], 50, 100, 20), fileRaftLog2, new InMemoryRaftTransport(), stateMachine2, new InMemoryRaftStateStorage());
             var raftLog2 = new RaftLog(node2, stateMachine2);
             var lsmOptions2 = new LsmStoreOptions<EventKey>(dataDir, 1024 * 1024, _ => ValueTask.CompletedTask);
-            var store2 = await LsmStore<EventKey>.OpenAsync(lsmOptions2, AsyncEnumerable.Empty<ReadOnlyMemory<byte>>(), default);
+            var store2 = await LsmStore<EventKey>.OpenAsync(lsmOptions2, AsyncEnumerable.Empty<ReadOnlyMemory<byte>>(), CancellationToken.None);
             var logDriven2 = LogDrivenStore<EventKey>.Create(raftLog2, store2, 1024 * 1024);
             try {
                 for (var i = checkpointIndex + 1; i <= fileRaftLog2.LastIndex; i++) {

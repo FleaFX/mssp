@@ -11,7 +11,7 @@ public class LsmStoreTests : IAsyncLifetime {
 
     public async ValueTask InitializeAsync() {
         Directory.CreateDirectory(_dataDir);
-        _store = await LsmStore<StringKey>.OpenAsync(LsmOptions(), Empty(), default);
+        _store = await LsmStore<StringKey>.OpenAsync(LsmOptions(), Empty(), CancellationToken.None);
     }
 
     public ValueTask DisposeAsync() {
@@ -51,7 +51,7 @@ public class LsmStoreTests : IAsyncLifetime {
 
     async Task<(LsmStore<StringKey> lsm, LogDrivenStore<StringKey> driven)> OpenLogDrivenAsync(
             List<ReadOnlyMemory<byte>> captured, int capacityBytes = 4096) {
-        var lsm = await LsmStore<StringKey>.OpenAsync(LsmOptions(capacityBytes), Empty(), default);
+        var lsm = await LsmStore<StringKey>.OpenAsync(LsmOptions(capacityBytes), Empty(), CancellationToken.None);
         var driven = LogDrivenStore<StringKey>.Create(new CapturingLog(captured), lsm, capacityBytes);
         return (lsm, driven);
     }
@@ -67,11 +67,11 @@ public class LsmStoreTests : IAsyncLifetime {
         public async Task WithWalRecords_ReplaysMissingEntries() {
             var captured = new List<ReadOnlyMemory<byte>>();
             var (_, driven) = await OpenLogDrivenAsync(captured);
-            await driven.WriteAsync(new StringKey("a"), Bytes("1"), default);
-            await driven.WriteAsync(new StringKey("b"), Bytes("2"), default);
+            await driven.WriteAsync(new StringKey("a"), Bytes("1"), CancellationToken.None);
+            await driven.WriteAsync(new StringKey("b"), Bytes("2"), CancellationToken.None);
             driven.Dispose();
 
-            using var recovered = await LsmStore<StringKey>.OpenAsync(LsmOptions(), Replay(captured), default);
+            using var recovered = await LsmStore<StringKey>.OpenAsync(LsmOptions(), Replay(captured), CancellationToken.None);
 
             recovered.ScanAllFrom(new StringKey(""))
                      .Select(e => e.Key.Value)
@@ -83,13 +83,13 @@ public class LsmStoreTests : IAsyncLifetime {
             // capacity 4: a(1b key)+1b value = 2; b = 2 → Size=4; c triggers flush → a,b in SST, c in MemTable
             var captured = new List<ReadOnlyMemory<byte>>();
             var (_, driven) = await OpenLogDrivenAsync(captured, capacityBytes: 4);
-            await driven.WriteAsync(new StringKey("a"), Bytes("1"), default);
-            await driven.WriteAsync(new StringKey("b"), Bytes("2"), default);
-            await driven.WriteAsync(new StringKey("c"), Bytes("3"), default);
+            await driven.WriteAsync(new StringKey("a"), Bytes("1"), CancellationToken.None);
+            await driven.WriteAsync(new StringKey("b"), Bytes("2"), CancellationToken.None);
+            await driven.WriteAsync(new StringKey("c"), Bytes("3"), CancellationToken.None);
             driven.Dispose();
 
             // WAL has a,b,c; SST has a,b → RecoverAsync must apply only c, not duplicate a or b
-            using var recovered = await LsmStore<StringKey>.OpenAsync(LsmOptions(4), Replay(captured), default);
+            using var recovered = await LsmStore<StringKey>.OpenAsync(LsmOptions(4), Replay(captured), CancellationToken.None);
 
             recovered.ScanAllFrom(new StringKey(""))
                      .Select(e => e.Key.Value)
@@ -100,7 +100,7 @@ public class LsmStoreTests : IAsyncLifetime {
     public class WriteAsync : LsmStoreTests {
         [Fact]
         public async Task StoresEntry_VisibleInScan() {
-            await _store.WriteAsync(new StringKey("key"), Bytes("value"), default);
+            await _store.WriteAsync(new StringKey("key"), Bytes("value"), CancellationToken.None);
 
             var entry = _store.ScanAllFrom(new StringKey("key")).Single();
             Encoding.UTF8.GetString(entry.Value!.Value.Span).Should().Be("value");
@@ -109,10 +109,10 @@ public class LsmStoreTests : IAsyncLifetime {
         [Fact]
         public async Task FullMemTable_FlushesToSst() {
             // capacity 4: a+b fills MemTable; c triggers flush
-            var tinyStore = await LsmStore<StringKey>.OpenAsync(LsmOptions(4), Empty(), default);
-            await tinyStore.WriteAsync(new StringKey("a"), Bytes("1"), default);
-            await tinyStore.WriteAsync(new StringKey("b"), Bytes("2"), default);
-            await tinyStore.WriteAsync(new StringKey("c"), Bytes("3"), default);
+            var tinyStore = await LsmStore<StringKey>.OpenAsync(LsmOptions(4), Empty(), CancellationToken.None);
+            await tinyStore.WriteAsync(new StringKey("a"), Bytes("1"), CancellationToken.None);
+            await tinyStore.WriteAsync(new StringKey("b"), Bytes("2"), CancellationToken.None);
+            await tinyStore.WriteAsync(new StringKey("c"), Bytes("3"), CancellationToken.None);
             tinyStore.Dispose();
 
             Directory.EnumerateFiles(_dataDir, "*.sst").Should().HaveCount(1);
@@ -120,7 +120,7 @@ public class LsmStoreTests : IAsyncLifetime {
 
         [Fact]
         public async Task EntryExceedingCapacity_Throws() {
-            var act = async () => await _store.WriteAsync(new StringKey("key"), new byte[4097], default);
+            var act = async () => await _store.WriteAsync(new StringKey("key"), new byte[4097], CancellationToken.None);
 
             await act.Should().ThrowAsync<InvalidOperationException>();
         }
@@ -133,9 +133,9 @@ public class LsmStoreTests : IAsyncLifetime {
 
         [Fact]
         public async Task FromExistingKey_IncludesThatKeyAndAfter() {
-            await _store.WriteAsync(new StringKey("a"), Bytes("1"), default);
-            await _store.WriteAsync(new StringKey("b"), Bytes("2"), default);
-            await _store.WriteAsync(new StringKey("c"), Bytes("3"), default);
+            await _store.WriteAsync(new StringKey("a"), Bytes("1"), CancellationToken.None);
+            await _store.WriteAsync(new StringKey("b"), Bytes("2"), CancellationToken.None);
+            await _store.WriteAsync(new StringKey("c"), Bytes("3"), CancellationToken.None);
 
             _store.ScanAllFrom(new StringKey("b"))
                   .Select(e => e.Key.Value)
@@ -144,8 +144,8 @@ public class LsmStoreTests : IAsyncLifetime {
 
         [Fact]
         public async Task FromBetweenKeys_StartsAtNextKey() {
-            await _store.WriteAsync(new StringKey("a"), Bytes("1"), default);
-            await _store.WriteAsync(new StringKey("c"), Bytes("3"), default);
+            await _store.WriteAsync(new StringKey("a"), Bytes("1"), CancellationToken.None);
+            await _store.WriteAsync(new StringKey("c"), Bytes("3"), CancellationToken.None);
 
             _store.ScanAllFrom(new StringKey("b"))
                   .Should().ContainSingle(e => e.Key == new StringKey("c"));
@@ -154,10 +154,10 @@ public class LsmStoreTests : IAsyncLifetime {
         [Fact]
         public async Task SpansSstAndMemTable_ReturnsAllEntriesInOrder() {
             // capacity 4: a+b fills MemTable; c triggers flush → a,b in SST, c in MemTable
-            var crossStore = await LsmStore<StringKey>.OpenAsync(LsmOptions(4), Empty(), default);
-            await crossStore.WriteAsync(new StringKey("a"), Bytes("1"), default);
-            await crossStore.WriteAsync(new StringKey("b"), Bytes("2"), default);
-            await crossStore.WriteAsync(new StringKey("c"), Bytes("3"), default);
+            var crossStore = await LsmStore<StringKey>.OpenAsync(LsmOptions(4), Empty(), CancellationToken.None);
+            await crossStore.WriteAsync(new StringKey("a"), Bytes("1"), CancellationToken.None);
+            await crossStore.WriteAsync(new StringKey("b"), Bytes("2"), CancellationToken.None);
+            await crossStore.WriteAsync(new StringKey("c"), Bytes("3"), CancellationToken.None);
 
             crossStore.ScanAllFrom(new StringKey(""))
                       .Select(e => e.Key.Value)
@@ -173,9 +173,9 @@ public class LsmStoreTests : IAsyncLifetime {
 
         [Fact]
         public async Task NoOp_WhenFewerThanTwoSstFiles() {
-            await _store.WriteAsync(new StringKey("a"), Bytes("1"), default);
+            await _store.WriteAsync(new StringKey("a"), Bytes("1"), CancellationToken.None);
 
-            await _store.CompactAsync(default);
+            await _store.CompactAsync(CancellationToken.None);
 
             Directory.EnumerateFiles(_dataDir, "*.sst").Should().BeEmpty();
             _store.ScanAllFrom(new StringKey("")).Select(e => e.Key.Value).Should().Equal("a");
@@ -184,15 +184,15 @@ public class LsmStoreTests : IAsyncLifetime {
         [Fact]
         public async Task MergesMultipleSstFilesIntoOne() {
             // capacity 4: a,b→SST1 on write c; c,d→SST2 on write e; e in MemTable
-            var store = await LsmStore<StringKey>.OpenAsync(Options(4), Empty(), default);
-            await store.WriteAsync(new StringKey("a"), Bytes("1"), default);
-            await store.WriteAsync(new StringKey("b"), Bytes("2"), default);
-            await store.WriteAsync(new StringKey("c"), Bytes("3"), default);
-            await store.WriteAsync(new StringKey("d"), Bytes("4"), default);
-            await store.WriteAsync(new StringKey("e"), Bytes("5"), default);
+            var store = await LsmStore<StringKey>.OpenAsync(Options(4), Empty(), CancellationToken.None);
+            await store.WriteAsync(new StringKey("a"), Bytes("1"), CancellationToken.None);
+            await store.WriteAsync(new StringKey("b"), Bytes("2"), CancellationToken.None);
+            await store.WriteAsync(new StringKey("c"), Bytes("3"), CancellationToken.None);
+            await store.WriteAsync(new StringKey("d"), Bytes("4"), CancellationToken.None);
+            await store.WriteAsync(new StringKey("e"), Bytes("5"), CancellationToken.None);
             Directory.EnumerateFiles(_dataDir, "*.sst").Should().HaveCount(2);
 
-            await store.CompactAsync(default);
+            await store.CompactAsync(CancellationToken.None);
 
             Directory.EnumerateFiles(_dataDir, "*.sst").Should().HaveCount(1);
             store.Dispose();
@@ -200,14 +200,14 @@ public class LsmStoreTests : IAsyncLifetime {
 
         [Fact]
         public async Task PreservesAllEntriesAfterCompaction() {
-            var store = await LsmStore<StringKey>.OpenAsync(Options(4), Empty(), default);
-            await store.WriteAsync(new StringKey("a"), Bytes("1"), default);
-            await store.WriteAsync(new StringKey("b"), Bytes("2"), default);
-            await store.WriteAsync(new StringKey("c"), Bytes("3"), default);
-            await store.WriteAsync(new StringKey("d"), Bytes("4"), default);
-            await store.WriteAsync(new StringKey("e"), Bytes("5"), default);
+            var store = await LsmStore<StringKey>.OpenAsync(Options(4), Empty(), CancellationToken.None);
+            await store.WriteAsync(new StringKey("a"), Bytes("1"), CancellationToken.None);
+            await store.WriteAsync(new StringKey("b"), Bytes("2"), CancellationToken.None);
+            await store.WriteAsync(new StringKey("c"), Bytes("3"), CancellationToken.None);
+            await store.WriteAsync(new StringKey("d"), Bytes("4"), CancellationToken.None);
+            await store.WriteAsync(new StringKey("e"), Bytes("5"), CancellationToken.None);
 
-            await store.CompactAsync(default);
+            await store.CompactAsync(CancellationToken.None);
 
             store.ScanAllFrom(new StringKey(""))
                  .Select(e => e.Key.Value)
@@ -218,12 +218,12 @@ public class LsmStoreTests : IAsyncLifetime {
         [Fact]
         public async Task AutoCompacts_WhenSstCountReachesThreshold() {
             // capacity 4, threshold 2: a,b→SST1; c,d→SST2 triggers auto-compact→SST3; e in MemTable
-            var store = await LsmStore<StringKey>.OpenAsync(Options(4, compactionThreshold: 2), Empty(), default);
-            await store.WriteAsync(new StringKey("a"), Bytes("1"), default);
-            await store.WriteAsync(new StringKey("b"), Bytes("2"), default);
-            await store.WriteAsync(new StringKey("c"), Bytes("3"), default);
-            await store.WriteAsync(new StringKey("d"), Bytes("4"), default);
-            await store.WriteAsync(new StringKey("e"), Bytes("5"), default);
+            var store = await LsmStore<StringKey>.OpenAsync(Options(4, compactionThreshold: 2), Empty(), CancellationToken.None);
+            await store.WriteAsync(new StringKey("a"), Bytes("1"), CancellationToken.None);
+            await store.WriteAsync(new StringKey("b"), Bytes("2"), CancellationToken.None);
+            await store.WriteAsync(new StringKey("c"), Bytes("3"), CancellationToken.None);
+            await store.WriteAsync(new StringKey("d"), Bytes("4"), CancellationToken.None);
+            await store.WriteAsync(new StringKey("e"), Bytes("5"), CancellationToken.None);
 
             Directory.EnumerateFiles(_dataDir, "*.sst").Should().HaveCount(1);
             store.ScanAllFrom(new StringKey(""))
@@ -236,8 +236,8 @@ public class LsmStoreTests : IAsyncLifetime {
     public class ScanSnapshotFromTests : LsmStoreTests {
         [Fact]
         public async Task ReturnsCurrentEntries() {
-            await _store.WriteAsync(new StringKey("a"), Bytes("1"), default);
-            await _store.WriteAsync(new StringKey("b"), Bytes("2"), default);
+            await _store.WriteAsync(new StringKey("a"), Bytes("1"), CancellationToken.None);
+            await _store.WriteAsync(new StringKey("b"), Bytes("2"), CancellationToken.None);
 
             _store.ScanSnapshotFrom(new StringKey(""))
                   .Select(e => e.Key.Value)
@@ -248,9 +248,9 @@ public class LsmStoreTests : IAsyncLifetime {
         public async Task Snapshot_IsLazy_SeesWritesToSameMemTableAfterCapture() {
             // Snapshot captures the MemTable reference, not a copy of its data.
             // Writes to the same MemTable after the snapshot is captured are visible when iterated.
-            await _store.WriteAsync(new StringKey("a"), Bytes("1"), default);
+            await _store.WriteAsync(new StringKey("a"), Bytes("1"), CancellationToken.None);
             var snapshot = _store.ScanSnapshotFrom(new StringKey(""));
-            await _store.WriteAsync(new StringKey("b"), Bytes("2"), default);
+            await _store.WriteAsync(new StringKey("b"), Bytes("2"), CancellationToken.None);
 
             snapshot.Select(e => e.Key.Value).Should().Equal("a", "b");
         }
@@ -258,15 +258,15 @@ public class LsmStoreTests : IAsyncLifetime {
         [Fact]
         public async Task Snapshot_DoesNotIncludeEntriesFromNewSstFilesCreatedAfterCapture() {
             // capacity 4: a+b fills MemTable to 4 bytes; capturing snapshot before flush
-            var tinyStore = await LsmStore<StringKey>.OpenAsync(LsmOptions(4), Empty(), default);
-            await tinyStore.WriteAsync(new StringKey("a"), Bytes("1"), default);
-            await tinyStore.WriteAsync(new StringKey("b"), Bytes("2"), default);
+            var tinyStore = await LsmStore<StringKey>.OpenAsync(LsmOptions(4), Empty(), CancellationToken.None);
+            await tinyStore.WriteAsync(new StringKey("a"), Bytes("1"), CancellationToken.None);
+            await tinyStore.WriteAsync(new StringKey("b"), Bytes("2"), CancellationToken.None);
 
             // Materialize snapshot before flush so we get a stable baseline
             var snapshot = tinyStore.ScanSnapshotFrom(new StringKey("")).ToList();
 
             // Writing c triggers flush: a,b→SST, c→new MemTable
-            await tinyStore.WriteAsync(new StringKey("c"), Bytes("3"), default);
+            await tinyStore.WriteAsync(new StringKey("c"), Bytes("3"), CancellationToken.None);
 
             // Full store now has a,b (SST) and c (MemTable)
             tinyStore.ScanAllFrom(new StringKey(""))

@@ -31,6 +31,6 @@ static class StorageAsyncEnumerable {
                 // clean up the event handler before the next iteration
                 removeHandler(@delegate);
             }
-        };
+        }
     }
 }
