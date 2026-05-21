@@ -78,7 +78,7 @@ public sealed partial class SubscriptionLog : IDisposable {
             var (end, sparseIndex, entryCount) = ScanForIndex(path);
 
             if (!isLast) {
-                _sealed.Add(new SegmentMeta(path, new GlobalPosition(startPos), end, sparseIndex));
+                _sealed.Add(new SegmentMeta(path, end, sparseIndex));
             } else {
                 _activeStart = new GlobalPosition(startPos);
                 _activeEnd = end;
@@ -223,7 +223,7 @@ public sealed partial class SubscriptionLog : IDisposable {
 
     void RotateSegment(GlobalPosition newStart) {
         _activeStream!.Flush();
-        _sealed.Add(new SegmentMeta(_activePath, _activeStart, _activeEnd, [.._activeSparseIndex]));
+        _sealed.Add(new SegmentMeta(_activePath, _activeEnd, [.._activeSparseIndex]));
         _activeStream.Dispose();
         _activeStream = null;
         OpenNewSegment(newStart);
@@ -292,7 +292,6 @@ public sealed partial class SubscriptionLog : IDisposable {
 
     readonly record struct SegmentMeta(
         string Path,
-        GlobalPosition Start,
         GlobalPosition End,
         (GlobalPosition Position, long ByteOffset)[] SparseIndex);
 }

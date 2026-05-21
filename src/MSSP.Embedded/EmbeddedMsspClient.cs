@@ -104,7 +104,7 @@ public sealed class EmbeddedMsspClient(
         GlobalPosition fromPosition = default,
         [EnumeratorCancellation] CancellationToken cancellationToken = default) {
 
-        ChannelReader<SubscriptionEvent>? liveChannel = null;
+        ChannelReader<SubscriptionEvent>? liveChannel;
         IEnumerable<SubscriptionEvent> catchUpScan;
         GlobalPosition catchUpPosition;
 

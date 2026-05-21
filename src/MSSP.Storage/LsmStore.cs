@@ -34,7 +34,7 @@ public sealed class LsmStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKey> {
     /// </summary>
     internal static async ValueTask<LsmStore<TKey>> OpenAsync(LsmStoreOptions<TKey> options, IAsyncEnumerable<ReadOnlyMemory<byte>> walRecords, CancellationToken cancellationToken) {
         if (options.CapacityBytes <= 0)
-            throw new ArgumentOutOfRangeException(nameof(options), $"{nameof(LsmStoreOptions<TKey>.CapacityBytes)} must be positive.");
+            throw new ArgumentOutOfRangeException(nameof(options), $"{nameof(LsmStoreOptions<>.CapacityBytes)} must be positive.");
 
         var sstFiles = Directory.EnumerateFiles(options.DataDirectory, "*.sst").OrderBy(f => f).ToList();
         var sst = options.SstAccess ?? DefaultSstAccess<TKey>.Instance;

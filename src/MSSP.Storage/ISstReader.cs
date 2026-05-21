@@ -1,5 +1,3 @@
-using System.Diagnostics.CodeAnalysis;
-
 namespace MSSP.Storage;
 
 /// <summary>
@@ -10,7 +8,7 @@ public interface ISstReader<TKey> : IDisposable where TKey : IKey<TKey> {
     /// <summary>
     /// Attempts to retrieve the value for <paramref name="key"/>.
     /// </summary>
-    bool TryGet(TKey key, [MaybeNullWhen(false)] out ReadOnlyMemory<byte>? value);
+    bool TryGet(TKey key, out ReadOnlyMemory<byte>? value);
 
     /// <summary>
     /// Returns all entries in ascending key order.

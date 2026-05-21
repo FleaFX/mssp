@@ -50,7 +50,7 @@ public sealed class MsspGrpcService(IMsspClient client) : MsspBase {
     public override async Task Read(ReadRequest request, IServerStreamWriter<GrpcRecordedEvent> responseStream, ServerCallContext context) {
         if (string.IsNullOrEmpty(request.StreamId))
             throw new RpcException(new Status(StatusCode.InvalidArgument, "stream_id is required."));
-        await foreach (var e in client.ReadAsync(new StreamId(request.StreamId), (StreamRevision)request.FromRevision, context.CancellationToken)) {
+        await foreach (var e in client.ReadAsync(new StreamId(request.StreamId), request.FromRevision, context.CancellationToken)) {
             await responseStream.WriteAsync(new GrpcRecordedEvent {
                 StreamId = e.StreamId.Value,
                 Revision = e.Revision,
@@ -85,7 +85,7 @@ public sealed class MsspGrpcService(IMsspClient client) : MsspBase {
         -1 => StreamRevision.Any,
         -2 => StreamRevision.NoStream,
         -3 => StreamRevision.StreamExists,
-        >= 0 => (StreamRevision)(ulong)value,
+        >= 0 => (ulong)value,
         _ => throw new RpcException(new Status(StatusCode.InvalidArgument, $"Invalid revision value: {value}."))
     };
 

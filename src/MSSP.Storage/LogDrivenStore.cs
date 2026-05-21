@@ -128,9 +128,12 @@ public sealed class LogDrivenStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKe
     /// <inheritdoc/>
     public void Dispose() {
         _loopCts?.Cancel();
-        // Swallow: the loop exits cleanly on cancellation; any unexpected exception was
-        // already propagated to the caller via the TCS before the loop exited.
-        try { _loopTask?.GetAwaiter().GetResult(); } catch { }
+        
+        try { _loopTask?.GetAwaiter().GetResult(); } catch {
+            // Swallow: the loop exits cleanly on cancellation; any unexpected exception was
+            // // already propagated to the caller via the TCS before the loop exited.
+        }
+
         while (_pending.TryDequeue(out var tcs))
             tcs.TrySetCanceled();
         _loopCts?.Dispose();

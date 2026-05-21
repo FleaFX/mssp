@@ -1,4 +1,3 @@
-using System.Diagnostics.CodeAnalysis;
 using MSSP.Storage;
 
 namespace MSSP.BloomFilters;
@@ -17,7 +16,7 @@ sealed class BloomFilteredSstReader<TKey> : ISstReader<TKey> where TKey : IKey<T
     }
 
     /// <inheritdoc />
-    public bool TryGet(TKey key, [MaybeNullWhen(false)] out ReadOnlyMemory<byte>? value) {
+    public bool TryGet(TKey key, out ReadOnlyMemory<byte>? value) {
         ReadOnlyMemory<byte> keyBytes = key;
         value = null;
 

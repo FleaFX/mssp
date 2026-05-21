@@ -81,7 +81,7 @@ sealed class SkipList<TKey, TValue> : IDisposable, IEnumerable<KeyValuePair<TKey
                 _update[i]!.Next[i] = node;
             }
 
-            _count++;
+            Interlocked.Increment(ref _count);
         } finally {
             _lock.ExitWriteLock();
         }
@@ -106,7 +106,7 @@ sealed class SkipList<TKey, TValue> : IDisposable, IEnumerable<KeyValuePair<TKey
             while (_level > 1 && _head.Next[_level - 1] == null)
                 _level--;
 
-            _count--;
+            Interlocked.Decrement(ref _count);
             return true;
         } finally {
             _lock.ExitWriteLock();

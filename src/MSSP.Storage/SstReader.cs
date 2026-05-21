@@ -1,5 +1,4 @@
 using System.Buffers.Binary;
-using System.Diagnostics.CodeAnalysis;
 
 namespace MSSP.Storage;
 
@@ -37,7 +36,7 @@ sealed class SstReader<TKey> : ISstReader<TKey> where TKey : IKey<TKey> {
     /// or <c>default</c> if the key is not present.
     /// </param>
     /// <returns><c>true</c> if the key exists (even as a tombstone); otherwise <c>false</c>.</returns>
-    public bool TryGet(TKey key, [MaybeNullWhen(false)] out ReadOnlyMemory<byte>? value) {
+    public bool TryGet(TKey key, out ReadOnlyMemory<byte>? value) {
         var blockIndex = FindBlockIndex(key);
         if (blockIndex < 0) {
             value = null;

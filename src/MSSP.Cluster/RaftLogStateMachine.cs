@@ -28,7 +28,7 @@ sealed class RaftLogStateMachine : IRaftStateMachine {
     /// <inheritdoc/>
     public ValueTask<bool> ApplyAsync(RaftLogEntry entry, CancellationToken cancellationToken = default) {
         if (entry.Type == RaftLogEntryType.Command)
-            _channel.Writer.TryWrite((WalRecord)entry.Payload);
+            _channel.Writer.TryWrite(entry.Payload);
         Volatile.Write(ref _lastAppliedIndex, entry.Index);
         return ValueTask.FromResult(true);
     }

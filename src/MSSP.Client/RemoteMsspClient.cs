@@ -5,7 +5,6 @@ using AppendRequest = MSSP.Grpc.AppendRequest;
 using ReadRequest = MSSP.Grpc.ReadRequest;
 using GrpcEventData = MSSP.Grpc.EventData;
 using SubscribeRequest = MSSP.Grpc.SubscribeRequest;
-using GrpcSubscriptionEvent = MSSP.Grpc.SubscriptionEvent;
 using GrpcSubscriptionFilter = MSSP.Grpc.SubscriptionFilter;
 using GrpcAllFilter = MSSP.Grpc.AllFilter;
 using GrpcStreamIdFilter = MSSP.Grpc.StreamIdFilter;

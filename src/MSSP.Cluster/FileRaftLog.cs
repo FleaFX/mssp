@@ -51,26 +51,24 @@ sealed class FileRaftLog : IRaftLog, IDisposable {
             var offset = _file.Position;
             var read = await _file.ReadAsync(headerBuf, cancellationToken);
             if (read == 0) break;
-            if (read < HeaderSize) { await TruncateTo(offset); break; }
+            if (read < HeaderSize) { _file.SetLength(offset); break; }
 
             var term = BinaryPrimitives.ReadUInt64LittleEndian(headerBuf);
-            var index = BinaryPrimitives.ReadUInt64LittleEndian(headerBuf.AsSpan(8));
-            var type = headerBuf[16];
             var payloadLen = BinaryPrimitives.ReadInt32LittleEndian(headerBuf.AsSpan(17));
 
-            if (payloadLen < 0) { await TruncateTo(offset); break; }
+            if (payloadLen < 0) { _file.SetLength(offset); break; }
 
             var payload = new byte[payloadLen];
             var payloadRead = await _file.ReadAsync(payload, cancellationToken);
-            if (payloadRead < payloadLen) { await TruncateTo(offset); break; }
+            if (payloadRead < payloadLen) { _file.SetLength(offset); break; }
 
             var crcRead = await _file.ReadAsync(crcBuf, cancellationToken);
-            if (crcRead < 4) { await TruncateTo(offset); break; }
+            if (crcRead < 4) { _file.SetLength(offset); break; }
 
             // verify CRC32 over header + payload
             var crcStored = BinaryPrimitives.ReadUInt32LittleEndian(crcBuf);
             var crcComputed = ComputeCrc(headerBuf, payload);
-            if (crcStored != crcComputed) { await TruncateTo(offset); break; }
+            if (crcStored != crcComputed) { _file.SetLength(offset); break; }
 
             _offsets.Add(offset);
             LastTerm = term;
@@ -148,11 +146,6 @@ sealed class FileRaftLog : IRaftLog, IDisposable {
     public async ValueTask<ulong> GetTermAtAsync(ulong index, CancellationToken cancellationToken = default) {
         var entry = await GetEntryAsync(index, cancellationToken);
         return entry.Term;
-    }
-
-    async ValueTask TruncateTo(long offset) {
-        _file.SetLength(offset);
-        await Task.CompletedTask;
     }
 
     ulong ReadTermAt(long offset) {
