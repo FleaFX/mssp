@@ -16,7 +16,7 @@ public interface ISstAccess<TKey> where TKey : IKey<TKey> {
     /// Implementations must guarantee that <paramref name="sstPath"/> is only visible after
     /// the write completes (e.g. via an atomic tmp-then-rename).
     /// </summary>
-    ValueTask WriteAsync(IEnumerable<KeyValuePair<TKey, ReadOnlyMemory<byte>?>> entries, string sstPath, CancellationToken ct);
+    ValueTask WriteAsync(IEnumerable<KeyValuePair<TKey, ReadOnlyMemory<byte>?>> entries, string sstPath, CancellationToken cancellationToken);
 
     /// <summary>
     /// Deletes the SST file at <paramref name="sstPath"/> and any associated sidecars.

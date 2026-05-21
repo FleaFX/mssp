@@ -1,5 +1,4 @@
 using System.Buffers.Binary;
-using System.Diagnostics.CodeAnalysis;
 
 namespace MSSP.Storage;
 
@@ -8,7 +7,7 @@ namespace MSSP.Storage;
 /// Loads the sparse index into memory on construction for efficient point lookups.
 /// </summary>
 /// <remarks>
-/// The reader is not thread-safe. <see cref="TryGet"/> and <see cref="Scan"/> must not
+/// The reader is not thread-safe. <see cref="TryGet"/> and <see cref="Scan(TKey)"/> must not
 /// be called concurrently, as they both manipulate the underlying stream position.
 /// </remarks>
 /// <typeparam name="TKey">The type of the key.</typeparam>
@@ -37,10 +36,10 @@ sealed class SstReader<TKey> : ISstReader<TKey> where TKey : IKey<TKey> {
     /// or <c>default</c> if the key is not present.
     /// </param>
     /// <returns><c>true</c> if the key exists (even as a tombstone); otherwise <c>false</c>.</returns>
-    public bool TryGet(TKey key, [MaybeNullWhen(false)] out ReadOnlyMemory<byte>? value) {
+    public bool TryGet(TKey key, out ReadOnlyMemory<byte>? value) {
         var blockIndex = FindBlockIndex(key);
         if (blockIndex < 0) {
-            value = default;
+            value = null;
             return false;
         }
 
@@ -60,7 +59,7 @@ sealed class SstReader<TKey> : ISstReader<TKey> where TKey : IKey<TKey> {
             if (cmp > 0) break;
         }
 
-        value = default;
+        value = null;
         return false;
     }
 

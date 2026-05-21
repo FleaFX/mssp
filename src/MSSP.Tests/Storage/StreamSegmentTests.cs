@@ -9,19 +9,19 @@ public class StreamSegmentTests {
         public async Task SingleRecord_ReadableByEnumeration() {
             using var log = new StreamSegment<TestLogRecord>(new MemoryStream());
 
-            await log.TryAppendAsync(new TestLogRecord(new byte[] { 0x01, 0x02, 0x03 }));
+            await log.TryAppendAsync(new TestLogRecord([0x01, 0x02, 0x03]));
 
             (await log.EnumerateAsync()).Should().ContainSingle()
-                .Which.Should().BeEquivalentTo(new TestLogRecord(new byte[] { 0x01, 0x02, 0x03 }));
+                .Which.Should().BeEquivalentTo(new TestLogRecord([0x01, 0x02, 0x03]));
         }
 
         [Fact]
         public async Task MultipleRecords_AllPreserved() {
             using var log = new StreamSegment<TestLogRecord>(new MemoryStream());
 
-            await log.TryAppendAsync(new TestLogRecord(new byte[] { 0x01 }));
-            await log.TryAppendAsync(new TestLogRecord(new byte[] { 0x02, 0x03 }));
-            await log.TryAppendAsync(new TestLogRecord(new byte[] { 0x04, 0x05, 0x06 }));
+            await log.TryAppendAsync(new TestLogRecord([0x01]));
+            await log.TryAppendAsync(new TestLogRecord([0x02, 0x03]));
+            await log.TryAppendAsync(new TestLogRecord([0x04, 0x05, 0x06]));
 
             (await log.EnumerateAsync()).Should().HaveCount(3);
         }
@@ -30,7 +30,7 @@ public class StreamSegmentTests {
         public async Task Returns_True_OnSuccess() {
             using var log = new StreamSegment<TestLogRecord>(new MemoryStream());
 
-            var result = await log.TryAppendAsync(new TestLogRecord(new byte[] { 0x01 }));
+            var result = await log.TryAppendAsync(new TestLogRecord([0x01]));
 
             result.Should().BeTrue();
         }
@@ -39,7 +39,7 @@ public class StreamSegmentTests {
         public async Task Returns_False_OnIoError() {
             using var log = new StreamSegment<TestLogRecord>(new ThrowingStream());
 
-            var result = await log.TryAppendAsync(new TestLogRecord(new byte[] { 0x01 }));
+            var result = await log.TryAppendAsync(new TestLogRecord([0x01]));
 
             result.Should().BeFalse();
         }
@@ -56,17 +56,17 @@ public class StreamSegmentTests {
         [Fact]
         public async Task PreservesRecordBytes() {
             using var log = new StreamSegment<TestLogRecord>(new MemoryStream());
-            await log.TryAppendAsync(new TestLogRecord(new byte[] { 0xAA, 0xBB, 0xCC }));
+            await log.TryAppendAsync(new TestLogRecord([0xAA, 0xBB, 0xCC]));
 
             (await log.EnumerateAsync()).Should().ContainSingle()
-                .Which.Should().BeEquivalentTo(new TestLogRecord(new byte[] { 0xAA, 0xBB, 0xCC }));
+                .Which.Should().BeEquivalentTo(new TestLogRecord([0xAA, 0xBB, 0xCC]));
         }
 
         [Fact]
         public async Task TruncatedLengthHeader_StopsEarly() {
             var stream = new MemoryStream();
             using var log = new StreamSegment<TestLogRecord>(stream);
-            await log.TryAppendAsync(new TestLogRecord(new byte[] { 0xAA }));
+            await log.TryAppendAsync(new TestLogRecord([0xAA]));
             stream.Write([0x05, 0x00]); // only 2 of the 4 length bytes
 
             (await log.EnumerateAsync()).Should().HaveCount(1);
@@ -76,7 +76,7 @@ public class StreamSegmentTests {
         public async Task TruncatedData_StopsEarly() {
             var stream = new MemoryStream();
             using var log = new StreamSegment<TestLogRecord>(stream);
-            await log.TryAppendAsync(new TestLogRecord(new byte[] { 0xAA }));
+            await log.TryAppendAsync(new TestLogRecord([0xAA]));
             stream.Write([0x0A, 0x00, 0x00, 0x00, 0x01, 0x02]); // claims 10 bytes, only 2 present
 
             (await log.EnumerateAsync()).Should().HaveCount(1);
@@ -86,7 +86,7 @@ public class StreamSegmentTests {
         public async Task CorruptData_StopsEarly() {
             var stream = new MemoryStream();
             using var log = new StreamSegment<TestLogRecord>(stream);
-            await log.TryAppendAsync(new TestLogRecord(new byte[] { 0xAA }));
+            await log.TryAppendAsync(new TestLogRecord([0xAA]));
             // Overwrite the data byte with garbage — CRC will no longer match
             stream.Position = 4;
             stream.WriteByte(0xFF);
@@ -98,9 +98,9 @@ public class StreamSegmentTests {
         public async Task CorruptRecord_AfterValidRecord_StopsEarly() {
             var stream = new MemoryStream();
             using var log = new StreamSegment<TestLogRecord>(stream);
-            await log.TryAppendAsync(new TestLogRecord(new byte[] { 0xAA }));
+            await log.TryAppendAsync(new TestLogRecord([0xAA]));
             var corruptRecordStart = stream.Length;
-            await log.TryAppendAsync(new TestLogRecord(new byte[] { 0xBB }));
+            await log.TryAppendAsync(new TestLogRecord([0xBB]));
             // Overwrite the data byte of the second record with garbage
             stream.Position = corruptRecordStart + 4;
             stream.WriteByte(0xFF);
@@ -124,7 +124,7 @@ sealed class ThrowingStream : Stream {
     public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
     public override void SetLength(long value) => throw new NotSupportedException();
     public override void Write(byte[] buffer, int offset, int count) => throw new IOException("Disk full");
-    public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken ct) =>
+    public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken) =>
         ValueTask.FromException(new IOException("Disk full"));
-    public override Task FlushAsync(CancellationToken ct) => Task.CompletedTask;
+    public override Task FlushAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 }

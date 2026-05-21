@@ -51,14 +51,14 @@ public sealed class SubscriptionPipeline : ILsmStore<EventKey>, ISubscriptionPro
     /// <paramref name="value"/> must be at least 8 bytes long; the last 8 bytes are read as the
     /// <see cref="GlobalPosition"/> written by <see cref="GlobalPositionDecorator"/>.
     /// </remarks>
-    public async ValueTask WriteAsync(EventKey key, Memory<byte> value, CancellationToken ct) {
+    public async ValueTask WriteAsync(EventKey key, Memory<byte> value, CancellationToken cancellationToken) {
         var pos = new GlobalPosition(BinaryPrimitives.ReadUInt64LittleEndian(value.Span[^8..]));
 
-        await _inner.WriteAsync(key, value, ct);
+        await _inner.WriteAsync(key, value, cancellationToken);
 
         if (pos.Value > _globalSequence) {
             _globalSequence = pos.Value;
-            await _subscriptionLog.AppendAsync(pos, key, value, ct);
+            await _subscriptionLog.AppendAsync(pos, key, value, cancellationToken);
             _bus.Publish(((EventValue)value).ToSubscriptionEvent(key));
         }
     }

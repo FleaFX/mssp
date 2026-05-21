@@ -62,12 +62,18 @@ public readonly struct EventValue {
         return new SubscriptionEvent(key.StreamId, key.Revision, eventType, _bytes[(4 + typeLen + 8)..^8], timestamp, ReadPosition());
     }
 
-    /// <inheritdoc/>
+    /// <summary>
+    /// Returns the underlying bytes of this value.
+    /// </summary>
     public static implicit operator ReadOnlyMemory<byte>(EventValue value) => value._bytes;
 
-    /// <inheritdoc/>
+    /// <summary>
+    /// Wraps <paramref name="bytes"/> as an <see cref="EventValue"/> without copying.
+    /// </summary>
     public static implicit operator EventValue(ReadOnlyMemory<byte> bytes) => new(bytes);
 
-    /// <inheritdoc/>
+    /// <summary>
+    /// Wraps <paramref name="bytes"/> as an <see cref="EventValue"/> without copying.
+    /// </summary>
     public static implicit operator EventValue(Memory<byte> bytes) => new(bytes);
 }

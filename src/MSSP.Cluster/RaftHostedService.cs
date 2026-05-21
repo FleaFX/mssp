@@ -62,24 +62,20 @@ sealed class RaftHostedService(MsspOptions msspOptions, MsspClusterOptions clust
         _node = new RaftNode(config, _raftLog, _transport, _stateMachine, _stateStorage);
         _log = new RaftLog(_node, _stateMachine);
 
-        RaftLogStateMachine capturedStateMachine = _stateMachine;
-        MemTableFlushedDelegate onFlushed = async ct =>
-            await RaftLogStateMachine.WriteCheckpointAsync(dataDir, capturedStateMachine.LastAppliedIndex, ct);
+        var capturedStateMachine = _stateMachine;
 
-        var lsmOptions = new LsmStoreOptions<EventKey>(
-            dataDir,
-            msspOptions.MemTableCapacityBytes,
-            onFlushed);
-
-        var lsmStore = await LsmStore<EventKey>.OpenAsync(lsmOptions, AsyncEnumerable.Empty<ReadOnlyMemory<byte>>(), cancellationToken);
-
+        var lsmStore = await LsmStore<EventKey>.OpenAsync(
+            options: new LsmStoreOptions<EventKey>(dataDir, msspOptions.MemTableCapacityBytes, OnFlushed),
+            walRecords: AsyncEnumerable.Empty<ReadOnlyMemory<byte>>(),
+            cancellationToken: cancellationToken);
         var subscriptionLog = SubscriptionLog.Open(
             dataDir,
             msspOptions.SubscriptionLogFormat,
             msspOptions.SubscriptionLogSegmentSizeBytes);
         var pipeline = new SubscriptionPipeline(lsmStore, subscriptionLog);
-        var logDriven = LogDrivenStore<EventKey>.Create(_log, pipeline, msspOptions.MemTableCapacityBytes);
-        _local = new EmbeddedMsspClient(store: new GlobalPositionDecorator(logDriven, pipeline), subscriptions: pipeline);
+        _local = new EmbeddedMsspClient(
+            store: new GlobalPositionDecorator(LogDrivenStore<EventKey>.Create(_log, pipeline, msspOptions.MemTableCapacityBytes), pipeline),
+            subscriptions: pipeline);
 
         _client = new ClusteredMsspClient(_node, _local, clusterOptions.Peers);
 
@@ -90,6 +86,9 @@ sealed class RaftHostedService(MsspOptions msspOptions, MsspClusterOptions clust
         }
 
         await _node.StartAsync(cancellationToken);
+        return;
+
+        async ValueTask OnFlushed(CancellationToken token) => await RaftLogStateMachine.WriteCheckpointAsync(dataDir, capturedStateMachine.LastAppliedIndex, token);
     }
 
     /// <inheritdoc/>

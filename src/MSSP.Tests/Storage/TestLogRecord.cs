@@ -1,9 +1,7 @@
 namespace MSSP.Storage;
 
-class TestLogRecord : ILogRecord<TestLogRecord> {
-    readonly byte[] _payload;
-
-    public TestLogRecord(byte[] payload) => _payload = payload;
+class TestLogRecord(byte[] payload) : ILogRecord<TestLogRecord> {
+    readonly byte[] _payload = payload;
 
     public static implicit operator ReadOnlyMemory<byte>(TestLogRecord record) => record._payload;
 

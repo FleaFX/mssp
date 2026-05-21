@@ -157,9 +157,9 @@ public class MsspGrpcServiceTests : IAsyncLifetime {
 
     sealed class Http2Handler(HttpMessageHandler inner) : DelegatingHandler(inner) {
         protected override async Task<HttpResponseMessage> SendAsync(
-            HttpRequestMessage request, CancellationToken ct) {
+            HttpRequestMessage request, CancellationToken cancellationToken) {
             request.Version = new Version(2, 0);
-            var response = await base.SendAsync(request, ct);
+            var response = await base.SendAsync(request, cancellationToken);
             response.Version = new Version(2, 0);
             return response;
         }

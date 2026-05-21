@@ -25,7 +25,10 @@ public sealed class StreamSegment<TRecord> : IAsyncEnumerable<TRecord>, IDisposa
     /// </summary>
     internal StreamSegment(Stream stream) => _stream = stream;
 
-    /// <inheritdoc/>
+    /// <summary>
+    /// Appends <paramref name="record"/> to the stream, preceded by its length and followed by a CRC32 checksum.
+    /// Returns <see langword="true"/> on success; <see langword="false"/> if the write fails.
+    /// </summary>
     public async ValueTask<bool> TryAppendAsync(TRecord record, CancellationToken cancellationToken = default) {
         ReadOnlyMemory<byte> bytes = record;
         var buf = ArrayPool<byte>.Shared.Rent(4 + bytes.Length + 4);
@@ -68,5 +71,6 @@ public sealed class StreamSegment<TRecord> : IAsyncEnumerable<TRecord>, IDisposa
         }
     }
 
+    /// <inheritdoc />
     public void Dispose() => _stream.Dispose();
 }

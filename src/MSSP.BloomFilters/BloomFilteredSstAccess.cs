@@ -26,12 +26,12 @@ public sealed class BloomFilteredSstAccess<TKey>(ISstAccess<TKey> inner) : ISstA
     }
 
     /// <inheritdoc/>
-    public async ValueTask WriteAsync(IEnumerable<KeyValuePair<TKey, ReadOnlyMemory<byte>?>> entries, string sstPath, CancellationToken ct) {
+    public async ValueTask WriteAsync(IEnumerable<KeyValuePair<TKey, ReadOnlyMemory<byte>?>> entries, string sstPath, CancellationToken cancellationToken) {
         var keys = new List<ReadOnlyMemory<byte>>();
         await inner.WriteAsync(
             entries.Select(kv => { keys.Add(kv.Key); return kv; }),
-            sstPath, ct);
-        await WriteSidecarAsync(sstPath, keys, ct);
+            sstPath, cancellationToken);
+        await WriteSidecarAsync(sstPath, keys);
     }
 
     /// <inheritdoc/>
@@ -41,7 +41,7 @@ public sealed class BloomFilteredSstAccess<TKey>(ISstAccess<TKey> inner) : ISstA
         inner.Delete(sstPath);
     }
 
-    static async ValueTask WriteSidecarAsync(string sstPath, List<ReadOnlyMemory<byte>> keys, CancellationToken ct) {
+    static async ValueTask WriteSidecarAsync(string sstPath, List<ReadOnlyMemory<byte>> keys) {
         var filter = BloomFilter.Create(Math.Max(1, keys.Count));
         foreach (var key in keys)
             filter.Add(key.Span);

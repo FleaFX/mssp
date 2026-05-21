@@ -20,7 +20,7 @@ sealed class RaftGrpcService(RaftHostedService raftService) : RaftConsensus.Raft
     /// </summary>
     public override async Task<GrpcVoteResponse> RequestVote(GrpcVoteRequest request, ServerCallContext context) {
         var node = raftService.Node;
-        var raftRequest = new MSSP.Raft.VoteRequest(
+        var raftRequest = new Raft.VoteRequest(
             request.Term, request.CandidateId,
             request.LastLogIndex, request.LastLogTerm);
         var response = await node.ReceiveVoteRequestAsync(raftRequest, context.CancellationToken);
@@ -37,7 +37,7 @@ sealed class RaftGrpcService(RaftHostedService raftService) : RaftConsensus.Raft
         var entries = request.Entries.Select(e => new RaftLogEntry(
             e.Term, e.Index, (RaftLogEntryType)e.Type,
             e.Payload.Memory)).ToArray();
-        var raftRequest = new MSSP.Raft.AppendEntriesRequest(
+        var raftRequest = new Raft.AppendEntriesRequest(
             request.Term, request.LeaderId,
             request.PrevLogIndex, request.PrevLogTerm,
             entries, request.LeaderCommit);

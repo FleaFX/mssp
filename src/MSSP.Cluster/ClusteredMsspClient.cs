@@ -29,50 +29,47 @@ sealed class ClusteredMsspClient(
     string? _cachedLeaderNodeId;
 
     /// <inheritdoc/>
-    public async ValueTask AppendAsync(StreamId streamId, StreamRevision expectedRevision, IEnumerable<EventData> events, CancellationToken ct = default) {
+    public async ValueTask AppendAsync(StreamId streamId, StreamRevision expectedRevision, IEnumerable<EventData> events, CancellationToken cancellationToken = default) {
         if (!node.IsLeader) {
-            await ForwardAppendAsync(streamId, expectedRevision, events, ct);
+            await ForwardAppendAsync(streamId, expectedRevision, events, cancellationToken);
             return;
         }
 
         try {
-            await local.AppendAsync(streamId, expectedRevision, events, ct);
+            await local.AppendAsync(streamId, expectedRevision, events, cancellationToken);
         } catch (NotLeaderException) {
             // Lost leadership between the IsLeader check and ProposeAsync — forward to the new leader.
-            await ForwardAppendAsync(streamId, expectedRevision, events, ct);
+            await ForwardAppendAsync(streamId, expectedRevision, events, cancellationToken);
         }
     }
 
-    async ValueTask ForwardAppendAsync(StreamId streamId, StreamRevision expectedRevision, IEnumerable<EventData> events, CancellationToken ct) {
-        var leaderHint = await WaitForLeaderHintAsync(ct);
+    async ValueTask ForwardAppendAsync(StreamId streamId, StreamRevision expectedRevision, IEnumerable<EventData> events, CancellationToken cancellationToken) {
+        var leaderHint = await WaitForLeaderHintAsync(cancellationToken);
         var grpcClient = GetOrCreateLeaderClient(leaderHint);
         var request = new AppendRequest { StreamId = streamId.Value, ExpectedRevision = (long)expectedRevision };
         foreach (var e in events)
             request.Events.Add(new GrpcEventData { EventType = e.EventType, Data = ByteString.CopyFrom(e.Data.Span) });
         try {
-            await grpcClient.AppendAsync(request, cancellationToken: ct);
+            await grpcClient.AppendAsync(request, cancellationToken: cancellationToken);
         } catch (RpcException ex) when (ex.StatusCode == StatusCode.FailedPrecondition) {
             throw new OptimisticConcurrencyException(streamId, expectedRevision);
         }
     }
 
     /// <inheritdoc/>
-    public async IAsyncEnumerable<RecordedEvent> ReadAsync(StreamId streamId, StreamRevision from = default, [EnumeratorCancellation] CancellationToken ct = default) {
-        await foreach (var e in local.ReadAsync(streamId, from, ct))
+    public async IAsyncEnumerable<RecordedEvent> ReadAsync(StreamId streamId, StreamRevision from = default, [EnumeratorCancellation] CancellationToken cancellationToken = default) {
+        await foreach (var e in local.ReadAsync(streamId, from, cancellationToken))
             yield return e;
     }
 
     /// <inheritdoc/>
-    public async IAsyncEnumerable<SubscriptionEvent> SubscribeAsync(
-        SubscriptionFilter filter,
-        GlobalPosition fromPosition = default,
-        [EnumeratorCancellation] CancellationToken ct = default) {
+    public async IAsyncEnumerable<SubscriptionEvent> SubscribeAsync(SubscriptionFilter filter, GlobalPosition fromPosition = default, [EnumeratorCancellation] CancellationToken cancellationToken = default) {
 
-        await foreach (var e in local.SubscribeAsync(filter, fromPosition, ct))
+        await foreach (var e in local.SubscribeAsync(filter, fromPosition, cancellationToken))
             yield return e;
     }
 
-    async ValueTask<string> WaitForLeaderHintAsync(CancellationToken ct) {
+    async ValueTask<string> WaitForLeaderHintAsync(CancellationToken cancellationToken) {
         if (peers.Length == 0)
             throw new TimeoutException("No peers configured; cannot forward to leader.");
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
@@ -80,7 +77,7 @@ sealed class ClusteredMsspClient(
             var hint = node.LeaderHint;
             if (hint is not null && peers.Any(p => p.NodeId == hint))
                 return hint;
-            await Task.Delay(50, ct);
+            await Task.Delay(50, cancellationToken);
         }
         throw new TimeoutException("Could not determine the cluster leader within the timeout period.");
     }

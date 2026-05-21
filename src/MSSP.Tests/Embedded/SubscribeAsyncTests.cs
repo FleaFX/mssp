@@ -40,7 +40,7 @@ public class SubscribeAsyncTests {
             await client.AppendAsync("stream-a", StreamRevision.NoStream, [Event("A", "1"), Event("B", "2"), Event("C", "3")]);
 
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            var events = await CollectAsync(client.SubscribeAsync(SubscriptionFilter.All, ct: cts.Token), 3);
+            var events = await CollectAsync(client.SubscribeAsync(SubscriptionFilter.All, cancellationToken: cts.Token), 3);
 
             events.Should().HaveCount(3);
             events.Select(e => e.EventType).Should().Equal("A", "B", "C");
@@ -62,7 +62,7 @@ public class SubscribeAsyncTests {
             // Subscribe from position 3 — should skip the first two events
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             var events = await CollectAsync(
-                client.SubscribeAsync(SubscriptionFilter.All, fromPosition: new GlobalPosition(3), ct: cts.Token),
+                client.SubscribeAsync(SubscriptionFilter.All, fromPosition: new GlobalPosition(3), cancellationToken: cts.Token),
                 3);
 
             events.Should().HaveCount(3);
@@ -83,7 +83,7 @@ public class SubscribeAsyncTests {
 
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             var events = await CollectAsync(
-                client.SubscribeAsync(SubscriptionFilter.ForStream("stream-a"), ct: cts.Token),
+                client.SubscribeAsync(SubscriptionFilter.ForStream("stream-a"), cancellationToken: cts.Token),
                 2);
 
             events.Should().HaveCount(2);
@@ -105,7 +105,7 @@ public class SubscribeAsyncTests {
 
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             var events = await CollectAsync(
-                client.SubscribeAsync(SubscriptionFilter.ForStreamPrefix("order-"), ct: cts.Token),
+                client.SubscribeAsync(SubscriptionFilter.ForStreamPrefix("order-"), cancellationToken: cts.Token),
                 2);
 
             events.Should().HaveCount(2);
@@ -124,7 +124,7 @@ public class SubscribeAsyncTests {
 
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             var events = await CollectAsync(
-                client.SubscribeAsync(SubscriptionFilter.ForEventTypePattern(new Regex("^Order")), ct: cts.Token),
+                client.SubscribeAsync(SubscriptionFilter.ForEventTypePattern(new Regex("^Order")), cancellationToken: cts.Token),
                 2);
 
             events.Should().HaveCount(2);
@@ -146,7 +146,7 @@ public class SubscribeAsyncTests {
                 .And(SubscriptionFilter.ForEventType("OrderPlaced"));
 
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            var events = await CollectAsync(client.SubscribeAsync(filter, ct: cts.Token), 1);
+            var events = await CollectAsync(client.SubscribeAsync(filter, cancellationToken: cts.Token), 1);
 
             events.Should().HaveCount(1);
             events[0].EventType.Should().Be("OrderPlaced");
@@ -164,7 +164,7 @@ public class SubscribeAsyncTests {
             await client.AppendAsync("stream-a", StreamRevision.NoStream, [Event("Historical", "x")]);
 
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            var subscription = client.SubscribeAsync(SubscriptionFilter.All, ct: cts.Token);
+            var subscription = client.SubscribeAsync(SubscriptionFilter.All, cancellationToken: cts.Token);
             var collectTask = CollectAsync(subscription, 2);
 
             // Give the subscription a moment to finish catch-up before writing the live event
@@ -189,7 +189,7 @@ public class SubscribeAsyncTests {
             await client.AppendAsync("s", StreamRevision.NoStream, [Event("A", "1"), Event("B", "2"), Event("C", "3")]);
 
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            var subscription = client.SubscribeAsync(SubscriptionFilter.All, ct: cts.Token);
+            var subscription = client.SubscribeAsync(SubscriptionFilter.All, cancellationToken: cts.Token);
 
             // Write live events concurrently with the subscription starting
             var collectTask = CollectAsync(subscription, 5);
@@ -211,8 +211,8 @@ public class SubscribeAsyncTests {
         var (client, dir) = await CreateClientAsync();
         try {
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            var sub1 = CollectAsync(client.SubscribeAsync(SubscriptionFilter.All, ct: cts.Token), 1);
-            var sub2 = CollectAsync(client.SubscribeAsync(SubscriptionFilter.All, ct: cts.Token), 1);
+            var sub1 = CollectAsync(client.SubscribeAsync(SubscriptionFilter.All, cancellationToken: cts.Token), 1);
+            var sub2 = CollectAsync(client.SubscribeAsync(SubscriptionFilter.All, cancellationToken: cts.Token), 1);
 
             await client.AppendAsync("stream-a", StreamRevision.NoStream, [Event("Broadcast", "x")]);
 
@@ -238,7 +238,7 @@ public class SubscribeAsyncTests {
             await client.AppendAsync("s1", (StreamRevision)1UL, [Event("D", "x")]);
 
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            var events = await CollectAsync(client.SubscribeAsync(SubscriptionFilter.All, ct: cts.Token), 4);
+            var events = await CollectAsync(client.SubscribeAsync(SubscriptionFilter.All, cancellationToken: cts.Token), 4);
 
             var positions = events.Select(e => e.Position.Value).ToList();
         for (int i = 1; i < positions.Count; i++)
@@ -261,7 +261,7 @@ public class SubscribeAsyncTests {
             await client.AppendAsync("s", StreamRevision.NoStream, [Event("A", "x"), Event("B", "x"), Event("C", "x")]);
 
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            var events = await CollectAsync(client.SubscribeAsync(SubscriptionFilter.All, ct: cts.Token), 3);
+            var events = await CollectAsync(client.SubscribeAsync(SubscriptionFilter.All, cancellationToken: cts.Token), 3);
             lastPos = events.Last().Position.Value;
             client.Dispose();
         }
@@ -273,7 +273,7 @@ public class SubscribeAsyncTests {
 
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             var events = await CollectAsync(
-                client.SubscribeAsync(SubscriptionFilter.All, fromPosition: new GlobalPosition(lastPos + 1), ct: cts.Token),
+                client.SubscribeAsync(SubscriptionFilter.All, fromPosition: new GlobalPosition(lastPos + 1), cancellationToken: cts.Token),
                 1);
 
             events.Should().HaveCount(1);
@@ -289,7 +289,7 @@ public class SubscribeAsyncTests {
         var (client, dir) = await CreateClientAsync();
         try {
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            var subscription = client.SubscribeAsync(SubscriptionFilter.All, ct: cts.Token);
+            var subscription = client.SubscribeAsync(SubscriptionFilter.All, cancellationToken: cts.Token);
 
             var drainTask = Task.Run(async () => {
                 var events = new List<SubscriptionEvent>();
@@ -330,7 +330,7 @@ public class SubscribeAsyncTests {
                 var client = await EmbeddedMsspClient.OpenAsync(dir);
 
                 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-                var events = await CollectAsync(client.SubscribeAsync(SubscriptionFilter.All, ct: cts.Token), 2);
+                var events = await CollectAsync(client.SubscribeAsync(SubscriptionFilter.All, cancellationToken: cts.Token), 2);
 
                 events.Should().HaveCount(2);
                 events.Select(e => e.EventType).Should().Equal("A", "B");

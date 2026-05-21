@@ -33,7 +33,7 @@ public class SubscribeAsyncTests : IAsyncLifetime {
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var events = await CollectAsync(
-            leader.Client.SubscribeAsync(SubscriptionFilter.All, ct: cts.Token),
+            leader.Client.SubscribeAsync(SubscriptionFilter.All, cancellationToken: cts.Token),
             2);
 
         events.Should().HaveCount(2);
@@ -45,7 +45,7 @@ public class SubscribeAsyncTests : IAsyncLifetime {
         var leader = await _cluster.WaitForLeaderAsync();
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        var collectTask = CollectAsync(leader.Client.SubscribeAsync(SubscriptionFilter.All, ct: cts.Token), 1);
+        var collectTask = CollectAsync(leader.Client.SubscribeAsync(SubscriptionFilter.All, cancellationToken: cts.Token), 1);
 
         await Task.Delay(50);
         await leader.Client.AppendAsync("stream-a", StreamRevision.NoStream, [Event("LiveEvent", "x")]);
@@ -73,7 +73,7 @@ public class SubscribeAsyncTests : IAsyncLifetime {
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var events = await CollectAsync(
-            follower.Client.SubscribeAsync(SubscriptionFilter.All, ct: cts.Token),
+            follower.Client.SubscribeAsync(SubscriptionFilter.All, cancellationToken: cts.Token),
             2);
 
         events.Should().HaveCount(2);
@@ -86,7 +86,7 @@ public class SubscribeAsyncTests : IAsyncLifetime {
         var follower = _cluster.Nodes.First(h => h.Node != leader.Node);
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        var collectTask = CollectAsync(follower.Client.SubscribeAsync(SubscriptionFilter.All, ct: cts.Token), 1);
+        var collectTask = CollectAsync(follower.Client.SubscribeAsync(SubscriptionFilter.All, cancellationToken: cts.Token), 1);
 
         // Give the subscription a moment to enter the live phase before writing.
         await Task.Delay(50);

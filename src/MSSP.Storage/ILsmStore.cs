@@ -8,7 +8,7 @@ public interface ILsmStore<TKey> : IDisposable {
     /// Appends a value for <paramref name="key"/>, waiting until the write is durable.
     /// The caller must not modify <paramref name="value"/> after this call returns.
     /// </summary>
-    ValueTask WriteAsync(TKey key, Memory<byte> value, CancellationToken ct = default);
+    ValueTask WriteAsync(TKey key, Memory<byte> value, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Returns a snapshot-isolated forward scan starting at <paramref name="from"/>.

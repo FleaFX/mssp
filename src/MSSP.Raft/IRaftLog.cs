@@ -22,38 +22,38 @@ public interface IRaftLog {
     /// Returns the entry at the specified one-based <paramref name="index"/>.
     /// </summary>
     /// <param name="index">The one-based index of the entry to retrieve.</param>
-    /// <param name="ct">Token to cancel the operation.</param>
+    /// <param name="cancellationToken">Token to cancel the operation.</param>
     /// <exception cref="ArgumentOutOfRangeException">
     /// Thrown if <paramref name="index"/> is zero or greater than <see cref="LastIndex"/>.
     /// </exception>
-    ValueTask<RaftLogEntry> GetEntryAsync(ulong index, CancellationToken ct = default);
+    ValueTask<RaftLogEntry> GetEntryAsync(ulong index, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Returns all entries starting from the given one-based index, in ascending order.
     /// </summary>
     /// <param name="fromIndex">The one-based index of the first entry to yield.</param>
-    /// <param name="ct">Token to cancel the enumeration.</param>
-    IAsyncEnumerable<RaftLogEntry> GetEntriesFromAsync(ulong fromIndex, CancellationToken ct = default);
+    /// <param name="cancellationToken">Token to cancel the enumeration.</param>
+    IAsyncEnumerable<RaftLogEntry> GetEntriesFromAsync(ulong fromIndex, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Durably appends one or more entries to the end of the log.
     /// </summary>
     /// <param name="entries">The entries to append, in order.</param>
-    /// <param name="ct">Token to cancel the operation.</param>
-    ValueTask AppendAsync(IEnumerable<RaftLogEntry> entries, CancellationToken ct = default);
+    /// <param name="cancellationToken">Token to cancel the operation.</param>
+    ValueTask AppendAsync(IEnumerable<RaftLogEntry> entries, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Removes all entries at <paramref name="fromIndex"/> and beyond, truncating the log.
     /// Used when a follower discovers a conflicting entry that must be overwritten.
     /// </summary>
     /// <param name="fromIndex">The one-based index of the first entry to remove.</param>
-    /// <param name="ct">Token to cancel the operation.</param>
-    ValueTask TruncateFromAsync(ulong fromIndex, CancellationToken ct = default);
+    /// <param name="cancellationToken">Token to cancel the operation.</param>
+    ValueTask TruncateFromAsync(ulong fromIndex, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Returns the term of the entry at the specified one-based <paramref name="index"/>.
     /// </summary>
     /// <param name="index">The one-based index of the entry whose term to retrieve.</param>
-    /// <param name="ct">Token to cancel the operation.</param>
-    ValueTask<ulong> GetTermAtAsync(ulong index, CancellationToken ct = default);
+    /// <param name="cancellationToken">Token to cancel the operation.</param>
+    ValueTask<ulong> GetTermAtAsync(ulong index, CancellationToken cancellationToken = default);
 }

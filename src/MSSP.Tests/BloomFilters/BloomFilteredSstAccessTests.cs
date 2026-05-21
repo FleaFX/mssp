@@ -21,7 +21,7 @@ public class BloomFilteredSstAccessTests : IDisposable {
     public async Task WriteAsync_CreatesBfSidecar() {
         var sst = new BloomFilteredSstAccess<StringKey>(new DefaultSstAccess<StringKey>());
 
-        await sst.WriteAsync([Entry("a", "1"), Entry("b", "2")], SstPath("test"), default);
+        await sst.WriteAsync([Entry("a", "1"), Entry("b", "2")], SstPath("test"), CancellationToken.None);
 
         File.Exists(BfPath("test")).Should().BeTrue();
     }
@@ -29,7 +29,7 @@ public class BloomFilteredSstAccessTests : IDisposable {
     [Fact]
     public async Task WriteAsync_SstFileIsReadable() {
         var sst = new BloomFilteredSstAccess<StringKey>(new DefaultSstAccess<StringKey>());
-        await sst.WriteAsync([Entry("a", "1"), Entry("b", "2")], SstPath("test"), default);
+        await sst.WriteAsync([Entry("a", "1"), Entry("b", "2")], SstPath("test"), CancellationToken.None);
 
         using var reader = sst.OpenReader(SstPath("test"));
         reader.TryGet(new StringKey("a"), out var value).Should().BeTrue();
@@ -39,7 +39,7 @@ public class BloomFilteredSstAccessTests : IDisposable {
     [Fact]
     public async Task OpenReader_SkipsDiskRead_WhenKeyDefinitelyAbsent() {
         var sst = new BloomFilteredSstAccess<StringKey>(new DefaultSstAccess<StringKey>());
-        await sst.WriteAsync([Entry("a", "1"), Entry("b", "2")], SstPath("test"), default);
+        await sst.WriteAsync([Entry("a", "1"), Entry("b", "2")], SstPath("test"), CancellationToken.None);
 
         using var reader = sst.OpenReader(SstPath("test"));
         reader.TryGet(new StringKey("zzz-not-present"), out var value).Should().BeFalse();
@@ -49,7 +49,7 @@ public class BloomFilteredSstAccessTests : IDisposable {
     [Fact]
     public async Task OpenReader_FallsBackToUnfilteredReader_WhenSidecarAbsent() {
         var inner = new DefaultSstAccess<StringKey>();
-        await inner.WriteAsync([Entry("a", "1")], SstPath("no-bf"), default);
+        await inner.WriteAsync([Entry("a", "1")], SstPath("no-bf"), CancellationToken.None);
 
         var sst = new BloomFilteredSstAccess<StringKey>(inner);
         using var reader = sst.OpenReader(SstPath("no-bf"));
@@ -61,7 +61,7 @@ public class BloomFilteredSstAccessTests : IDisposable {
     [Fact]
     public async Task Delete_RemovesBothSstAndBfSidecar() {
         var sst = new BloomFilteredSstAccess<StringKey>(new DefaultSstAccess<StringKey>());
-        await sst.WriteAsync([Entry("a", "1")], SstPath("del"), default);
+        await sst.WriteAsync([Entry("a", "1")], SstPath("del"), CancellationToken.None);
 
         sst.Delete(SstPath("del"));
 
@@ -72,7 +72,7 @@ public class BloomFilteredSstAccessTests : IDisposable {
     [Fact]
     public async Task ScanReturnsAllEntries() {
         var sst = new BloomFilteredSstAccess<StringKey>(new DefaultSstAccess<StringKey>());
-        await sst.WriteAsync([Entry("a", "1"), Entry("b", "2"), Entry("c", "3")], SstPath("scan"), default);
+        await sst.WriteAsync([Entry("a", "1"), Entry("b", "2"), Entry("c", "3")], SstPath("scan"), CancellationToken.None);
 
         using var reader = sst.OpenReader(SstPath("scan"));
         reader.Scan()

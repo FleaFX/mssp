@@ -47,7 +47,7 @@ static class SstWriter {
         await WriteFooterAsync(output, indexOffset, entryCount, sparseIndex.Count, sparseInterval, cancellationToken);
     }
 
-    static async ValueTask WriteDataEntryAsync(Stream output, ReadOnlyMemory<byte> keyBytes, ReadOnlyMemory<byte>? value, CancellationToken ct) {
+    static async ValueTask WriteDataEntryAsync(Stream output, ReadOnlyMemory<byte> keyBytes, ReadOnlyMemory<byte>? value, CancellationToken cancellationToken) {
         if (value is null) {
             var len = 1 + 4 + keyBytes.Length;
             var buf = ArrayPool<byte>.Shared.Rent(len);
@@ -55,7 +55,7 @@ static class SstWriter {
                 buf[0] = Sst.TombstoneMarker;
                 BinaryPrimitives.WriteInt32LittleEndian(buf.AsSpan(1), keyBytes.Length);
                 keyBytes.Span.CopyTo(buf.AsSpan(5));
-                await output.WriteAsync(buf.AsMemory(0, len), ct);
+                await output.WriteAsync(buf.AsMemory(0, len), cancellationToken);
             } finally {
                 ArrayPool<byte>.Shared.Return(buf);
             }
@@ -69,27 +69,27 @@ static class SstWriter {
                 keyBytes.Span.CopyTo(buf.AsSpan(5));
                 BinaryPrimitives.WriteInt32LittleEndian(buf.AsSpan(5 + keyBytes.Length), val.Length);
                 val.Span.CopyTo(buf.AsSpan(9 + keyBytes.Length));
-                await output.WriteAsync(buf.AsMemory(0, len), ct);
+                await output.WriteAsync(buf.AsMemory(0, len), cancellationToken);
             } finally {
                 ArrayPool<byte>.Shared.Return(buf);
             }
         }
     }
 
-    static async ValueTask WriteIndexEntryAsync(Stream output, ReadOnlyMemory<byte> keyBytes, long dataOffset, CancellationToken ct) {
+    static async ValueTask WriteIndexEntryAsync(Stream output, ReadOnlyMemory<byte> keyBytes, long dataOffset, CancellationToken cancellationToken) {
         var len = 4 + keyBytes.Length + 8;
         var buf = ArrayPool<byte>.Shared.Rent(len);
         try {
             BinaryPrimitives.WriteInt32LittleEndian(buf.AsSpan(0), keyBytes.Length);
             keyBytes.Span.CopyTo(buf.AsSpan(4));
             BinaryPrimitives.WriteInt64LittleEndian(buf.AsSpan(4 + keyBytes.Length), dataOffset);
-            await output.WriteAsync(buf.AsMemory(0, len), ct);
+            await output.WriteAsync(buf.AsMemory(0, len), cancellationToken);
         } finally {
             ArrayPool<byte>.Shared.Return(buf);
         }
     }
 
-    static async ValueTask WriteFooterAsync(Stream output, long indexOffset, int entryCount, int indexEntryCount, int sparseInterval, CancellationToken ct) {
+    static async ValueTask WriteFooterAsync(Stream output, long indexOffset, int entryCount, int indexEntryCount, int sparseInterval, CancellationToken cancellationToken) {
         var buf = ArrayPool<byte>.Shared.Rent(Sst.FooterSize);
         try {
             Sst.Magic.CopyTo(buf.AsSpan(0));
@@ -97,7 +97,7 @@ static class SstWriter {
             BinaryPrimitives.WriteInt32LittleEndian(buf.AsSpan(16), entryCount);
             BinaryPrimitives.WriteInt32LittleEndian(buf.AsSpan(20), indexEntryCount);
             BinaryPrimitives.WriteInt32LittleEndian(buf.AsSpan(24), sparseInterval);
-            await output.WriteAsync(buf.AsMemory(0, Sst.FooterSize), ct);
+            await output.WriteAsync(buf.AsMemory(0, Sst.FooterSize), cancellationToken);
         } finally {
             ArrayPool<byte>.Shared.Return(buf);
         }

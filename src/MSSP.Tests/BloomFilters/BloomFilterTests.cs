@@ -66,7 +66,7 @@ public class BloomFilterTests {
 
         [Fact]
         public void ReadFrom_Throws_OnInvalidHeader() {
-            var stream = new MemoryStream([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+            var stream = new MemoryStream("\0\0\0\0\0\0\0\0"u8.ToArray());
 
             var act = () => BloomFilter.ReadFrom(stream);
 

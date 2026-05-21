@@ -27,10 +27,10 @@ public sealed class GlobalPositionDecorator(
 ) : ILsmStore<EventKey> {
 
     /// <inheritdoc/>
-    public ValueTask WriteAsync(EventKey key, Memory<byte> value, CancellationToken ct) {
+    public ValueTask WriteAsync(EventKey key, Memory<byte> value, CancellationToken cancellationToken) {
         var pos = new GlobalPosition(subscriptions.CurrentPosition.Value + 1);
         BinaryPrimitives.WriteUInt64LittleEndian(value.Span[^8..], pos.Value);
-        return inner.WriteAsync(key, value, ct);
+        return inner.WriteAsync(key, value, cancellationToken);
     }
 
     /// <inheritdoc/>
