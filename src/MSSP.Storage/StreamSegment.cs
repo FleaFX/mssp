@@ -68,5 +68,6 @@ public sealed class StreamSegment<TRecord> : IAsyncEnumerable<TRecord>, IDisposa
         }
     }
 
+    /// <inheritdoc />
     public void Dispose() => _stream.Dispose();
 }

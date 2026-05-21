@@ -8,7 +8,7 @@ namespace MSSP.Storage;
 /// Loads the sparse index into memory on construction for efficient point lookups.
 /// </summary>
 /// <remarks>
-/// The reader is not thread-safe. <see cref="TryGet"/> and <see cref="Scan"/> must not
+/// The reader is not thread-safe. <see cref="TryGet"/> and <see cref="Scan(TKey)"/> must not
 /// be called concurrently, as they both manipulate the underlying stream position.
 /// </remarks>
 /// <typeparam name="TKey">The type of the key.</typeparam>

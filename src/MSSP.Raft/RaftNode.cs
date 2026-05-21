@@ -112,7 +112,7 @@ public sealed partial class RaftNode(
     /// The response is enqueued via the mailbox and returned once processed.
     /// </summary>
     /// <param name="request">The vote request sent by the candidate.</param>
-    /// <param name="ct">Token to cancel waiting for the response.</param>
+    /// <param name="cancellationToken">Token to cancel waiting for the response.</param>
     public ValueTask<VoteResponse> ReceiveVoteRequestAsync(VoteRequest request, CancellationToken cancellationToken = default) {
         var tcs = new TaskCompletionSource<VoteResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
         CancelTcsOnStop(tcs);
@@ -125,7 +125,7 @@ public sealed partial class RaftNode(
     /// The response is enqueued via the mailbox and returned once processed.
     /// </summary>
     /// <param name="request">The append-entries request (or heartbeat) sent by the leader.</param>
-    /// <param name="ct">Token to cancel waiting for the response.</param>
+    /// <param name="cancellationToken">Token to cancel waiting for the response.</param>
     public ValueTask<AppendEntriesResponse> ReceiveAppendEntriesAsync(AppendEntriesRequest request, CancellationToken cancellationToken = default) {
         var tcs = new TaskCompletionSource<AppendEntriesResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
         CancelTcsOnStop(tcs);
@@ -165,8 +165,8 @@ public sealed partial class RaftNode(
         _role = leader;
         var noOp = new RaftLogEntry(_currentTerm, _log.LastIndex + 1, RaftLogEntryType.NoOp, ReadOnlyMemory<byte>.Empty);
         await _log.AppendAsync([noOp]);
-        await leader.StartHeartbeatAsync();
-        await leader.ReplicateToAllPeersAsync();
+        leader.StartHeartbeat();
+        leader.ReplicateToAllPeers();
         await leader.TryAdvanceCommitIndexAsync();
     }
 

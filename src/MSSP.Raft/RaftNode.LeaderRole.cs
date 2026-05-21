@@ -48,7 +48,7 @@ public sealed partial class RaftNode {
             var entry = new RaftLogEntry(Node._currentTerm, Node._log.LastIndex + 1, RaftLogEntryType.Command, command);
             await Node._log.AppendAsync([entry]);
             _pending[entry.Index] = tcs;
-            await ReplicateToAllPeersAsync();
+            ReplicateToAllPeers();
             await TryAdvanceCommitIndexAsync();
         }
 
@@ -68,16 +68,16 @@ public sealed partial class RaftNode {
         }
 
         /// <summary>
-        /// Starts the periodic heartbeat that triggers <see cref="ReplicateToAllPeersAsync"/>
+        /// Starts the periodic heartbeat that triggers <see cref="ReplicateToAllPeers"/>
         /// at each tick to maintain leadership and keep followers up to date.
         /// </summary>
-        public async Task StartHeartbeatAsync() {
+        public void StartHeartbeat() {
             _heartbeatTimer = new PeriodicTimer(TimeSpan.FromMilliseconds(Node._config.HeartbeatIntervalMs));
             _heartbeatTask = Task.Run(async () => {
                 while (await _heartbeatTimer.WaitForNextTickAsync()) {
-                    Node.Post(async () => {
+                    Node.Post(() => {
                         if (Node._role is LeaderRole)
-                            await ReplicateToAllPeersAsync();
+                            ReplicateToAllPeers();
                     });
                 }
             });
@@ -86,13 +86,12 @@ public sealed partial class RaftNode {
         /// <summary>
         /// Fires off a concurrent replication attempt to every peer.
         /// </summary>
-        public async Task ReplicateToAllPeersAsync() {
+        public void ReplicateToAllPeers() {
             var nodeToken = Node._cts?.Token ?? CancellationToken.None;
             foreach (var peerId in Node._config.PeerIds) {
                 var pid = peerId;
-                _ = Task.Run(() => ReplicateToPeerAsync(pid, nodeToken));
+                _ = Task.Run(() => ReplicateToPeerAsync(pid, nodeToken), nodeToken);
             }
-            await Task.CompletedTask;
         }
 
         async Task ReplicateToPeerAsync(string peerId, CancellationToken cancellationToken = default) {
@@ -103,10 +102,10 @@ public sealed partial class RaftNode {
             lock (_nextIndex) nextIdx = _nextIndex.GetValueOrDefault(peerId, Node._log.LastIndex + 1);
 
             var prevLogIndex = nextIdx - 1;
-            var prevLogTerm = prevLogIndex == 0 ? 0 : await Node._log.GetTermAtAsync(prevLogIndex);
+            var prevLogTerm = prevLogIndex == 0 ? 0 : await Node._log.GetTermAtAsync(prevLogIndex, cancellationToken);
 
             var entries = new List<RaftLogEntry>();
-            await foreach (var entry in Node._log.GetEntriesFromAsync(nextIdx))
+            await foreach (var entry in Node._log.GetEntriesFromAsync(nextIdx, cancellationToken))
                 entries.Add(entry);
 
             var request = new AppendEntriesRequest(
@@ -129,7 +128,7 @@ public sealed partial class RaftNode {
                         if (response.ConflictTerm > 0) {
                             var newNext = response.ConflictIndex;
                             for (var i = Node._log.LastIndex; i >= 1; i--) {
-                                if (await Node._log.GetTermAtAsync(i) == response.ConflictTerm) {
+                                if (await Node._log.GetTermAtAsync(i, Node._cts?.Token ?? CancellationToken.None) == response.ConflictTerm) {
                                     newNext = i + 1;
                                     break;
                                 }
@@ -138,7 +137,7 @@ public sealed partial class RaftNode {
                         } else {
                             leader._nextIndex[peerId] = Math.Max(1, response.ConflictIndex);
                         }
-                        _ = Task.Run(() => leader.ReplicateToPeerAsync(peerId, Node._cts?.Token ?? CancellationToken.None));
+                        _ = Task.Run(() => leader.ReplicateToPeerAsync(peerId, Node._cts?.Token ?? CancellationToken.None), cancellationToken);
                     }
                 });
             } catch { /* peer unavailable, will retry on next heartbeat */ }

@@ -2,6 +2,13 @@ using System.Buffers.Binary;
 
 namespace MSSP.Storage;
 
+/// <summary>
+/// Log-Structured Merge-tree store. Provides keyed storage backed by an in-memory
+/// <see cref="MemTable{TKey}"/> (Level 0) and a set of immutable SST files on disk (Levels 1–N).
+/// Writes are applied directly to the MemTable; when the MemTable is full it is flushed
+/// to a new SST file. When the number of SST files reaches the compaction threshold, all
+/// files are merged into one via a k-way merge pass.
+/// </summary>
 public sealed class LsmStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKey> {
     readonly string _dataDirectory;
     readonly int _capacityBytes;

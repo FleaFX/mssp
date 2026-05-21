@@ -37,6 +37,9 @@ public sealed partial class SubscriptionLog : IDisposable {
     int _activeEntryCount;
     FileStream? _activeStream;
 
+    /// <summary>
+    /// The format used to encode entries in this log.
+    /// </summary>
     public SubscriptionLogFormat Format => _codec.Format;
 
     SubscriptionLog(string dataDirectory, IEntryCodec codec, long segmentSizeBytes) {
@@ -45,7 +48,13 @@ public sealed partial class SubscriptionLog : IDisposable {
         _segmentSizeBytes = segmentSizeBytes;
     }
 
-    /// <summary>Opens or creates the subscription log in <paramref name="dataDirectory"/>.</summary>
+    /// <summary>
+    /// Opens or creates the subscription log in <paramref name="dataDirectory"/>.
+    /// </summary>
+    /// <param name="dataDirectory">The directory where segment files are stored.</param>
+    /// <param name="format">Determines whether entries store the full event payload or only the key reference.</param>
+    /// <param name="segmentSizeBytes">Maximum size in bytes of a single segment file before a new segment is started.</param>
+    /// <returns>An opened <see cref="SubscriptionLog"/> ready to append and scan.</returns>
     public static SubscriptionLog Open(string dataDirectory, SubscriptionLogFormat format, long segmentSizeBytes) {
         IEntryCodec codec = format switch {
             SubscriptionLogFormat.FullPayload => FullPayloadCodec.Instance,
@@ -95,6 +104,10 @@ public sealed partial class SubscriptionLog : IDisposable {
     /// <summary>
     /// Appends an event to the log. Must be called under the write lock.
     /// </summary>
+    /// <param name="position">The global position of the event.</param>
+    /// <param name="key">The event key identifying stream and revision.</param>
+    /// <param name="value">The full event value, including the embedded <see cref="GlobalPosition"/> in the last 8 bytes.</param>
+    /// <param name="cancellationToken">A cancellation token.</param>
     public async ValueTask AppendAsync(GlobalPosition position, EventKey key, ReadOnlyMemory<byte> value, CancellationToken cancellationToken) {
         if (_activeStream == null) {
             OpenNewSegment(position);
@@ -128,6 +141,12 @@ public sealed partial class SubscriptionLog : IDisposable {
     /// Returns an <see cref="IEnumerable{T}"/> that can be safely iterated outside the write lock.
     /// Must be called while holding the write lock to capture a consistent snapshot.
     /// </summary>
+    /// <param name="from">The global position to start scanning from (inclusive).</param>
+    /// <param name="resolver">
+    /// Optional function to reconstruct a <see cref="SubscriptionEvent"/> from an <see cref="EventKey"/>.
+    /// Required when the log format is <see cref="SubscriptionLogFormat.ReferenceOnly"/>.
+    /// </param>
+    /// <returns>A lazily-evaluated sequence of subscription events in global-position order.</returns>
     public IEnumerable<SubscriptionEvent> ScanFrom(
         GlobalPosition from,
         Func<EventKey, SubscriptionEvent>? resolver = null) {

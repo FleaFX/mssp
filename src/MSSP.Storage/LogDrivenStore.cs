@@ -10,7 +10,7 @@ namespace MSSP.Storage;
 /// the apply loop has forwarded it to the inner store. On shutdown or when follower nodes
 /// receive committed entries from the Raft leader, the apply loop calls the inner store's
 /// <see cref="ILsmStore{TKey}.WriteAsync"/> directly — feeding every decorator in the inner
-/// chain (e.g. <see cref="SubscriptionPipeline"/>) on all nodes, not just the leader.
+/// chain on all nodes, not just the leader.
 /// </para>
 /// </summary>
 public sealed class LogDrivenStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKey> {
