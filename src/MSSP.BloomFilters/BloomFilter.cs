@@ -89,6 +89,7 @@ public sealed class BloomFilter {
         return h1 + i * h2;
     }
 
+    // ReSharper disable once InconsistentNaming
     static ulong Fnv1a64(ReadOnlySpan<byte> data) {
         const ulong prime = 1099511628211UL;
         var hash = 14695981039346656037UL;

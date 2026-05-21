@@ -27,7 +27,7 @@ public class LogIndexTests {
         index[0].Should().Be(new Index(0x356));
         index[1].Should().Be(new Index(0x356 + 0x3c68));
         index[2].Should().Be(new Index(0x356 + 0x3c68 + 0x15));
-        var outsideOfBounds = () => { var _ = index[3]; };
+        var outsideOfBounds = () => { _ = index[3]; };
         outsideOfBounds.Should().Throw<IndexOutOfRangeException>();
     }
 
@@ -114,10 +114,10 @@ public class LogIndexTests {
 
         await Task.WhenAll(produceTask, consumeTask);
 
-        consumeTask.Result.Should().BeEquivalentTo(new[] {
+        consumeTask.Result.Should().BeEquivalentTo([
             new Index(1), new Index(3), new Index(6), new Index(10), new Index(15), new Index(21), new Index(28), new Index(36), new Index(45), new Index(55),
             // delay went here
             new Index(66), new Index(78)
-        });
+        ]);
     }
 }

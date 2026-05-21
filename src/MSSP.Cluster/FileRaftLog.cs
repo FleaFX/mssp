@@ -18,7 +18,7 @@ sealed class FileRaftLog : IRaftLog, IDisposable {
     const int FooterSize = 4;              // crc32
 
     readonly FileStream _file;
-    readonly List<long> _offsets = new(); // _offsets[i] = file offset of entry at logIndex (i+1)
+    readonly List<long> _offsets = []; // _offsets[i] = file offset of entry at logIndex (i+1)
 
     FileRaftLog(FileStream file) => _file = file;
 
@@ -114,7 +114,7 @@ sealed class FileRaftLog : IRaftLog, IDisposable {
 
         foreach (var entry in entries) {
             var offset = _file.Position;
-            var payload = entry.Payload.IsEmpty ? Array.Empty<byte>() : entry.Payload.ToArray();
+            var payload = entry.Payload.IsEmpty ? [] : entry.Payload.ToArray();
             var buf = new byte[HeaderSize + payload.Length + FooterSize];
             var span = buf.AsSpan();
 

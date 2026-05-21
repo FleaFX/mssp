@@ -1,7 +1,7 @@
 namespace MSSP.Raft;
 
 sealed class InMemoryRaftLog : IRaftLog {
-    readonly List<RaftLogEntry> _entries = new();
+    readonly List<RaftLogEntry> _entries = [];
 
     public ulong LastIndex => (ulong)_entries.Count;
     public ulong LastTerm => _entries.Count > 0 ? _entries[^1].Term : 0;
