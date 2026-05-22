@@ -180,8 +180,8 @@ public class EmbeddedMsspClientTests : IAsyncLifetime {
             var events = await _client.ReadAsync("stream-a", 1UL, ReadDirection.Backwards).ToListAsync();
 
             events.Should().HaveCount(2);
-            events[0].EventType.Should().Be("Baz");
-            events[1].EventType.Should().Be("Bar");
+            events[0].EventType.Should().Be("Bar");  // revision 1
+            events[1].EventType.Should().Be("Foo");  // revision 0
         }
 
         [Fact]
@@ -195,6 +195,36 @@ public class EmbeddedMsspClientTests : IAsyncLifetime {
 
             events.Should().HaveCount(2);
             events[0].EventType.Should().Be("Foo");
+            events[1].EventType.Should().Be("Bar");
+        }
+
+        [Fact]
+        public async Task MaxCount_LimitsNumberOfEvents() {
+            await _client.AppendAsync("stream-a", StreamRevision.NoStream, [
+                Event("Foo", "first"),
+                Event("Bar", "second"),
+                Event("Baz", "third")
+            ]);
+
+            var events = await _client.ReadAsync("stream-a", maxCount: 2).ToListAsync();
+
+            events.Should().HaveCount(2);
+            events[0].EventType.Should().Be("Foo");
+            events[1].EventType.Should().Be("Bar");
+        }
+
+        [Fact]
+        public async Task MaxCount_WithBackwards_LimitsNumberOfEvents() {
+            await _client.AppendAsync("stream-a", StreamRevision.NoStream, [
+                Event("Foo", "first"),
+                Event("Bar", "second"),
+                Event("Baz", "third")
+            ]);
+
+            var events = await _client.ReadAsync("stream-a", direction: ReadDirection.Backwards, maxCount: 2).ToListAsync();
+
+            events.Should().HaveCount(2);
+            events[0].EventType.Should().Be("Baz");
             events[1].EventType.Should().Be("Bar");
         }
     }

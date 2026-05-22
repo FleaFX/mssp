@@ -80,7 +80,7 @@ public sealed class EmbeddedMsspClient(
     }
 
     /// <inheritdoc/>
-    public async IAsyncEnumerable<RecordedEvent> ReadAsync(StreamId streamId, StreamRevision from = default, ReadDirection direction = ReadDirection.Forwards, [EnumeratorCancellation] CancellationToken cancellationToken = default) {
+    public async IAsyncEnumerable<RecordedEvent> ReadAsync(StreamId streamId, StreamRevision from = default, ReadDirection direction = ReadDirection.Forwards, long maxCount = long.MaxValue, [EnumeratorCancellation] CancellationToken cancellationToken = default) {
         IEnumerable<KeyValuePair<EventKey, ReadOnlyMemory<byte>?>> scan;
         var startKey = new EventKey(streamId.Value, 0UL);
 
@@ -91,19 +91,32 @@ public sealed class EmbeddedMsspClient(
             _writeLock.Release();
         }
 
-        foreach (var recordedEvent in direction.Map(FilterSnapshot(scan, streamId, from, cancellationToken)))
-            yield return recordedEvent;
-    }
-
-    static IEnumerable<RecordedEvent> FilterSnapshot(IEnumerable<KeyValuePair<EventKey, ReadOnlyMemory<byte>?>> snapshot, StreamId streamId, StreamRevision from, CancellationToken cancellationToken) {
-        foreach (var (key, value) in snapshot) {
+        // First pass: collect all events for the stream
+        var allEvents = new List<RecordedEvent>();
+        foreach (var (key, value) in scan) {
             if (cancellationToken.IsCancellationRequested) yield break;
             if (key.StreamId != streamId.Value) break;
-            if (key.Revision < from || value is null) continue;
-            yield return ((EventValue)value.Value).ToRecordedEvent(key);
+            if (value is null) continue;
+            allEvents.Add(((EventValue)value.Value).ToRecordedEvent(key));
+        }
+
+        // Determine the effective from revision for filtering
+        // For Backwards with default from (0), we want to read from the end (max revision)
+        var effectiveFrom = direction == ReadDirection.Backwards && from == default && allEvents.Count > 0 ? allEvents.Max(e => e.Revision) : from;
+
+        // Apply direction and from filter
+        var count = 0L;
+        foreach (var evt in direction switch {
+                     ReadDirection.Forwards => allEvents.Where(e => e.Revision >= effectiveFrom),
+                     ReadDirection.Backwards => allEvents.Where(e => e.Revision <= effectiveFrom).Reverse(),
+                     _ => throw new ArgumentOutOfRangeException(nameof(direction), direction, null)
+                 }) {
+            if (count++ >= maxCount)
+                yield break;
+            yield return evt;
         }
     }
-
+    
     /// <inheritdoc/>
     public async IAsyncEnumerable<SubscriptionEvent> SubscribeAsync(
         SubscriptionFilter filter,
@@ -181,13 +194,4 @@ public sealed class EmbeddedMsspClient(
         store.Dispose();
         _writeLock.Dispose();
     }
-}
-
-file static class ReadDirectionExtensions {
-    public static IEnumerable<T> Map<T>(this ReadDirection direction, IEnumerable<T> enumerable) =>
-        direction switch {
-            ReadDirection.Forwards => enumerable,
-            ReadDirection.Backwards => enumerable.Reverse(),
-            _ => throw new ArgumentOutOfRangeException(nameof(direction), direction, null)
-        };
 }

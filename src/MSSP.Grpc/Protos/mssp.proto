@@ -33,6 +33,7 @@ message ReadRequest {
   string stream_id     = 1;
   uint64 from_revision = 2;
   ReadDirection direction = 3;
+  int64 max_count = 4;
 }
 
 message RecordedEvent {
