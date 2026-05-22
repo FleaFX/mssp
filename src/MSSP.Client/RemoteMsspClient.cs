@@ -5,6 +5,7 @@ using AppendRequest = MSSP.Grpc.AppendRequest;
 using ReadRequest = MSSP.Grpc.ReadRequest;
 using GrpcEventData = MSSP.Grpc.EventData;
 using SubscribeRequest = MSSP.Grpc.SubscribeRequest;
+using GrpcReadDirection = MSSP.Grpc.ReadDirection;
 using GrpcSubscriptionFilter = MSSP.Grpc.SubscriptionFilter;
 using GrpcAllFilter = MSSP.Grpc.AllFilter;
 using GrpcStreamIdFilter = MSSP.Grpc.StreamIdFilter;
@@ -37,8 +38,8 @@ sealed class RemoteMsspClient(MsspClient grpcClient) : IMsspClient {
     }
 
     /// <inheritdoc/>
-    public async IAsyncEnumerable<RecordedEvent> ReadAsync(StreamId streamId, StreamRevision from = default, [EnumeratorCancellation] CancellationToken cancellationToken = default) {
-        var request = new ReadRequest { StreamId = streamId.Value, FromRevision = (ulong)(long)from };
+    public async IAsyncEnumerable<RecordedEvent> ReadAsync(StreamId streamId, StreamRevision from = default, ReadDirection direction = ReadDirection.Forwards, long maxCount = long.MaxValue, [EnumeratorCancellation] CancellationToken cancellationToken = default) {
+        var request = new ReadRequest { StreamId = streamId.Value, FromRevision = (ulong)(long)from, Direction = (GrpcReadDirection)direction, MaxCount = maxCount };
         using var call = grpcClient.Read(request, cancellationToken: cancellationToken);
         while (await call.ResponseStream.MoveNext(cancellationToken)) {
             var e = call.ResponseStream.Current;

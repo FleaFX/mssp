@@ -4,6 +4,12 @@ option csharp_namespace = "MSSP.Grpc";
 
 package mssp;
 
+enum ReadDirection {
+  UNSPECIFIED = 0;
+  FORWARDS = 1;
+  BACKWARDS = 2;
+}
+
 service Mssp {
   rpc Append    (AppendRequest)    returns (AppendResponse);
   rpc Read      (ReadRequest)      returns (stream RecordedEvent);
@@ -26,6 +32,8 @@ message EventData {
 message ReadRequest {
   string stream_id     = 1;
   uint64 from_revision = 2;
+  ReadDirection direction = 3;
+  int64 max_count = 4;
 }
 
 message RecordedEvent {

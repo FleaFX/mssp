@@ -50,7 +50,7 @@ public sealed class MsspGrpcService(IMsspClient client) : MsspBase {
     public override async Task Read(ReadRequest request, IServerStreamWriter<GrpcRecordedEvent> responseStream, ServerCallContext context) {
         if (string.IsNullOrEmpty(request.StreamId))
             throw new RpcException(new Status(StatusCode.InvalidArgument, "stream_id is required."));
-        await foreach (var e in client.ReadAsync(new StreamId(request.StreamId), request.FromRevision, context.CancellationToken)) {
+        await foreach (var e in client.ReadAsync(new StreamId(request.StreamId), request.FromRevision, (ReadDirection)request.Direction, request.MaxCount, context.CancellationToken)) {
             await responseStream.WriteAsync(new GrpcRecordedEvent {
                 StreamId = e.StreamId.Value,
                 Revision = e.Revision,
