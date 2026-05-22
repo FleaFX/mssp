@@ -9,6 +9,11 @@ public readonly record struct GlobalPosition(ulong Value) : IComparable<GlobalPo
     /// </summary>
     public static readonly GlobalPosition Start = new(0);
 
+    /// <summary>
+    /// The position after the most recent event.
+    /// </summary>
+    public static readonly GlobalPosition End = new(ulong.MaxValue);
+
     /// <inheritdoc/>
     public int CompareTo(GlobalPosition other) => Value.CompareTo(other.Value);
 
