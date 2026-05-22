@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
+using MSSP;
 using MSSP.Storage;
 
 namespace MSSP.Embedded;
@@ -79,7 +80,7 @@ public sealed class EmbeddedMsspClient(
     }
 
     /// <inheritdoc/>
-    public async IAsyncEnumerable<RecordedEvent> ReadAsync(StreamId streamId, StreamRevision from = default, [EnumeratorCancellation] CancellationToken cancellationToken = default) {
+    public async IAsyncEnumerable<RecordedEvent> ReadAsync(StreamId streamId, StreamRevision from = default, ReadDirection direction = ReadDirection.Forwards, [EnumeratorCancellation] CancellationToken cancellationToken = default) {
         IEnumerable<KeyValuePair<EventKey, ReadOnlyMemory<byte>?>> scan;
         var startKey = new EventKey(streamId.Value, 0UL);
 
@@ -90,7 +91,12 @@ public sealed class EmbeddedMsspClient(
             _writeLock.Release();
         }
 
-        foreach (var (key, value) in scan) {
+        foreach (var recordedEvent in direction.Map(FilterSnapshot(scan, streamId, from, cancellationToken)))
+            yield return recordedEvent;
+    }
+
+    static IEnumerable<RecordedEvent> FilterSnapshot(IEnumerable<KeyValuePair<EventKey, ReadOnlyMemory<byte>?>> snapshot, StreamId streamId, StreamRevision from, CancellationToken cancellationToken) {
+        foreach (var (key, value) in snapshot) {
             if (cancellationToken.IsCancellationRequested) yield break;
             if (key.StreamId != streamId.Value) break;
             if (key.Revision < from || value is null) continue;
@@ -175,4 +181,13 @@ public sealed class EmbeddedMsspClient(
         store.Dispose();
         _writeLock.Dispose();
     }
+}
+
+file static class ReadDirectionExtensions {
+    public static IEnumerable<T> Map<T>(this ReadDirection direction, IEnumerable<T> enumerable) =>
+        direction switch {
+            ReadDirection.Forwards => enumerable,
+            ReadDirection.Backwards => enumerable.Reverse(),
+            _ => throw new ArgumentOutOfRangeException(nameof(direction), direction, null)
+        };
 }

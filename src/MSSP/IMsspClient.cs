@@ -18,9 +18,10 @@ public interface IMsspClient {
     /// </summary>
     /// <param name="streamId">The stream to read from.</param>
     /// <param name="from">The revision to start reading from. Defaults to the start of the stream.</param>
+    /// <param name="direction">The direction to read events. Defaults to <see cref="ReadDirection.Forwards"/>.</param>
     /// <param name="cancellationToken">A cancellation token.</param>
-    /// <returns>An async sequence of recorded events, in order from <paramref name="from"/>.</returns>
-    IAsyncEnumerable<RecordedEvent> ReadAsync(StreamId streamId, StreamRevision from = default, CancellationToken cancellationToken = default);
+    /// <returns>An async sequence of recorded events, in the order specified by <paramref name="direction"/>, starting from <paramref name="from"/>. </returns>
+    IAsyncEnumerable<RecordedEvent> ReadAsync(StreamId streamId, StreamRevision from = default, ReadDirection direction = ReadDirection.Forwards, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Subscribes to an event stream, first replaying historical events from <paramref name="fromPosition"/> (catch-up),

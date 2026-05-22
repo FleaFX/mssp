@@ -152,6 +152,51 @@ public class EmbeddedMsspClientTests : IAsyncLifetime {
             events[0].EventType.Should().Be("MyEvent");
             events[0].Data.ToArray().Should().Equal(payload);
         }
+
+        [Fact]
+        public async Task ReadBackwards_ReturnsEventsInReverseRevisionOrder() {
+            await _client.AppendAsync("stream-a", StreamRevision.NoStream, [
+                Event("Foo", "first"),
+                Event("Bar", "second"),
+                Event("Baz", "third")
+            ]);
+
+            var events = await _client.ReadAsync("stream-a", direction: ReadDirection.Backwards).ToListAsync();
+
+            events.Should().HaveCount(3);
+            events[0].EventType.Should().Be("Baz");
+            events[1].EventType.Should().Be("Bar");
+            events[2].EventType.Should().Be("Foo");
+        }
+
+        [Fact]
+        public async Task ReadBackwards_FromRevision_StartsFromSpecifiedRevision() {
+            await _client.AppendAsync("stream-a", StreamRevision.NoStream, [
+                Event("Foo", "first"),
+                Event("Bar", "second"),
+                Event("Baz", "third")
+            ]);
+
+            var events = await _client.ReadAsync("stream-a", 1UL, ReadDirection.Backwards).ToListAsync();
+
+            events.Should().HaveCount(2);
+            events[0].EventType.Should().Be("Baz");
+            events[1].EventType.Should().Be("Bar");
+        }
+
+        [Fact]
+        public async Task ReadForwards_Explicitly_ReturnsEventsInRevisionOrder() {
+            await _client.AppendAsync("stream-a", StreamRevision.NoStream, [
+                Event("Foo", "first"),
+                Event("Bar", "second")
+            ]);
+
+            var events = await _client.ReadAsync("stream-a", direction: ReadDirection.Forwards).ToListAsync();
+
+            events.Should().HaveCount(2);
+            events[0].EventType.Should().Be("Foo");
+            events[1].EventType.Should().Be("Bar");
+        }
     }
 
     public class Flush : IAsyncLifetime {

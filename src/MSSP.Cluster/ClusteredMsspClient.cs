@@ -57,8 +57,8 @@ sealed class ClusteredMsspClient(
     }
 
     /// <inheritdoc/>
-    public async IAsyncEnumerable<RecordedEvent> ReadAsync(StreamId streamId, StreamRevision from = default, [EnumeratorCancellation] CancellationToken cancellationToken = default) {
-        await foreach (var e in local.ReadAsync(streamId, from, cancellationToken))
+    public async IAsyncEnumerable<RecordedEvent> ReadAsync(StreamId streamId, StreamRevision from = default, ReadDirection direction = ReadDirection.Forwards, [EnumeratorCancellation] CancellationToken cancellationToken = default) {
+        await foreach (var e in local.ReadAsync(streamId, from, direction, cancellationToken))
             yield return e;
     }
 
