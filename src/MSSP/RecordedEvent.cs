@@ -3,7 +3,7 @@ namespace MSSP;
 /// <summary>
 /// Represents an event as stored in the event store, including its metadata.
 /// </summary>
-public readonly struct RecordedEvent(StreamId streamId, ulong revision, string eventType, ReadOnlyMemory<byte> data, DateTimeOffset timestamp) {
+public readonly struct RecordedEvent(StreamId streamId, ulong revision, string eventType, ReadOnlyMemory<byte> data, DateTimeOffset timestamp, ReadOnlyMemory<byte> metadata = default) {
     /// <summary>
     /// Gets the identifier of the stream this event belongs to.
     /// </summary>
@@ -28,4 +28,9 @@ public readonly struct RecordedEvent(StreamId streamId, ulong revision, string e
     /// Gets the timestamp at which the event was recorded.
     /// </summary>
     public DateTimeOffset Timestamp { get; } = timestamp;
+
+    /// <summary>
+    /// Gets the metadata associated with the event, or an empty slice when no metadata was stored.
+    /// </summary>
+    public ReadOnlyMemory<byte> Metadata { get; } = metadata;
 }
