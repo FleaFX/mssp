@@ -29,7 +29,7 @@ sealed class RemoteMsspClient(MsspClient grpcClient) : IMsspClient {
             ExpectedRevision = (long)expectedRevision
         };
         foreach (var e in events)
-            request.Events.Add(new GrpcEventData { EventType = e.EventType, Data = ByteString.CopyFrom(e.Data.Span) });
+            request.Events.Add(new GrpcEventData { EventType = e.EventType, Data = ByteString.CopyFrom(e.Data.Span), Metadata = ByteString.CopyFrom(e.Metadata.Span) });
         try {
             await grpcClient.AppendAsync(request, cancellationToken: cancellationToken);
         } catch (RpcException ex) when (ex.StatusCode == StatusCode.FailedPrecondition) {
@@ -48,7 +48,8 @@ sealed class RemoteMsspClient(MsspClient grpcClient) : IMsspClient {
                 e.Revision,
                 e.EventType,
                 e.Data.Memory,
-                new DateTimeOffset(DateTimeOffset.UnixEpoch.Ticks + e.TimestampNs / 100L, TimeSpan.Zero));
+                new DateTimeOffset(DateTimeOffset.UnixEpoch.Ticks + e.TimestampNs / 100L, TimeSpan.Zero),
+                e.Metadata.Memory);
         }
     }
 
@@ -68,7 +69,8 @@ sealed class RemoteMsspClient(MsspClient grpcClient) : IMsspClient {
                 e.EventType,
                 e.Data.Memory,
                 new DateTimeOffset(DateTimeOffset.UnixEpoch.Ticks + e.TimestampNs / 100L, TimeSpan.Zero),
-                new GlobalPosition(e.Position));
+                new GlobalPosition(e.Position),
+                e.Metadata.Memory);
         }
     }
 

@@ -7,8 +7,13 @@ namespace MSSP;
 /// The binary encoding of a single event's payload as stored in the MemTable and SST files.
 /// </summary>
 /// <remarks>
-/// Binary layout: [typeLen: 4 bytes LE] [type: UTF-8] [timestamp: 8 bytes LE ms] [data bytes] [reserved: 8 bytes LE]
-///
+/// Binary layout:
+/// <code>
+/// [typeLen: 4 bytes LE] [type: UTF-8] [timestamp: 8 bytes LE ms]
+/// [dataLen: 4 bytes LE] [data bytes]
+/// [metaLen: 4 bytes LE] [meta bytes]
+/// [reserved: 8 bytes LE]
+/// </code>
 /// The last 8 bytes are a reserved slot written by the infrastructure layer (e.g. <c>SubscriptionPipeline</c>)
 /// to store the <see cref="GlobalPosition"/>. They are zero when the value leaves <see cref="From"/>.
 /// </remarks>
@@ -24,12 +29,23 @@ public readonly struct EventValue {
     /// </summary>
     public static Memory<byte> From(EventData eventData, DateTimeOffset timestamp) {
         var typeBytes = Encoding.UTF8.GetBytes(eventData.EventType);
-        var buffer = new byte[4 + typeBytes.Length + 8 + eventData.Data.Length + 8];
+        var buffer = new byte[4 + typeBytes.Length + 8 + 4 + eventData.Data.Length + 4 + eventData.Metadata.Length + 8];
         var span = buffer.AsSpan();
-        BinaryPrimitives.WriteInt32LittleEndian(span, typeBytes.Length);
-        typeBytes.CopyTo(span[4..]);
-        BinaryPrimitives.WriteInt64LittleEndian(span[(4 + typeBytes.Length)..], timestamp.ToUnixTimeMilliseconds());
-        eventData.Data.Span.CopyTo(span[(4 + typeBytes.Length + 8)..]);
+        var offset = 0;
+
+        BinaryPrimitives.WriteInt32LittleEndian(span[offset..], typeBytes.Length);
+        offset += 4;
+        typeBytes.CopyTo(span[offset..]);
+        offset += typeBytes.Length;
+        BinaryPrimitives.WriteInt64LittleEndian(span[offset..], timestamp.ToUnixTimeMilliseconds());
+        offset += 8;
+        BinaryPrimitives.WriteInt32LittleEndian(span[offset..], eventData.Data.Length);
+        offset += 4;
+        eventData.Data.Span.CopyTo(span[offset..]);
+        offset += eventData.Data.Length;
+        BinaryPrimitives.WriteInt32LittleEndian(span[offset..], eventData.Metadata.Length);
+        offset += 4;
+        eventData.Metadata.Span.CopyTo(span[offset..]);
         // last 8 bytes default to zero (reserved slot)
         return buffer;
     }
@@ -44,22 +60,37 @@ public readonly struct EventValue {
     /// Decodes this value back into a <see cref="RecordedEvent"/> using <paramref name="key"/> for the stream context.
     /// </summary>
     public RecordedEvent ToRecordedEvent(EventKey key) {
-        var span = _bytes.Span;
-        var typeLen = BinaryPrimitives.ReadInt32LittleEndian(span);
-        var eventType = Encoding.UTF8.GetString(span.Slice(4, typeLen));
-        var timestamp = DateTimeOffset.FromUnixTimeMilliseconds(BinaryPrimitives.ReadInt64LittleEndian(span[(4 + typeLen)..]));
-        return new RecordedEvent(key.StreamId, key.Revision, eventType, _bytes[(4 + typeLen + 8)..^8], timestamp);
+        var (eventType, timestamp, data, metadata) = Decode();
+        return new RecordedEvent(key.StreamId, key.Revision, eventType, data, timestamp, metadata);
     }
 
     /// <summary>
     /// Decodes this value into a <see cref="SubscriptionEvent"/> using <paramref name="key"/> for the stream context.
     /// </summary>
     public SubscriptionEvent ToSubscriptionEvent(EventKey key) {
+        var (eventType, timestamp, data, metadata) = Decode();
+        return new SubscriptionEvent(key.StreamId, key.Revision, eventType, data, timestamp, ReadPosition(), metadata);
+    }
+
+    (string EventType, DateTimeOffset Timestamp, ReadOnlyMemory<byte> Data, ReadOnlyMemory<byte> Metadata) Decode() {
         var span = _bytes.Span;
-        var typeLen = BinaryPrimitives.ReadInt32LittleEndian(span);
-        var eventType = Encoding.UTF8.GetString(span.Slice(4, typeLen));
-        var timestamp = DateTimeOffset.FromUnixTimeMilliseconds(BinaryPrimitives.ReadInt64LittleEndian(span[(4 + typeLen)..]));
-        return new SubscriptionEvent(key.StreamId, key.Revision, eventType, _bytes[(4 + typeLen + 8)..^8], timestamp, ReadPosition());
+        var offset = 0;
+
+        var typeLen = BinaryPrimitives.ReadInt32LittleEndian(span[offset..]);
+        offset += 4;
+        var eventType = Encoding.UTF8.GetString(span.Slice(offset, typeLen));
+        offset += typeLen;
+        var timestamp = DateTimeOffset.FromUnixTimeMilliseconds(BinaryPrimitives.ReadInt64LittleEndian(span[offset..]));
+        offset += 8;
+        var dataLen = BinaryPrimitives.ReadInt32LittleEndian(span[offset..]);
+        offset += 4;
+        var data = _bytes[offset..(offset + dataLen)];
+        offset += dataLen;
+        var metaLen = BinaryPrimitives.ReadInt32LittleEndian(span[offset..]);
+        offset += 4;
+        var metadata = _bytes[offset..(offset + metaLen)];
+
+        return (eventType, timestamp, data, metadata);
     }
 
     /// <summary>

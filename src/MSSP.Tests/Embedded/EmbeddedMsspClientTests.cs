@@ -154,6 +154,26 @@ public class EmbeddedMsspClientTests : IAsyncLifetime {
         }
 
         [Fact]
+        public async Task PreservesMetadata() {
+            var payload = "hello world"u8.ToArray();
+            var meta = "{ \"userId\": 42 }"u8.ToArray();
+            await _client.AppendAsync("stream-a", StreamRevision.NoStream, [new EventData("MyEvent", payload, meta)]);
+
+            var events = await _client.ReadAsync("stream-a").ToListAsync();
+
+            events[0].Metadata.ToArray().Should().Equal(meta);
+        }
+
+        [Fact]
+        public async Task WithoutMetadata_ReturnsEmptySlice() {
+            await _client.AppendAsync("stream-a", StreamRevision.NoStream, [Event("MyEvent", "data")]);
+
+            var events = await _client.ReadAsync("stream-a").ToListAsync();
+
+            events[0].Metadata.IsEmpty.Should().BeTrue();
+        }
+
+        [Fact]
         public async Task ReadBackwards_ReturnsEventsInReverseRevisionOrder() {
             await _client.AppendAsync("stream-a", StreamRevision.NoStream, [
                 Event("Foo", "first"),

@@ -27,6 +27,7 @@ message AppendResponse {}
 message EventData {
   string event_type = 1;
   bytes  data       = 2;
+  bytes  metadata   = 3;
 }
 
 message ReadRequest {
@@ -42,6 +43,7 @@ message RecordedEvent {
   string event_type   = 3;
   bytes  data         = 4;
   int64  timestamp_ns = 5;
+  bytes  metadata     = 6;
 }
 
 message SubscribeRequest {
@@ -56,6 +58,7 @@ message SubscriptionEvent {
   bytes  data         = 4;
   int64  timestamp_ns = 5;
   uint64 position     = 6;
+  bytes  metadata     = 7;
 }
 
 message SubscriptionFilter {

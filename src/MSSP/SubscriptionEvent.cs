@@ -9,7 +9,8 @@ public readonly struct SubscriptionEvent(
     string eventType,
     ReadOnlyMemory<byte> data,
     DateTimeOffset timestamp,
-    GlobalPosition position) {
+    GlobalPosition position,
+    ReadOnlyMemory<byte> metadata = default) {
     /// <summary>
     /// Gets the identifier of the stream this event belongs to.
     /// </summary>
@@ -39,4 +40,9 @@ public readonly struct SubscriptionEvent(
     /// Gets the global position of this event across all streams.
     /// </summary>
     public GlobalPosition Position { get; } = position;
+
+    /// <summary>
+    /// Gets the metadata associated with the event, or an empty slice when no metadata was stored.
+    /// </summary>
+    public ReadOnlyMemory<byte> Metadata { get; } = metadata;
 }

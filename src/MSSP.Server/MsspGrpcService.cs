@@ -33,7 +33,7 @@ public sealed class MsspGrpcService(IMsspClient client) : MsspBase {
             await client.AppendAsync(
                 new StreamId(request.StreamId),
                 ToStreamRevision(request.ExpectedRevision),
-                request.Events.Select(e => new EventData(e.EventType, e.Data.Memory)),
+                request.Events.Select(e => new EventData(e.EventType, e.Data.Memory, e.Metadata.Memory)),
                 context.CancellationToken);
             return new AppendResponse();
         } catch (OptimisticConcurrencyException ex) {
@@ -56,7 +56,8 @@ public sealed class MsspGrpcService(IMsspClient client) : MsspBase {
                 Revision = e.Revision,
                 EventType = e.EventType,
                 Data = ByteString.CopyFrom(e.Data.Span),
-                TimestampNs = (e.Timestamp.UtcTicks - DateTimeOffset.UnixEpoch.Ticks) * 100L
+                TimestampNs = (e.Timestamp.UtcTicks - DateTimeOffset.UnixEpoch.Ticks) * 100L,
+                Metadata = ByteString.CopyFrom(e.Metadata.Span)
             });
         }
     }
@@ -76,7 +77,8 @@ public sealed class MsspGrpcService(IMsspClient client) : MsspBase {
                 EventType   = e.EventType,
                 Data        = ByteString.CopyFrom(e.Data.Span),
                 TimestampNs = (e.Timestamp.UtcTicks - DateTimeOffset.UnixEpoch.Ticks) * 100L,
-                Position    = e.Position.Value
+                Position    = e.Position.Value,
+                Metadata    = ByteString.CopyFrom(e.Metadata.Span)
             });
         }
     }
