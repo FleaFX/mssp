@@ -4,7 +4,10 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <IsPackable>false</IsPackable>
+    <PackageId>MSSP.Grpc</PackageId>
+    <Title>MSSP.Grpc</Title>
+    <Description>gRPC protocol definitions for the MSSP event store. This is a low-level package; consume MSSP.Server or MSSP.Client instead.</Description>
+    <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
   </PropertyGroup>
 
   <ItemGroup>

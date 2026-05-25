@@ -23,13 +23,16 @@ public static class MsspClusterBuilderExtensions {
         configure(options);
         builder.Services.AddSingleton(options);
 
-        // Replace the embedded registrations with cluster equivalents
+        // Replace the embedded registrations with cluster equivalents.
+        // Also remove the IHostedService factory that AddMssp() registered to start MsspHostedService.
         var toRemove = builder.Services
             .Where(d =>
                 d.ImplementationType == typeof(MsspHostedService) ||
                 d.ServiceType == typeof(EmbeddedMsspClient) ||
                 d.ServiceType == typeof(IMsspClient))
             .ToList();
+        if (builder.EmbeddedHostedServiceDescriptor is not null)
+            toRemove.Add(builder.EmbeddedHostedServiceDescriptor);
         foreach (var d in toRemove)
             builder.Services.Remove(d);
 

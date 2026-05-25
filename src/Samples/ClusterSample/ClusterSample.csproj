@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      MSSP.Cluster handles the Raft consensus layer and wraps IMsspClient.
+      MSSP.Server exposes the event store to external clients via gRPC.
+      MSSP.Raft (where RaftClusterMember lives) is bundled inside MSSP.Cluster.
+    -->
+    <PackageReference Include="MSSP.Cluster" Version="0.4.1" />
+    <PackageReference Include="MSSP.Server" Version="0.4.1" />
+  </ItemGroup>
+
+</Project>
