@@ -212,6 +212,74 @@ public class RaftNodeTests {
         }
     }
 
+    [Fact]
+    public async Task InstallSnapshot_MultipleChunks_AssemblesAndInstalls() {
+        var transport = new InMemoryRaftTransport();
+        var log = new InMemoryRaftLog();
+        var stateMachine = new NullStateMachine();
+        var config = new RaftNodeConfig("n1", [], 10_000, 20_000, 5_000);
+        var node = new RaftNode(config, log, transport, stateMachine, new InMemoryRaftStateStorage());
+        transport.Register(node);
+
+        var payload = new byte[] { 10, 20, 30, 40, 50, 60 };
+
+        await node.StartAsync();
+        try {
+            // chunk 1: not yet installed
+            await node.ReceiveInstallSnapshotAsync(new InstallSnapshotRequest(
+                5, "leader", 5, 2, 0, new ReadOnlyMemory<byte>(payload, 0, 2), Done: false));
+            log.LastIncludedIndex.Should().Be(0, "snapshot must not install after the first partial chunk");
+
+            // chunk 2: still not installed
+            await node.ReceiveInstallSnapshotAsync(new InstallSnapshotRequest(
+                5, "leader", 5, 2, 2, new ReadOnlyMemory<byte>(payload, 2, 2), Done: false));
+            log.LastIncludedIndex.Should().Be(0, "snapshot must not install after the second partial chunk");
+
+            // chunk 3: done — snapshot is now installed
+            var resp = await node.ReceiveInstallSnapshotAsync(new InstallSnapshotRequest(
+                5, "leader", 5, 2, 4, new ReadOnlyMemory<byte>(payload, 4, 2), Done: true));
+
+            resp.Term.Should().Be(5);
+            log.LastIncludedIndex.Should().Be(5);
+            stateMachine.LastAppliedIndex.Should().Be(5);
+            stateMachine.InstalledData!.Value.ToArray().Should().Equal(payload,
+                "the three chunks must be reassembled into the original payload before installation");
+        } finally {
+            await node.StopAsync();
+        }
+    }
+
+    [Fact]
+    public async Task InstallSnapshot_NewSnapshotAbandonsPreviousBuffer() {
+        var transport = new InMemoryRaftTransport();
+        var log = new InMemoryRaftLog();
+        var stateMachine = new NullStateMachine();
+        var config = new RaftNodeConfig("n1", [], 10_000, 20_000, 5_000);
+        var node = new RaftNode(config, log, transport, stateMachine, new InMemoryRaftStateStorage());
+        transport.Register(node);
+
+        await node.StartAsync();
+        try {
+            var staleChunk = new byte[] { 0xFF };
+            var finalPayload = new byte[] { 0xAB, 0xCD };
+
+            // start snapshot for index 5 but do not complete it
+            await node.ReceiveInstallSnapshotAsync(new InstallSnapshotRequest(
+                5, "leader", 5, 2, 0, staleChunk, Done: false));
+
+            // replace it with a complete snapshot for index 10
+            var resp = await node.ReceiveInstallSnapshotAsync(new InstallSnapshotRequest(
+                5, "leader", 10, 3, 0, finalPayload, Done: true));
+
+            resp.Term.Should().Be(5);
+            log.LastIncludedIndex.Should().Be(10);
+            stateMachine.InstalledData!.Value.ToArray().Should().Equal(finalPayload,
+                "only the completed snapshot's data must be installed; the abandoned chunk must be discarded");
+        } finally {
+            await node.StopAsync();
+        }
+    }
+
     static async Task<RaftNode> WaitForLeader(RaftNode[] nodes, TimeSpan timeout) {
         var deadline = DateTime.UtcNow + timeout;
         while (DateTime.UtcNow < deadline) {
