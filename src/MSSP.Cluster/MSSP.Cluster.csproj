@@ -19,8 +19,9 @@
   <ItemGroup>
     <ProjectReference Include="..\MSSP\MSSP.csproj" />
     <ProjectReference Include="..\MSSP.Embedded\MSSP.Embedded.csproj" />
-    <ProjectReference Include="..\MSSP.Grpc\MSSP.Grpc.csproj" />
-    <ProjectReference Include="..\MSSP.Raft\MSSP.Raft.csproj" />
+    <ProjectReference Include="..\MSSP.Grpc\MSSP.Grpc.csproj" PrivateAssets="all" />
+    <ProjectReference Include="..\MSSP.Raft\MSSP.Raft.csproj" PrivateAssets="all" />
+    <ProjectReference Include="..\MSSP.Storage\MSSP.Storage.csproj" PrivateAssets="all" />
   </ItemGroup>
 
   <ItemGroup>
@@ -33,6 +34,17 @@
     </AssemblyAttribute>
   </ItemGroup>
 
-
+  <!-- Bundle private implementation assemblies into the package lib folder.
+       MSSP.Storage.dll is intentionally omitted here: it comes bundled in MSSP.Embedded,
+       which is a public dependency of MSSP.Cluster. -->
+  <PropertyGroup>
+    <TargetsForTfmSpecificBuildOutput>$(TargetsForTfmSpecificBuildOutput);GetPrivateAssembliesForPack</TargetsForTfmSpecificBuildOutput>
+  </PropertyGroup>
+  <Target Name="GetPrivateAssembliesForPack" Returns="@(BuildOutputInPackage)">
+    <ItemGroup>
+      <BuildOutputInPackage Include="$(OutputPath)MSSP.Grpc.dll" Condition="Exists('$(OutputPath)MSSP.Grpc.dll')" />
+      <BuildOutputInPackage Include="$(OutputPath)MSSP.Raft.dll" Condition="Exists('$(OutputPath)MSSP.Raft.dll')" />
+    </ItemGroup>
+  </Target>
 
 </Project>
