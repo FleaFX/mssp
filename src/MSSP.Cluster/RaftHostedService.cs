@@ -14,6 +14,7 @@ sealed class RaftHostedService(MsspOptions msspOptions, MsspClusterOptions clust
     SegmentedRaftLog? _raftLog;
     RaftLog? _log;
     RaftLogStateMachine? _stateMachine;
+    LsmStore<EventKey>? _lsmStore;
     EmbeddedMsspClient? _local;
     ClusteredMsspClient? _client;
     RaftNode? _node;
@@ -65,7 +66,7 @@ sealed class RaftHostedService(MsspOptions msspOptions, MsspClusterOptions clust
         var capturedStateMachine = _stateMachine;
         var capturedRaftLog = _raftLog;
 
-        var lsmStore = await LsmStore<EventKey>.OpenAsync(
+        _lsmStore = await LsmStore<EventKey>.OpenAsync(
             options: new LsmStoreOptions<EventKey>(dataDir, msspOptions.MemTableCapacityBytes, OnFlushed),
             walRecords: AsyncEnumerable.Empty<ReadOnlyMemory<byte>>(),
             cancellationToken: cancellationToken);
@@ -73,12 +74,17 @@ sealed class RaftHostedService(MsspOptions msspOptions, MsspClusterOptions clust
             dataDir,
             msspOptions.SubscriptionLogFormat,
             msspOptions.SubscriptionLogSegmentSizeBytes);
-        var pipeline = new SubscriptionPipeline(lsmStore, subscriptionLog);
+        var pipeline = new SubscriptionPipeline(_lsmStore, subscriptionLog);
         _local = new EmbeddedMsspClient(
             store: new GlobalPositionDecorator(LogDrivenStore<EventKey>.Create(_log, pipeline, msspOptions.MemTableCapacityBytes), pipeline),
             subscriptions: pipeline);
 
         _client = new ClusteredMsspClient(_node, _local, clusterOptions.Peers);
+
+        // wire snapshot callbacks: leader serialises SST files; follower reloads them
+        var capturedLsmStore = _lsmStore;
+        _stateMachine.SnapshotProvider  = ct => ValueTask.FromResult(LsmSnapshot.Serialize(dataDir));
+        _stateMachine.SnapshotInstaller = InstallSnapshotAsync;
 
         // replay Raft log entries from checkpoint to current end
         for (var i = checkpointIndex + 1; i <= _raftLog.LastIndex; i++) {
@@ -96,6 +102,18 @@ sealed class RaftHostedService(MsspOptions msspOptions, MsspClusterOptions clust
                 await capturedRaftLog.CompactToAsync(applied, term, token);
             }
             await RaftLogStateMachine.WriteCheckpointAsync(dataDir, applied, token);
+        }
+
+        async ValueTask InstallSnapshotAsync(ulong lastIncludedIndex, ulong lastIncludedTerm, ReadOnlyMemory<byte> data, CancellationToken token) {
+            var stagingDir = Path.Combine(dataDir, "snapshot-staging");
+            try {
+                LsmSnapshot.Deserialize(data, stagingDir);
+                await capturedLsmStore.ReloadAsync(stagingDir, token);
+            } finally {
+                if (Directory.Exists(stagingDir))
+                    Directory.Delete(stagingDir, recursive: true);
+            }
+            await RaftLogStateMachine.WriteCheckpointAsync(dataDir, lastIncludedIndex, token);
         }
     }
 

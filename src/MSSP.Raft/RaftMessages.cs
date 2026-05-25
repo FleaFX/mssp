@@ -47,3 +47,33 @@ public sealed record AppendEntriesRequest(
 /// zero on success.
 /// </param>
 public sealed record AppendEntriesResponse(ulong Term, bool Success, ulong ConflictIndex, ulong ConflictTerm);
+
+/// <summary>
+/// Sent by the leader to install a snapshot on a follower that has fallen behind the
+/// leader's compaction boundary. Large snapshots are split into fixed-size chunks; the
+/// follower reassembles them and installs the state machine state when <see cref="Done"/>
+/// is <see langword="true"/>.
+/// </summary>
+/// <param name="Term">The leader's current term.</param>
+/// <param name="LeaderId">The node ID of the leader, so the follower can redirect clients.</param>
+/// <param name="LastIncludedIndex">The index of the last entry covered by the snapshot.</param>
+/// <param name="LastIncludedTerm">The term of the last entry covered by the snapshot.</param>
+/// <param name="Offset">Byte offset of <paramref name="Data"/> within the complete snapshot archive.</param>
+/// <param name="Data">The raw bytes of this chunk.</param>
+/// <param name="Done"><see langword="true"/> if this is the last (or only) chunk of the snapshot.</param>
+public sealed record InstallSnapshotRequest(
+    ulong Term,
+    string LeaderId,
+    ulong LastIncludedIndex,
+    ulong LastIncludedTerm,
+    ulong Offset,
+    ReadOnlyMemory<byte> Data,
+    bool Done);
+
+/// <summary>
+/// The response a follower returns after receiving an <see cref="InstallSnapshotRequest"/>.
+/// </summary>
+/// <param name="Term">
+/// The follower's current term; the leader steps down if <c>Term</c> exceeds its own term.
+/// </param>
+public sealed record InstallSnapshotResponse(ulong Term);

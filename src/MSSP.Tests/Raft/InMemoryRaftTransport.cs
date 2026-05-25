@@ -16,4 +16,10 @@ sealed class InMemoryRaftTransport : IRaftTransport {
             throw new InvalidOperationException($"Unknown peer: {peerId}");
         return await node.ReceiveAppendEntriesAsync(request, cancellationToken);
     }
+
+    public async ValueTask<InstallSnapshotResponse> InstallSnapshotAsync(string peerId, InstallSnapshotRequest request, CancellationToken cancellationToken = default) {
+        if (!_nodes.TryGetValue(peerId, out var node))
+            throw new InvalidOperationException($"Unknown peer: {peerId}");
+        return await node.ReceiveInstallSnapshotAsync(request, cancellationToken);
+    }
 }

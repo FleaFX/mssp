@@ -40,11 +40,12 @@ sealed class InMemoryRaftLog : IRaftLog {
     }
 
     public ValueTask CompactToAsync(ulong lastIncludedIndex, ulong lastIncludedTerm, CancellationToken cancellationToken = default) {
-        if (lastIncludedIndex > LastIndex)
-            throw new ArgumentOutOfRangeException(nameof(lastIncludedIndex));
-        var toRemove = (int)(lastIncludedIndex - LastIncludedIndex);
-        if (toRemove > 0)
-            _entries.RemoveRange(0, toRemove);
+        if (lastIncludedIndex >= LastIndex)
+            _entries.Clear(); // snapshot covers all entries (InstallSnapshot scenario)
+        else {
+            var toRemove = (int)(lastIncludedIndex - LastIncludedIndex);
+            if (toRemove > 0) _entries.RemoveRange(0, toRemove);
+        }
         LastIncludedIndex = lastIncludedIndex;
         LastIncludedTerm = lastIncludedTerm;
         return ValueTask.CompletedTask;

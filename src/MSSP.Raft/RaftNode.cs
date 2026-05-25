@@ -30,6 +30,7 @@ public sealed partial class RaftNode(
     readonly RaftNodeConfig _config = config;
     readonly IRaftLog _log = log;
     readonly IRaftTransport _transport = transport;
+    readonly IRaftStateMachine _stateMachine = stateMachine;
     readonly IRaftStateStorage _stateStorage = stateStorage;
     readonly Random _rng = new();
 
@@ -38,6 +39,10 @@ public sealed partial class RaftNode(
     string? _leaderId;
     ulong _commitIndex;
     RaftRole _role = null!;
+
+    // snapshot chunk-reassembly state; lives on the node so it survives role transitions
+    internal MemoryStream? _snapshotBuffer;
+    internal ulong? _pendingSnapshotIndex;
 
     /// <summary>
     /// Gets the unique identifier of this node within the cluster.
@@ -133,6 +138,19 @@ public sealed partial class RaftNode(
         return new ValueTask<AppendEntriesResponse>(tcs.Task);
     }
 
+    /// <summary>
+    /// Handles an inbound <see cref="InstallSnapshotRequest"/> from the leader.
+    /// The response is enqueued via the mailbox and returned once processed.
+    /// </summary>
+    /// <param name="request">The install-snapshot request sent by the leader.</param>
+    /// <param name="cancellationToken">Token to cancel waiting for the response.</param>
+    public ValueTask<InstallSnapshotResponse> ReceiveInstallSnapshotAsync(InstallSnapshotRequest request, CancellationToken cancellationToken = default) {
+        var tcs = new TaskCompletionSource<InstallSnapshotResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
+        CancelTcsOnStop(tcs);
+        Post(async () => tcs.TrySetResult(await _role.HandleInstallSnapshotAsync(request)));
+        return new ValueTask<InstallSnapshotResponse>(tcs.Task);
+    }
+
     void CancelTcsOnStop<T>(TaskCompletionSource<T> tcs) =>
         _cts?.Token.Register(() => tcs.TrySetCanceled());
 
@@ -146,6 +164,10 @@ public sealed partial class RaftNode(
             await leader.StopAsync();
         else
             _role.Dispose();
+        // discard any partially-received snapshot from the previous term/leader
+        _snapshotBuffer?.Dispose();
+        _snapshotBuffer = null;
+        _pendingSnapshotIndex = null;
         _role = new FollowerRole(this);
     }
 
@@ -171,10 +193,10 @@ public sealed partial class RaftNode(
     }
 
     async Task ApplyCommittedEntriesAsync() {
-        while (stateMachine.LastAppliedIndex < _commitIndex) {
-            var idx = stateMachine.LastAppliedIndex + 1;
+        while (_stateMachine.LastAppliedIndex < _commitIndex) {
+            var idx = _stateMachine.LastAppliedIndex + 1;
             var entry = await _log.GetEntryAsync(idx);
-            var success = await stateMachine.ApplyAsync(entry);
+            var success = await _stateMachine.ApplyAsync(entry);
             _role.OnEntryApplied(idx, entry, success);
         }
     }

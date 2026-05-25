@@ -101,8 +101,50 @@ public sealed partial class RaftNode {
             lock (_nextIndex) nextIdx = _nextIndex.GetValueOrDefault(peerId, Node._log.LastIndex + 1);
 
             var prevLogIndex = nextIdx - 1;
-            if (prevLogIndex > 0 && prevLogIndex < Node._log.LastIncludedIndex)
-                return; // peer is behind our snapshot; InstallSnapshot RPC will handle catch-up (phase 2)
+            if (prevLogIndex < Node._log.LastIncludedIndex) {
+                var snapshotData = await Node._stateMachine.CreateSnapshotAsync(cancellationToken);
+                var chunkSize = Node._config.SnapshotChunkSizeBytes;
+                var totalBytes = (ulong)snapshotData.Length;
+                var offset = 0UL;
+
+                while (true) {
+                    if (Node._role is not LeaderRole) return;
+                    if (cancellationToken.IsCancellationRequested) return;
+
+                    var remaining = totalBytes - offset;
+                    var size = (int)Math.Min((ulong)chunkSize, remaining);
+                    var done = offset + (ulong)size >= totalBytes;
+                    var req = new InstallSnapshotRequest(
+                        Node._currentTerm, Node._config.NodeId,
+                        Node._log.LastIncludedIndex, Node._log.LastIncludedTerm,
+                        offset, snapshotData.Slice((int)offset, size), done);
+
+                    InstallSnapshotResponse resp;
+                    try {
+                        resp = await Node._transport.InstallSnapshotAsync(peerId, req, cancellationToken);
+                    } catch { return; /* peer unavailable, retry on next heartbeat */ }
+
+                    if (resp.Term > Node._currentTerm) {
+                        Node.Post(async () => {
+                            if (resp.Term > Node._currentTerm) await Node.TransitionToFollowerAsync(resp.Term);
+                        });
+                        return;
+                    }
+
+                    if (done) break;
+                    offset += (ulong)size;
+                }
+
+                Node.Post(async () => {
+                    if (Node._role is not LeaderRole leader) return;
+                    leader._matchIndex[peerId] = Node._log.LastIncludedIndex;
+                    leader._nextIndex[peerId]  = Node._log.LastIncludedIndex + 1;
+                    await leader.TryAdvanceCommitIndexAsync();
+                    _ = Task.Run(() => leader.ReplicateToPeerAsync(peerId,
+                        Node._cts?.Token ?? CancellationToken.None), cancellationToken);
+                });
+                return;
+            }
             var prevLogTerm = prevLogIndex == 0 ? 0 : await Node._log.GetTermAtAsync(prevLogIndex, cancellationToken);
 
             var entries = new List<RaftLogEntry>();

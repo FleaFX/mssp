@@ -116,6 +116,63 @@ public sealed partial class RaftNode {
         }
 
         /// <summary>
+        /// Processes an inbound <see cref="InstallSnapshotRequest"/> chunk from the leader.
+        /// Chunks are buffered on the node until <see cref="InstallSnapshotRequest.Done"/> is
+        /// <see langword="true"/>, at which point the reassembled archive is installed.
+        /// </summary>
+        public async Task<InstallSnapshotResponse> HandleInstallSnapshotAsync(InstallSnapshotRequest request) {
+            if (request.Term > node._currentTerm)
+                await node.TransitionToFollowerAsync(request.Term);
+
+            if (request.Term < node._currentTerm)
+                return new InstallSnapshotResponse(node._currentTerm);
+
+            if (node._role is CandidateRole)
+                await node.TransitionToFollowerAsync(node._currentTerm);
+
+            node._leaderId = request.LeaderId;
+            node._role.ResetElectionTimer();
+
+            // stale snapshot — discard any in-progress buffer and acknowledge
+            if (request.LastIncludedIndex <= node._log.LastIncludedIndex) {
+                node._snapshotBuffer?.Dispose();
+                node._snapshotBuffer = null;
+                node._pendingSnapshotIndex = null;
+                return new InstallSnapshotResponse(node._currentTerm);
+            }
+
+            // new snapshot or snapshot from a different leader — start a fresh buffer
+            if (node._pendingSnapshotIndex != request.LastIncludedIndex) {
+                node._snapshotBuffer?.Dispose();
+                node._snapshotBuffer = new MemoryStream();
+                node._pendingSnapshotIndex = request.LastIncludedIndex;
+            }
+
+            // write this chunk at the correct offset within the buffer
+            node._snapshotBuffer!.Seek((long)request.Offset, SeekOrigin.Begin);
+            node._snapshotBuffer.Write(request.Data.Span);
+
+            if (!request.Done)
+                return new InstallSnapshotResponse(node._currentTerm);
+
+            // all chunks received — install the snapshot
+            var data = new ReadOnlyMemory<byte>(node._snapshotBuffer.ToArray());
+            node._snapshotBuffer.Dispose();
+            node._snapshotBuffer = null;
+            node._pendingSnapshotIndex = null;
+
+            var ct = node._cts?.Token ?? CancellationToken.None;
+            await node._log.CompactToAsync(request.LastIncludedIndex, request.LastIncludedTerm, ct);
+            await node._stateMachine.InstallSnapshotAsync(request.LastIncludedIndex, request.LastIncludedTerm, data, ct);
+
+            if (node._commitIndex < request.LastIncludedIndex)
+                node._commitIndex = request.LastIncludedIndex;
+
+            await node.ApplyCommittedEntriesAsync();
+            return new InstallSnapshotResponse(node._currentTerm);
+        }
+
+        /// <summary>
         /// Resets the election timeout. No-op for <see cref="LeaderRole"/>; implemented by
         /// follower and candidate roles to prevent spurious elections while the cluster is healthy.
         /// </summary>

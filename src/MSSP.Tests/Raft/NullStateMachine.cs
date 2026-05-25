@@ -9,4 +9,12 @@ sealed class NullStateMachine : IRaftStateMachine {
         _lastApplied = entry.Index;
         return ValueTask.FromResult(true);
     }
+
+    public ValueTask<ReadOnlyMemory<byte>> CreateSnapshotAsync(CancellationToken cancellationToken = default) =>
+        ValueTask.FromResult(ReadOnlyMemory<byte>.Empty);
+
+    public ValueTask InstallSnapshotAsync(ulong lastIncludedIndex, ulong lastIncludedTerm, ReadOnlyMemory<byte> data, CancellationToken cancellationToken = default) {
+        if (lastIncludedIndex > _lastApplied) _lastApplied = lastIncludedIndex;
+        return ValueTask.CompletedTask;
+    }
 }

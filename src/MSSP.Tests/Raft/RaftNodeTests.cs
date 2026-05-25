@@ -127,6 +127,91 @@ public class RaftNodeTests {
         }
     }
 
+    [Fact]
+    public async Task InstallSnapshot_AdvancesLogAndStateMachine() {
+        var transport = new InMemoryRaftTransport();
+        var log = new InMemoryRaftLog();
+        var stateMachine = new NullStateMachine();
+        var config = new RaftNodeConfig("n1", [], 10_000, 20_000, 5_000);
+        var node = new RaftNode(config, log, transport, stateMachine, new InMemoryRaftStateStorage());
+        transport.Register(node);
+
+        await node.StartAsync();
+        try {
+            var resp = await node.ReceiveInstallSnapshotAsync(new InstallSnapshotRequest(5, "leader", 5, 2, 0, ReadOnlyMemory<byte>.Empty, Done: true));
+            resp.Term.Should().Be(5);
+            log.LastIncludedIndex.Should().Be(5);
+            stateMachine.LastAppliedIndex.Should().Be(5);
+        } finally {
+            await node.StopAsync();
+        }
+    }
+
+    [Fact]
+    public async Task InstallSnapshot_StaleTerm_IsIgnored() {
+        var transport = new InMemoryRaftTransport();
+        var log = new InMemoryRaftLog();
+        var stateMachine = new NullStateMachine();
+        var config = new RaftNodeConfig("n1", [], 10_000, 20_000, 5_000);
+        var node = new RaftNode(config, log, transport, stateMachine, new InMemoryRaftStateStorage());
+        transport.Register(node);
+
+        await node.StartAsync();
+        try {
+            // Advance the node's term to 5 via a valid snapshot.
+            await node.ReceiveInstallSnapshotAsync(new InstallSnapshotRequest(5, "leader", 3, 2, 0, ReadOnlyMemory<byte>.Empty, Done: true));
+
+            // A stale snapshot with term=1 should be rejected.
+            var resp = await node.ReceiveInstallSnapshotAsync(new InstallSnapshotRequest(1, "oldleader", 1, 1, 0, ReadOnlyMemory<byte>.Empty, Done: true));
+            resp.Term.Should().Be(5);
+            log.LastIncludedIndex.Should().Be(3); // unchanged
+        } finally {
+            await node.StopAsync();
+        }
+    }
+
+    [Fact]
+    public async Task InstallSnapshot_AlreadyAhead_IsNoop() {
+        var transport = new InMemoryRaftTransport();
+        var log = new InMemoryRaftLog();
+        var stateMachine = new NullStateMachine();
+        var config = new RaftNodeConfig("n1", [], 10_000, 20_000, 5_000);
+        var node = new RaftNode(config, log, transport, stateMachine, new InMemoryRaftStateStorage());
+        transport.Register(node);
+
+        await node.StartAsync();
+        try {
+            // Compact the follower's log ahead to index 10.
+            await node.ReceiveInstallSnapshotAsync(new InstallSnapshotRequest(5, "leader", 10, 3, 0, ReadOnlyMemory<byte>.Empty, Done: true));
+            log.LastIncludedIndex.Should().Be(10);
+
+            // A later snapshot at index 5 is stale and must not roll back the log.
+            var resp = await node.ReceiveInstallSnapshotAsync(new InstallSnapshotRequest(5, "leader", 5, 2, 0, ReadOnlyMemory<byte>.Empty, Done: true));
+            resp.Term.Should().Be(5);
+            log.LastIncludedIndex.Should().Be(10); // unchanged
+        } finally {
+            await node.StopAsync();
+        }
+    }
+
+    [Fact]
+    public async Task InstallSnapshot_HigherTerm_CausesStepDown() {
+        var transport = new InMemoryRaftTransport();
+        var node = CreateNode("n1", [], transport, electionTimeoutMinMs: 50, electionTimeoutMaxMs: 100);
+
+        await node.StartAsync();
+        try {
+            await WaitForLeader([node], TimeSpan.FromSeconds(2));
+            node.IsLeader.Should().BeTrue();
+
+            var resp = await node.ReceiveInstallSnapshotAsync(new InstallSnapshotRequest(99, "n2", 5, 2, 0, ReadOnlyMemory<byte>.Empty, Done: true));
+            resp.Term.Should().Be(99);
+            node.IsLeader.Should().BeFalse();
+        } finally {
+            await node.StopAsync();
+        }
+    }
+
     static async Task<RaftNode> WaitForLeader(RaftNode[] nodes, TimeSpan timeout) {
         var deadline = DateTime.UtcNow + timeout;
         while (DateTime.UtcNow < deadline) {
