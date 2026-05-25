@@ -5,6 +5,8 @@ using GrpcVoteRequest = MSSP.Cluster.Grpc.VoteRequest;
 using GrpcVoteResponse = MSSP.Cluster.Grpc.VoteResponse;
 using GrpcAppendEntriesRequest = MSSP.Cluster.Grpc.AppendEntriesRequest;
 using GrpcAppendEntriesResponse = MSSP.Cluster.Grpc.AppendEntriesResponse;
+using GrpcInstallSnapshotRequest = MSSP.Cluster.Grpc.InstallSnapshotRequest;
+using GrpcInstallSnapshotResponse = MSSP.Cluster.Grpc.InstallSnapshotResponse;
 
 namespace MSSP.Cluster;
 
@@ -48,5 +50,19 @@ sealed class RaftGrpcService(RaftHostedService raftService) : RaftConsensus.Raft
             ConflictIndex = response.ConflictIndex,
             ConflictTerm = response.ConflictTerm
         };
+    }
+
+    /// <summary>
+    /// Handles an <c>InstallSnapshot</c> RPC from the current leader.
+    /// Translates the protobuf message to the Raft domain model, delegates to
+    /// <see cref="RaftNode.ReceiveInstallSnapshotAsync"/>, and maps the result back.
+    /// </summary>
+    public override async Task<GrpcInstallSnapshotResponse> InstallSnapshot(GrpcInstallSnapshotRequest request, ServerCallContext context) {
+        var raftRequest = new Raft.InstallSnapshotRequest(
+            request.Term, request.LeaderId,
+            request.LastIncludedIndex, request.LastIncludedTerm,
+            request.Offset, request.Data.Memory, request.Done);
+        var response = await raftService.Node.ReceiveInstallSnapshotAsync(raftRequest, context.CancellationToken);
+        return new GrpcInstallSnapshotResponse { Term = response.Term };
     }
 }

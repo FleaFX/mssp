@@ -77,6 +77,10 @@ public sealed partial class RaftNode {
             node._role.ResetElectionTimer();
 
             if (request.PrevLogIndex > 0) {
+                // reject if prevLogIndex is before our snapshot; InstallSnapshot handles catch-up (phase 2)
+                if (request.PrevLogIndex < node._log.LastIncludedIndex)
+                    return new AppendEntriesResponse(node._currentTerm, false, node._log.LastIncludedIndex + 1, 0);
+
                 if (node._log.LastIndex < request.PrevLogIndex)
                     return new AppendEntriesResponse(node._currentTerm, false, node._log.LastIndex + 1, 0);
 
@@ -92,6 +96,7 @@ public sealed partial class RaftNode {
 
             if (request.Entries.Count > 0) {
                 foreach (var entry in request.Entries) {
+                    if (entry.Index <= node._log.LastIncludedIndex) continue; // already in snapshot
                     if (entry.Index <= node._log.LastIndex) {
                         var existing = await node._log.GetEntryAsync(entry.Index);
                         if (existing.Term != entry.Term)
@@ -108,6 +113,63 @@ public sealed partial class RaftNode {
             }
 
             return new AppendEntriesResponse(node._currentTerm, true, 0, 0);
+        }
+
+        /// <summary>
+        /// Processes an inbound <see cref="InstallSnapshotRequest"/> chunk from the leader.
+        /// Chunks are buffered on the node until <see cref="InstallSnapshotRequest.Done"/> is
+        /// <see langword="true"/>, at which point the reassembled archive is installed.
+        /// </summary>
+        public async Task<InstallSnapshotResponse> HandleInstallSnapshotAsync(InstallSnapshotRequest request) {
+            if (request.Term > node._currentTerm)
+                await node.TransitionToFollowerAsync(request.Term);
+
+            if (request.Term < node._currentTerm)
+                return new InstallSnapshotResponse(node._currentTerm);
+
+            if (node._role is CandidateRole)
+                await node.TransitionToFollowerAsync(node._currentTerm);
+
+            node._leaderId = request.LeaderId;
+            node._role.ResetElectionTimer();
+
+            // stale snapshot — discard any in-progress buffer and acknowledge
+            if (request.LastIncludedIndex <= node._log.LastIncludedIndex) {
+                node._snapshotBuffer?.Dispose();
+                node._snapshotBuffer = null;
+                node._pendingSnapshotIndex = null;
+                return new InstallSnapshotResponse(node._currentTerm);
+            }
+
+            // new snapshot or snapshot from a different leader — start a fresh buffer
+            if (node._pendingSnapshotIndex != request.LastIncludedIndex) {
+                node._snapshotBuffer?.Dispose();
+                node._snapshotBuffer = new MemoryStream();
+                node._pendingSnapshotIndex = request.LastIncludedIndex;
+            }
+
+            // write this chunk at the correct offset within the buffer
+            node._snapshotBuffer!.Seek((long)request.Offset, SeekOrigin.Begin);
+            node._snapshotBuffer.Write(request.Data.Span);
+
+            if (!request.Done)
+                return new InstallSnapshotResponse(node._currentTerm);
+
+            // all chunks received — install the snapshot
+            var data = new ReadOnlyMemory<byte>(node._snapshotBuffer.ToArray());
+            node._snapshotBuffer.Dispose();
+            node._snapshotBuffer = null;
+            node._pendingSnapshotIndex = null;
+
+            var ct = node._cts?.Token ?? CancellationToken.None;
+            await node._log.CompactToAsync(request.LastIncludedIndex, request.LastIncludedTerm, ct);
+            await node._stateMachine.InstallSnapshotAsync(request.LastIncludedIndex, request.LastIncludedTerm, data, ct);
+
+            if (node._commitIndex < request.LastIncludedIndex)
+                node._commitIndex = request.LastIncludedIndex;
+
+            await node.ApplyCommittedEntriesAsync();
+            return new InstallSnapshotResponse(node._currentTerm);
         }
 
         /// <summary>

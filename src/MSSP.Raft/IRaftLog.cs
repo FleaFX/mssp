@@ -19,12 +19,26 @@ public interface IRaftLog {
     ulong LastTerm { get; }
 
     /// <summary>
+    /// Gets the index of the last log entry included in the most recent snapshot, or zero if no
+    /// snapshot has been taken. Entries at or below this index have been compacted away.
+    /// </summary>
+    ulong LastIncludedIndex { get; }
+
+    /// <summary>
+    /// Gets the term of the entry at <see cref="LastIncludedIndex"/>, or zero if no snapshot
+    /// has been taken. Used as <c>prevLogTerm</c> when <c>prevLogIndex</c> equals
+    /// <see cref="LastIncludedIndex"/>.
+    /// </summary>
+    ulong LastIncludedTerm { get; }
+
+    /// <summary>
     /// Returns the entry at the specified one-based <paramref name="index"/>.
     /// </summary>
     /// <param name="index">The one-based index of the entry to retrieve.</param>
     /// <param name="cancellationToken">Token to cancel the operation.</param>
     /// <exception cref="ArgumentOutOfRangeException">
-    /// Thrown if <paramref name="index"/> is zero or greater than <see cref="LastIndex"/>.
+    /// Thrown if <paramref name="index"/> is zero, less than or equal to
+    /// <see cref="LastIncludedIndex"/>, or greater than <see cref="LastIndex"/>.
     /// </exception>
     ValueTask<RaftLogEntry> GetEntryAsync(ulong index, CancellationToken cancellationToken = default);
 
@@ -52,8 +66,24 @@ public interface IRaftLog {
 
     /// <summary>
     /// Returns the term of the entry at the specified one-based <paramref name="index"/>.
+    /// If <paramref name="index"/> equals <see cref="LastIncludedIndex"/>, returns
+    /// <see cref="LastIncludedTerm"/> without reading any segment file.
     /// </summary>
     /// <param name="index">The one-based index of the entry whose term to retrieve.</param>
     /// <param name="cancellationToken">Token to cancel the operation.</param>
     ValueTask<ulong> GetTermAtAsync(ulong index, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Discards all log entries at or before <paramref name="lastIncludedIndex"/>, writing a
+    /// snapshot marker so the log base advances. Segment files fully covered by the snapshot
+    /// are deleted; the snapshot metadata is written atomically before deletion.
+    /// </summary>
+    /// <param name="lastIncludedIndex">
+    /// The index of the last entry captured by the snapshot. Must be at most
+    /// <see cref="LastIndex"/>.
+    /// </param>
+    /// <param name="lastIncludedTerm">The term of the entry at <paramref name="lastIncludedIndex"/>.</param>
+    /// <param name="cancellationToken">Token to cancel the operation.</param>
+    ValueTask CompactToAsync(ulong lastIncludedIndex, ulong lastIncludedTerm,
+        CancellationToken cancellationToken = default);
 }

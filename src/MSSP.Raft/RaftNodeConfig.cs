@@ -23,9 +23,14 @@ public sealed record RaftClusterMember(string NodeId, Uri Address);
 /// <param name="HeartbeatIntervalMs">
 /// How often the leader sends <see cref="AppendEntriesRequest"/> heartbeats in milliseconds.
 /// </param>
+/// <param name="SnapshotChunkSizeBytes">
+/// Maximum number of bytes per <see cref="InstallSnapshotRequest"/> chunk when sending a snapshot
+/// to a lagging follower. Defaults to 1 MiB.
+/// </param>
 public sealed record RaftNodeConfig(
     string NodeId,
     string[] PeerIds,
     int ElectionTimeoutMinMs = 150,
     int ElectionTimeoutMaxMs = 300,
-    int HeartbeatIntervalMs = 50);
+    int HeartbeatIntervalMs = 50,
+    int SnapshotChunkSizeBytes = 1 << 20);

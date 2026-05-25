@@ -34,6 +34,32 @@ sealed class RaftLogStateMachine : IRaftStateMachine {
     }
 
     /// <summary>
+    /// Invoked by <see cref="RaftHostedService"/> to provide the physical snapshot bytes.
+    /// When <see langword="null"/>, <see cref="CreateSnapshotAsync"/> returns an empty archive.
+    /// </summary>
+    internal Func<CancellationToken, ValueTask<ReadOnlyMemory<byte>>>? SnapshotProvider { get; set; }
+
+    /// <summary>
+    /// Invoked by <see cref="RaftHostedService"/> to install the physical snapshot bytes.
+    /// When <see langword="null"/>, <see cref="InstallSnapshotAsync"/> only advances the index.
+    /// </summary>
+    internal Func<ulong, ulong, ReadOnlyMemory<byte>, CancellationToken, ValueTask>? SnapshotInstaller { get; set; }
+
+    /// <inheritdoc/>
+    public ValueTask<ReadOnlyMemory<byte>> CreateSnapshotAsync(CancellationToken cancellationToken = default) =>
+        SnapshotProvider?.Invoke(cancellationToken) ?? ValueTask.FromResult(ReadOnlyMemory<byte>.Empty);
+
+    /// <inheritdoc/>
+    public async ValueTask InstallSnapshotAsync(ulong lastIncludedIndex, ulong lastIncludedTerm, ReadOnlyMemory<byte> data, CancellationToken cancellationToken = default) {
+        if (SnapshotInstaller is not null)
+            await SnapshotInstaller(lastIncludedIndex, lastIncludedTerm, data, cancellationToken);
+
+        var current = Volatile.Read(ref _lastAppliedIndex);
+        if (lastIncludedIndex > current)
+            Volatile.Write(ref _lastAppliedIndex, lastIncludedIndex);
+    }
+
+    /// <summary>
     /// Reads the last-applied log index from <c>raft-checkpoint.json</c>, or returns zero if absent.
     /// </summary>
     public static async ValueTask<ulong> ReadCheckpointIndexAsync(string dataDirectory, CancellationToken cancellationToken = default) {

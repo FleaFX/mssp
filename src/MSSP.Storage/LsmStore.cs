@@ -188,6 +188,48 @@ public sealed class LsmStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKey> {
         }
     }
 
+    /// <summary>
+    /// Replaces the current SST files with those from <paramref name="sourceDirectory"/> and
+    /// resets the MemTable to empty. Called by the cluster layer after an
+    /// <c>InstallSnapshot</c> RPC has delivered a snapshot archive to
+    /// <paramref name="sourceDirectory"/>.
+    /// </summary>
+    /// <remarks>
+    /// Must be called while no concurrent writes are in progress.
+    /// The caller is responsible for placing both <c>*.sst</c> and <c>*.bf</c> sidecar files
+    /// in <paramref name="sourceDirectory"/> before invoking this method.
+    /// After the call, <paramref name="sourceDirectory"/> can be deleted by the caller.
+    /// </remarks>
+    internal async ValueTask ReloadAsync(string sourceDirectory, CancellationToken cancellationToken) {
+        // remove all current SST files (ISstAccess.Delete also removes .bf sidecars)
+        foreach (var path in _sstFiles)
+            _sst.Delete(path);
+        _sstFiles.Clear();
+
+        // copy new .sst files and update the list
+        foreach (var srcPath in Directory.EnumerateFiles(sourceDirectory, "*.sst").OrderBy(f => f)) {
+            var destPath = Path.Combine(_dataDirectory, Path.GetFileName(srcPath));
+            await CopyFileAsync(srcPath, destPath, cancellationToken);
+            _sstFiles.Add(destPath);
+        }
+
+        // copy .bf sidecar files (managed by ISstAccess, not tracked in _sstFiles)
+        foreach (var srcPath in Directory.EnumerateFiles(sourceDirectory, "*.bf")) {
+            var destPath = Path.Combine(_dataDirectory, Path.GetFileName(srcPath));
+            await CopyFileAsync(srcPath, destPath, cancellationToken);
+        }
+
+        // reset MemTable; entries before the snapshot are now covered by the new SST files
+        _memTable.Dispose();
+        _memTable = new MemTable<TKey>(_capacityBytes);
+    }
+
+    static async ValueTask CopyFileAsync(string source, string destination, CancellationToken cancellationToken) {
+        await using var src  = new FileStream(source,      FileMode.Open,   FileAccess.Read,  FileShare.Read, 81920, FileOptions.Asynchronous | FileOptions.SequentialScan);
+        await using var dest = new FileStream(destination, FileMode.Create, FileAccess.Write, FileShare.None, 81920, FileOptions.Asynchronous);
+        await src.CopyToAsync(dest, cancellationToken);
+    }
+
     /// <inheritdoc />
     public void Dispose() => _memTable.Dispose();
 }

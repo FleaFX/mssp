@@ -16,8 +16,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\MSSP\MSSP.csproj" />
-    <ProjectReference Include="..\MSSP.BloomFilters\MSSP.BloomFilters.csproj" />
-    <ProjectReference Include="..\MSSP.Storage\MSSP.Storage.csproj" />
+    <ProjectReference Include="..\MSSP.BloomFilters\MSSP.BloomFilters.csproj" PrivateAssets="all" />
+    <ProjectReference Include="..\MSSP.Storage\MSSP.Storage.csproj" PrivateAssets="all" />
   </ItemGroup>
 
 
@@ -29,5 +29,16 @@
       <DependentUpon>SubscriptionLog.cs</DependentUpon>
     </Compile>
   </ItemGroup>
+
+  <!-- Bundle private implementation assemblies into the package lib folder. -->
+  <PropertyGroup>
+    <TargetsForTfmSpecificBuildOutput>$(TargetsForTfmSpecificBuildOutput);GetPrivateAssembliesForPack</TargetsForTfmSpecificBuildOutput>
+  </PropertyGroup>
+  <Target Name="GetPrivateAssembliesForPack" Returns="@(BuildOutputInPackage)">
+    <ItemGroup>
+      <BuildOutputInPackage Include="$(OutputPath)MSSP.BloomFilters.dll" Condition="Exists('$(OutputPath)MSSP.BloomFilters.dll')" />
+      <BuildOutputInPackage Include="$(OutputPath)MSSP.Storage.dll" Condition="Exists('$(OutputPath)MSSP.Storage.dll')" />
+    </ItemGroup>
+  </Target>
 
 </Project>

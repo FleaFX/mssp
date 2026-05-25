@@ -3,6 +3,8 @@ using MSSP.Cluster.Grpc;
 using MSSP.Raft;
 using AppendEntriesRequest = MSSP.Raft.AppendEntriesRequest;
 using AppendEntriesResponse = MSSP.Raft.AppendEntriesResponse;
+using InstallSnapshotRequest = MSSP.Raft.InstallSnapshotRequest;
+using InstallSnapshotResponse = MSSP.Raft.InstallSnapshotResponse;
 using VoteRequest = MSSP.Raft.VoteRequest;
 using VoteResponse = MSSP.Raft.VoteResponse;
 using GrpcLogEntry = MSSP.Cluster.Grpc.LogEntry;
@@ -58,6 +60,22 @@ sealed class RaftGrpcTransport : IRaftTransport, IDisposable {
         }));
         var response = await client.AppendEntriesAsync(grpcRequest, cancellationToken: cancellationToken);
         return new AppendEntriesResponse(response.Term, response.Success, response.ConflictIndex, response.ConflictTerm);
+    }
+
+    /// <inheritdoc/>
+    public async ValueTask<InstallSnapshotResponse> InstallSnapshotAsync(string peerId, InstallSnapshotRequest request, CancellationToken cancellationToken = default) {
+        var client = GetClient(peerId);
+        var grpcRequest = new Grpc.InstallSnapshotRequest {
+            Term = request.Term,
+            LeaderId = request.LeaderId,
+            LastIncludedIndex = request.LastIncludedIndex,
+            LastIncludedTerm = request.LastIncludedTerm,
+            Offset = request.Offset,
+            Data = Google.Protobuf.ByteString.CopyFrom(request.Data.Span),
+            Done = request.Done
+        };
+        var response = await client.InstallSnapshotAsync(grpcRequest, cancellationToken: cancellationToken);
+        return new InstallSnapshotResponse(response.Term);
     }
 
     RaftConsensus.RaftConsensusClient GetClient(string peerId) =>

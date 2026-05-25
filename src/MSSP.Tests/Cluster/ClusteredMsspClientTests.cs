@@ -113,9 +113,9 @@ public class ClusteredMsspClientTests : IAsyncLifetime {
         var dataDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
         Directory.CreateDirectory(dataDir);
 
-        // First run: write an event using FileRaftLog so entries persist to disk
+        // First run: write an event using SegmentedRaftLog so entries persist to disk
         {
-            var fileRaftLog = await FileRaftLog.OpenAsync(dataDir);
+            var fileRaftLog = await SegmentedRaftLog.OpenAsync(dataDir, 64 * 1024 * 1024);
             var stateMachine = new RaftLogStateMachine();
             var stateStorage = new InMemoryRaftStateStorage();
             var transport = new InMemoryRaftTransport();
@@ -146,10 +146,10 @@ public class ClusteredMsspClientTests : IAsyncLifetime {
             }
         }
 
-        // Second run: reopen FileRaftLog and replay entries from checkpoint+1
+        // Second run: reopen SegmentedRaftLog and replay entries from checkpoint+1
         {
             var checkpointIndex = await RaftLogStateMachine.ReadCheckpointIndexAsync(dataDir);
-            var fileRaftLog2 = await FileRaftLog.OpenAsync(dataDir);
+            var fileRaftLog2 = await SegmentedRaftLog.OpenAsync(dataDir, 64 * 1024 * 1024);
             var stateMachine2 = new RaftLogStateMachine();
             var node2 = new RaftNode(new RaftNodeConfig("n1", [], 50, 100, 20), fileRaftLog2, new InMemoryRaftTransport(), stateMachine2, new InMemoryRaftStateStorage());
             var raftLog2 = new RaftLog(node2, stateMachine2);
