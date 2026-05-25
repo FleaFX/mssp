@@ -27,6 +27,12 @@
     <Protobuf Include="Protos\raft.proto" GrpcServices="Both" />
   </ItemGroup>
 
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+      <_Parameter1>MSSP.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
 
 
 </Project>

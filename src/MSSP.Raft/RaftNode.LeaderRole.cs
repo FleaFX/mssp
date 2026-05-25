@@ -101,6 +101,8 @@ public sealed partial class RaftNode {
             lock (_nextIndex) nextIdx = _nextIndex.GetValueOrDefault(peerId, Node._log.LastIndex + 1);
 
             var prevLogIndex = nextIdx - 1;
+            if (prevLogIndex > 0 && prevLogIndex < Node._log.LastIncludedIndex)
+                return; // peer is behind our snapshot; InstallSnapshot RPC will handle catch-up (phase 2)
             var prevLogTerm = prevLogIndex == 0 ? 0 : await Node._log.GetTermAtAsync(prevLogIndex, cancellationToken);
 
             var entries = new List<RaftLogEntry>();

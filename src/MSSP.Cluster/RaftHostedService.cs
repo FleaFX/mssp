@@ -7,11 +7,11 @@ namespace MSSP.Cluster;
 
 /// <summary>
 /// <see cref="IHostedService"/> that owns the lifetime of all Raft cluster resources:
-/// <see cref="FileRaftLog"/>, <see cref="RaftLog"/>, <see cref="RaftLogStateMachine"/>,
+/// <see cref="SegmentedRaftLog"/>, <see cref="RaftLog"/>, <see cref="RaftLogStateMachine"/>,
 /// <see cref="LsmStore{TKey}"/>, <see cref="RaftGrpcTransport"/>, and <see cref="RaftNode"/>.
 /// </summary>
 sealed class RaftHostedService(MsspOptions msspOptions, MsspClusterOptions clusterOptions) : IHostedService, IDisposable {
-    FileRaftLog? _raftLog;
+    SegmentedRaftLog? _raftLog;
     RaftLog? _log;
     RaftLogStateMachine? _stateMachine;
     EmbeddedMsspClient? _local;
@@ -47,7 +47,7 @@ sealed class RaftHostedService(MsspOptions msspOptions, MsspClusterOptions clust
         var dataDir = msspOptions.DataDirectory;
         var checkpointIndex = await RaftLogStateMachine.ReadCheckpointIndexAsync(dataDir, cancellationToken);
 
-        _raftLog = await FileRaftLog.OpenAsync(dataDir, cancellationToken);
+        _raftLog = await SegmentedRaftLog.OpenAsync(dataDir, clusterOptions.RaftLogSegmentSizeBytes, cancellationToken);
         _stateMachine = new RaftLogStateMachine();
         _stateStorage = new FileRaftStateStorage(dataDir);
         _transport = new RaftGrpcTransport(clusterOptions.Peers);
@@ -63,6 +63,7 @@ sealed class RaftHostedService(MsspOptions msspOptions, MsspClusterOptions clust
         _log = new RaftLog(_node, _stateMachine);
 
         var capturedStateMachine = _stateMachine;
+        var capturedRaftLog = _raftLog;
 
         var lsmStore = await LsmStore<EventKey>.OpenAsync(
             options: new LsmStoreOptions<EventKey>(dataDir, msspOptions.MemTableCapacityBytes, OnFlushed),
@@ -88,7 +89,14 @@ sealed class RaftHostedService(MsspOptions msspOptions, MsspClusterOptions clust
         await _node.StartAsync(cancellationToken);
         return;
 
-        async ValueTask OnFlushed(CancellationToken token) => await RaftLogStateMachine.WriteCheckpointAsync(dataDir, capturedStateMachine.LastAppliedIndex, token);
+        async ValueTask OnFlushed(CancellationToken token) {
+            var applied = capturedStateMachine.LastAppliedIndex;
+            if (applied > 0 && applied > capturedRaftLog.LastIncludedIndex) {
+                var term = await capturedRaftLog.GetTermAtAsync(applied, token);
+                await capturedRaftLog.CompactToAsync(applied, term, token);
+            }
+            await RaftLogStateMachine.WriteCheckpointAsync(dataDir, applied, token);
+        }
     }
 
     /// <inheritdoc/>

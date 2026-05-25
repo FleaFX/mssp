@@ -34,4 +34,10 @@ public sealed class MsspClusterOptions {
     /// Gets or sets how often the leader sends heartbeats in milliseconds.
     /// </summary>
     public int HeartbeatIntervalMs { get; set; } = 50;
+
+    /// <summary>
+    /// Gets or sets the maximum size in bytes of a single Raft log segment file before a new
+    /// segment is started. Defaults to 64 MiB.
+    /// </summary>
+    public long RaftLogSegmentSizeBytes { get; set; } = 64 * 1024 * 1024;
 }

@@ -3,13 +3,15 @@ namespace MSSP.Raft;
 sealed class InMemoryRaftLog : IRaftLog {
     readonly List<RaftLogEntry> _entries = [];
 
-    public ulong LastIndex => (ulong)_entries.Count;
-    public ulong LastTerm => _entries.Count > 0 ? _entries[^1].Term : 0;
+    public ulong LastIndex => LastIncludedIndex + (ulong)_entries.Count;
+    public ulong LastTerm => _entries.Count > 0 ? _entries[^1].Term : LastIncludedTerm;
+    public ulong LastIncludedIndex { get; private set; }
+    public ulong LastIncludedTerm { get; private set; }
 
     public ValueTask<RaftLogEntry> GetEntryAsync(ulong index, CancellationToken cancellationToken = default) {
-        if (index == 0 || index > LastIndex)
+        if (index == 0 || index <= LastIncludedIndex || index > LastIndex)
             throw new ArgumentOutOfRangeException(nameof(index));
-        return ValueTask.FromResult(_entries[(int)(index - 1)]);
+        return ValueTask.FromResult(_entries[(int)(index - LastIncludedIndex - 1)]);
     }
 
     public async IAsyncEnumerable<RaftLogEntry> GetEntriesFromAsync(ulong fromIndex, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default) {
@@ -25,14 +27,26 @@ sealed class InMemoryRaftLog : IRaftLog {
     }
 
     public ValueTask TruncateFromAsync(ulong fromIndex, CancellationToken cancellationToken = default) {
-        if (fromIndex > 0 && fromIndex <= LastIndex)
-            _entries.RemoveRange((int)(fromIndex - 1), _entries.Count - (int)(fromIndex - 1));
+        if (fromIndex > LastIncludedIndex && fromIndex <= LastIndex)
+            _entries.RemoveRange((int)(fromIndex - LastIncludedIndex - 1), _entries.Count - (int)(fromIndex - LastIncludedIndex - 1));
         return ValueTask.CompletedTask;
     }
 
     public ValueTask<ulong> GetTermAtAsync(ulong index, CancellationToken cancellationToken = default) {
-        if (index == 0 || index > LastIndex)
+        if (index == LastIncludedIndex) return ValueTask.FromResult(LastIncludedTerm);
+        if (index == 0 || index < LastIncludedIndex || index > LastIndex)
             throw new ArgumentOutOfRangeException(nameof(index));
-        return ValueTask.FromResult(_entries[(int)(index - 1)].Term);
+        return ValueTask.FromResult(_entries[(int)(index - LastIncludedIndex - 1)].Term);
+    }
+
+    public ValueTask CompactToAsync(ulong lastIncludedIndex, ulong lastIncludedTerm, CancellationToken cancellationToken = default) {
+        if (lastIncludedIndex > LastIndex)
+            throw new ArgumentOutOfRangeException(nameof(lastIncludedIndex));
+        var toRemove = (int)(lastIncludedIndex - LastIncludedIndex);
+        if (toRemove > 0)
+            _entries.RemoveRange(0, toRemove);
+        LastIncludedIndex = lastIncludedIndex;
+        LastIncludedTerm = lastIncludedTerm;
+        return ValueTask.CompletedTask;
     }
 }

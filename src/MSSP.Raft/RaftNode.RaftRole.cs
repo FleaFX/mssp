@@ -77,6 +77,10 @@ public sealed partial class RaftNode {
             node._role.ResetElectionTimer();
 
             if (request.PrevLogIndex > 0) {
+                // reject if prevLogIndex is before our snapshot; InstallSnapshot handles catch-up (phase 2)
+                if (request.PrevLogIndex < node._log.LastIncludedIndex)
+                    return new AppendEntriesResponse(node._currentTerm, false, node._log.LastIncludedIndex + 1, 0);
+
                 if (node._log.LastIndex < request.PrevLogIndex)
                     return new AppendEntriesResponse(node._currentTerm, false, node._log.LastIndex + 1, 0);
 
@@ -92,6 +96,7 @@ public sealed partial class RaftNode {
 
             if (request.Entries.Count > 0) {
                 foreach (var entry in request.Entries) {
+                    if (entry.Index <= node._log.LastIncludedIndex) continue; // already in snapshot
                     if (entry.Index <= node._log.LastIndex) {
                         var existing = await node._log.GetEntryAsync(entry.Index);
                         if (existing.Term != entry.Term)
