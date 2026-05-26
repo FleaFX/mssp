@@ -66,20 +66,20 @@ public class LsmSnapshotTests {
 
                 // store under test: write a, b → fills 4-byte MemTable → flush to SST;
                 // c stays in MemTable (unflushed)
-                using var store = await LsmStore<StringKey>.OpenAsync(Opts(storeDir), NoWal(), CancellationToken.None);
-                await store.WriteAsync(new StringKey("a"), Bytes("1"), CancellationToken.None);
-                await store.WriteAsync(new StringKey("b"), Bytes("2"), CancellationToken.None);
-                await store.WriteAsync(new StringKey("c"), Bytes("3"), CancellationToken.None);
+                using var store = await LsmStore<StringKey>.OpenAsync(Opts(storeDir), NoWal(), TestContext.Current.CancellationToken);
+                await store.WriteAsync(new StringKey("a"), Bytes("1"), TestContext.Current.CancellationToken);
+                await store.WriteAsync(new StringKey("b"), Bytes("2"), TestContext.Current.CancellationToken);
+                await store.WriteAsync(new StringKey("c"), Bytes("3"), TestContext.Current.CancellationToken);
 
                 store.ScanAllFrom(new StringKey(""))
                      .Select(e => e.Key.Value)
                      .Should().Contain("a", "setup: old data must be visible before reload");
 
                 // source store: write x, y → flush to SST in sourceDir
-                using var source = await LsmStore<StringKey>.OpenAsync(Opts(sourceDir), NoWal(), CancellationToken.None);
-                await source.WriteAsync(new StringKey("x"), Bytes("10"), CancellationToken.None);
-                await source.WriteAsync(new StringKey("y"), Bytes("20"), CancellationToken.None);
-                await source.WriteAsync(new StringKey("z"), Bytes("30"), CancellationToken.None);
+                using var source = await LsmStore<StringKey>.OpenAsync(Opts(sourceDir), NoWal(), TestContext.Current.CancellationToken);
+                await source.WriteAsync(new StringKey("x"), Bytes("10"), TestContext.Current.CancellationToken);
+                await source.WriteAsync(new StringKey("y"), Bytes("20"), TestContext.Current.CancellationToken);
+                await source.WriteAsync(new StringKey("z"), Bytes("30"), TestContext.Current.CancellationToken);
                 source.Dispose();
 
                 // serialize source SST files into an archive and unpack to staging
@@ -87,7 +87,7 @@ public class LsmSnapshotTests {
                 LsmSnapshot.Deserialize(archive, stagingDir);
 
                 // reload: replace store's SST files with those from staging
-                await store.ReloadAsync(stagingDir, CancellationToken.None);
+                await store.ReloadAsync(stagingDir, TestContext.Current.CancellationToken);
 
                 var keys = store.ScanAllFrom(new StringKey("")).Select(e => e.Key.Value).ToList();
                 keys.Should().Contain("x").And.Contain("y");

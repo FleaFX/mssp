@@ -17,17 +17,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\MSSP\MSSP.csproj" />
-    <ProjectReference Include="..\MSSP.Grpc\MSSP.Grpc.csproj" PrivateAssets="all" />
+    <ProjectReference Include="..\MSSP.Grpc\MSSP.Grpc.csproj" />
   </ItemGroup>
 
-  <!-- Bundle private implementation assemblies into the package lib folder. -->
-  <PropertyGroup>
-    <TargetsForTfmSpecificBuildOutput>$(TargetsForTfmSpecificBuildOutput);GetPrivateAssembliesForPack</TargetsForTfmSpecificBuildOutput>
-  </PropertyGroup>
-  <Target Name="GetPrivateAssembliesForPack" Returns="@(BuildOutputInPackage)">
-    <ItemGroup>
-      <BuildOutputInPackage Include="$(OutputPath)MSSP.Grpc.dll" Condition="Exists('$(OutputPath)MSSP.Grpc.dll')" />
-    </ItemGroup>
-  </Target>
 
 </Project>

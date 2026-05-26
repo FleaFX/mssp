@@ -13,9 +13,17 @@ public sealed partial class RaftNode {
         /// Initialises the follower role and arms the election timer with a randomised timeout.
         /// </summary>
         public FollowerRole(RaftNode node) : base(node) {
+            // Capture the term at construction time. If the timer callback arrives in the
+            // mailbox after a new role has been installed (e.g. a TransitionToFollowerAsync
+            // due to a higher-term message just before this timer fires), the term will have
+            // changed and the callback is silently discarded — preventing spurious elections.
+            var capturedTerm = node._currentTerm;
             var timeout = node._rng.Next(node._config.ElectionTimeoutMinMs, node._config.ElectionTimeoutMaxMs + 1);
             _electionTimer = new Timer(
-                _ => node.Post(node.TransitionToCandidateAsync),
+                _ => node.Post(async () => {
+                    if (node._currentTerm == capturedTerm && node._role is FollowerRole)
+                        await node.TransitionToCandidateAsync();
+                }),
                 null, timeout, Timeout.Infinite);
         }
 

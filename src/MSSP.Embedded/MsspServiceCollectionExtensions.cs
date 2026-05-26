@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 
 namespace MSSP.Embedded;
 
@@ -23,7 +24,9 @@ public static class MsspServiceCollectionExtensions {
         services.AddSingleton<MsspHostedService>();
         services.AddSingleton<EmbeddedMsspClient>(sp => sp.GetRequiredService<MsspHostedService>().Client);
         services.AddSingleton<IMsspClient>(sp => sp.GetRequiredService<EmbeddedMsspClient>());
-        services.AddHostedService(sp => sp.GetRequiredService<MsspHostedService>());
-        return new MsspBuilder(services);
+        var hostedServiceDescriptor = ServiceDescriptor.Singleton<IHostedService>(
+            sp => sp.GetRequiredService<MsspHostedService>());
+        services.Add(hostedServiceDescriptor);
+        return new MsspBuilder(services) { EmbeddedHostedServiceDescriptor = hostedServiceDescriptor };
     }
 }

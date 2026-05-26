@@ -32,7 +32,7 @@ public class WalManagerTests : IAsyncLifetime {
         [Fact]
         public async Task SingleRecord_RoundTrips() {
             var payload = Bytes("hello");
-            await _wal.AppendAsync(payload, CancellationToken.None);
+            await _wal.AppendAsync(payload, TestContext.Current.CancellationToken);
 
             var records = await _wal.ReadAllAsync().ToListAsync();
 
@@ -42,9 +42,9 @@ public class WalManagerTests : IAsyncLifetime {
 
         [Fact]
         public async Task MultipleRecords_ReturnedInAppendOrder() {
-            await _wal.AppendAsync(Bytes("first"), CancellationToken.None);
-            await _wal.AppendAsync(Bytes("second"), CancellationToken.None);
-            await _wal.AppendAsync(Bytes("third"), CancellationToken.None);
+            await _wal.AppendAsync(Bytes("first"), TestContext.Current.CancellationToken);
+            await _wal.AppendAsync(Bytes("second"), TestContext.Current.CancellationToken);
+            await _wal.AppendAsync(Bytes("third"), TestContext.Current.CancellationToken);
 
             var records = await _wal.ReadAllAsync().ToListAsync();
 
@@ -58,8 +58,8 @@ public class WalManagerTests : IAsyncLifetime {
     public class RotateAsync : WalManagerTests {
         [Fact]
         public async Task AfterRotate_PreviousRecordsNotReadable() {
-            await _wal.AppendAsync(Bytes("before"), CancellationToken.None);
-            await _wal.RotateAsync(CancellationToken.None);
+            await _wal.AppendAsync(Bytes("before"), TestContext.Current.CancellationToken);
+            await _wal.RotateAsync(TestContext.Current.CancellationToken);
 
             var records = await _wal.ReadAllAsync().ToListAsync();
 
@@ -68,9 +68,9 @@ public class WalManagerTests : IAsyncLifetime {
 
         [Fact]
         public async Task AfterRotate_NewRecordsAreReadable() {
-            await _wal.AppendAsync(Bytes("before"), CancellationToken.None);
-            await _wal.RotateAsync(CancellationToken.None);
-            await _wal.AppendAsync(Bytes("after"), CancellationToken.None);
+            await _wal.AppendAsync(Bytes("before"), TestContext.Current.CancellationToken);
+            await _wal.RotateAsync(TestContext.Current.CancellationToken);
+            await _wal.AppendAsync(Bytes("after"), TestContext.Current.CancellationToken);
 
             var records = await _wal.ReadAllAsync().ToListAsync();
 

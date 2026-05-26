@@ -47,6 +47,10 @@ CodeCoverage/
 # MSBuild Binary and Structured Log
 *.binlog
 
+# Local NuGet feed for sample projects (populated with 'dotnet pack', not committed)
+src/Samples/LocalPackages/
+src/Samples/nuget.config
+
 # MSTest test Results
 [Tt]est[Rr]esult*/
 [Bb]uild[Ll]og.*

@@ -16,9 +16,15 @@ public sealed partial class RaftNode {
         /// solicitation via the node's mailbox.
         /// </summary>
         public CandidateRole(RaftNode node) : base(node) {
+            // Capture the term so stale callbacks (timer fires after votes arrive and the node
+            // has already become leader) do not trigger a spurious re-election.
+            var capturedTerm = node._currentTerm;
             var timeout = node._rng.Next(node._config.ElectionTimeoutMinMs, node._config.ElectionTimeoutMaxMs + 1);
             _electionTimer = new Timer(
-                _ => node.Post(node.TransitionToCandidateAsync),
+                _ => node.Post(async () => {
+                    if (node._currentTerm == capturedTerm && node._role is CandidateRole)
+                        await node.TransitionToCandidateAsync();
+                }),
                 null, timeout, Timeout.Infinite);
             node.Post(StartElectionAsync);
         }

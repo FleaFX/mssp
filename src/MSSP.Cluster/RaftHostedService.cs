@@ -51,11 +51,14 @@ sealed class RaftHostedService(MsspOptions msspOptions, MsspClusterOptions clust
         _raftLog = await SegmentedRaftLog.OpenAsync(dataDir, clusterOptions.RaftLogSegmentSizeBytes, cancellationToken);
         _stateMachine = new RaftLogStateMachine();
         _stateStorage = new FileRaftStateStorage(dataDir);
-        _transport = new RaftGrpcTransport(clusterOptions.Peers);
+        // RPC timeout: 5× the heartbeat interval. Long enough to absorb transient latency
+        // spikes; short enough that a hanging call is detected well within the election timeout.
+        _transport = new RaftGrpcTransport(clusterOptions.Peers,
+            TimeSpan.FromMilliseconds(clusterOptions.HeartbeatIntervalMs * 5));
 
         var config = new RaftNodeConfig(
             clusterOptions.NodeId,
-            clusterOptions.Peers.Select(p => p.NodeId).ToArray(),
+            clusterOptions.Peers.Select(p => p.NodeId).Where(id => id != clusterOptions.NodeId).ToArray(),
             clusterOptions.ElectionTimeoutMinMs,
             clusterOptions.ElectionTimeoutMaxMs,
             clusterOptions.HeartbeatIntervalMs);
@@ -75,8 +78,9 @@ sealed class RaftHostedService(MsspOptions msspOptions, MsspClusterOptions clust
             msspOptions.SubscriptionLogFormat,
             msspOptions.SubscriptionLogSegmentSizeBytes);
         var pipeline = new SubscriptionPipeline(_lsmStore, subscriptionLog);
+        var logDrivenStore = LogDrivenStore<EventKey>.Create(_log, pipeline, msspOptions.MemTableCapacityBytes);
         _local = new EmbeddedMsspClient(
-            store: new GlobalPositionDecorator(LogDrivenStore<EventKey>.Create(_log, pipeline, msspOptions.MemTableCapacityBytes), pipeline),
+            store: new GlobalPositionDecorator(logDrivenStore, pipeline),
             subscriptions: pipeline);
 
         _client = new ClusteredMsspClient(_node, _local, clusterOptions.Peers);
@@ -86,10 +90,15 @@ sealed class RaftHostedService(MsspOptions msspOptions, MsspClusterOptions clust
         _stateMachine.SnapshotProvider  = ct => ValueTask.FromResult(LsmSnapshot.Serialize(dataDir));
         _stateMachine.SnapshotInstaller = InstallSnapshotAsync;
 
-        // replay Raft log entries from checkpoint to current end
+        // Replay committed Raft log entries that were not yet reflected in the SST files.
+        // Entries are applied directly via LogDrivenStore.ReplayAsync (bypassing the channel)
+        // so that replay entries can never prematurely dequeue a pending TCS belonging to a
+        // concurrent real-write that arrives just as the Raft node starts.
         for (var i = checkpointIndex + 1; i <= _raftLog.LastIndex; i++) {
             var entry = await _raftLog.GetEntryAsync(i, cancellationToken);
-            await _stateMachine.ApplyAsync(entry, cancellationToken);
+            if (entry.Type == RaftLogEntryType.Command)
+                await logDrivenStore.ReplayAsync(entry.Payload, cancellationToken);
+            _stateMachine.MarkApplied(entry.Index);
         }
 
         await _node.StartAsync(cancellationToken);

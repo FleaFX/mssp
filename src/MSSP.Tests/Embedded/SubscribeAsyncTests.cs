@@ -257,7 +257,7 @@ public class SubscribeAsyncTests {
         // Write events and close
         ulong lastPos;
         {
-            var client = await EmbeddedMsspClient.OpenAsync(dir);
+            var client = await EmbeddedMsspClient.OpenAsync(dir, cancellationToken: TestContext.Current.CancellationToken);
             await client.AppendAsync("s", StreamRevision.NoStream, [Event("A", "x"), Event("B", "x"), Event("C", "x")]);
 
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -268,7 +268,7 @@ public class SubscribeAsyncTests {
 
         // Reopen and write more events — positions must be higher than before
         {
-            var client = await EmbeddedMsspClient.OpenAsync(dir);
+            var client = await EmbeddedMsspClient.OpenAsync(dir, cancellationToken: TestContext.Current.CancellationToken);
             await client.AppendAsync("s", (StreamRevision)2UL, [Event("D", "x")]);
 
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -320,14 +320,14 @@ public class SubscribeAsyncTests {
         try {
             // Write events and close
             {
-                var client = await EmbeddedMsspClient.OpenAsync(dir);
+                var client = await EmbeddedMsspClient.OpenAsync(dir, cancellationToken: TestContext.Current.CancellationToken);
                 await client.AppendAsync("s", StreamRevision.NoStream, [Event("A", "x"), Event("B", "x")]);
                 client.Dispose();
             }
 
             // Reopen — catch-up should replay events from the subscription log
             {
-                var client = await EmbeddedMsspClient.OpenAsync(dir);
+                var client = await EmbeddedMsspClient.OpenAsync(dir, cancellationToken: TestContext.Current.CancellationToken);
 
                 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
                 var events = await CollectAsync(client.SubscribeAsync(SubscriptionFilter.All, cancellationToken: cts.Token), 2);

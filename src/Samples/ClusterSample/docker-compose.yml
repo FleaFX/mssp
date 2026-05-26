@@ -1,0 +1,44 @@
+services:
+  node-1:
+    build: .
+    command: ["node-1", "6000"]
+    environment:
+      MSSP_PEERS: "node-1=http://node-1:6000,node-2=http://node-2:6000,node-3=http://node-3:6000"
+    ports:
+      - "6001:6000"   # host:container — connect clients to localhost:6001/6002/6003
+    volumes:
+      - node1-data:/app/mssp-data-node-1
+    networks:
+      - mssp-cluster
+
+  node-2:
+    build: .
+    command: ["node-2", "6000"]
+    environment:
+      MSSP_PEERS: "node-1=http://node-1:6000,node-2=http://node-2:6000,node-3=http://node-3:6000"
+    ports:
+      - "6002:6000"
+    volumes:
+      - node2-data:/app/mssp-data-node-2
+    networks:
+      - mssp-cluster
+
+  node-3:
+    build: .
+    command: ["node-3", "6000"]
+    environment:
+      MSSP_PEERS: "node-1=http://node-1:6000,node-2=http://node-2:6000,node-3=http://node-3:6000"
+    ports:
+      - "6003:6000"
+    volumes:
+      - node3-data:/app/mssp-data-node-3
+    networks:
+      - mssp-cluster
+
+networks:
+  mssp-cluster:
+
+volumes:
+  node1-data:
+  node2-data:
+  node3-data:
