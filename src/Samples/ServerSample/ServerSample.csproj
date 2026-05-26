@@ -8,8 +8,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="MSSP.Embedded" Version="0.4.1" />
-    <PackageReference Include="MSSP.Server" Version="0.4.1" />
+    <ProjectReference Include="..\..\MSSP.Embedded\MSSP.Embedded.csproj" />
+    <ProjectReference Include="..\..\MSSP.Server\MSSP.Server.csproj" />
   </ItemGroup>
 
 </Project>

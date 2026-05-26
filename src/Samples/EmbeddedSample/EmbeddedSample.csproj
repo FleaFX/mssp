@@ -9,7 +9,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="MSSP.Embedded" Version="0.4.1" />
+    <ProjectReference Include="..\..\MSSP.Embedded\MSSP.Embedded.csproj" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.8" />
   </ItemGroup>
 
