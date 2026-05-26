@@ -20,7 +20,10 @@ public static class MsspClientServiceCollectionExtensions {
     public static MsspBuilder AddMssp(this IServiceCollection services, Action<MsspClientOptions> configure) {
         var options = new MsspClientOptions();
         configure(options);
-        services.AddSingleton(_ => GrpcChannel.ForAddress(options.Address));
+        services.AddSingleton(_ => GrpcChannel.ForAddress(options.Address, new GrpcChannelOptions {
+            HttpHandler = new OpaqueHttpHandler(new SocketsHttpHandler()),
+            DisposeHttpClient = true,
+        }));
         services.AddSingleton<IMsspClient>(sp => new RemoteMsspClient(new MsspGrpcClient(sp.GetRequiredService<GrpcChannel>())));
         return new MsspBuilder(services);
     }

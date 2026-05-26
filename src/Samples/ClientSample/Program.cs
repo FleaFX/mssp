@@ -1,50 +1,40 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+using Grpc.Core;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using MSSP;
 using MSSP.Client;
 
-// Required for gRPC over plain HTTP/2 (matching ServerSample's Kestrel config).
+// Required for gRPC over plain HTTP/2 (h2c — "prior knowledge").
 AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
 
 var builder = Host.CreateApplicationBuilder(args);
-builder.Services.AddMssp(o => {
-    o.Address = new Uri("http://localhost:5000");
-});
+builder.Services.AddMssp(o => o.Address = new Uri("http://localhost:6001"));
 
 var host = builder.Build();
 await host.StartAsync();
 
 var client = host.Services.GetRequiredService<IMsspClient>();
-var streamId = new StreamId("greetings-1");
+var streamId = new StreamId("greetings");
 
-EventData[] newEvents = [
-    new("GreetingSent", """{"from":"ClientSample","text":"Hello from the gRPC client!"}"""u8.ToArray()),
-];
-
-// Start by asserting the stream must not yet exist (NoStream).
-// On subsequent runs the stream already has events: MSSP throws OptimisticConcurrencyException.
-// We catch it, read the current tail revision, and retry â€” appending after the last known event.
-Console.WriteLine($"Appending event to '{streamId}' on the remote server...");
+Console.WriteLine($"Appending to stream '{streamId}'...");
 var expectedRevision = StreamRevision.NoStream;
-
-while (true) {
+var maxRetries = 20;
+for (var attempt = 0; attempt < maxRetries; attempt++) {
     try {
-        await client.AppendAsync(streamId, expectedRevision, newEvents);
-        Console.WriteLine("Append succeeded.");
+        await client.AppendAsync(streamId, expectedRevision, [
+            new EventData("GreetingSent", """{"text":"Hello from ClientSample!"}"""u8.ToArray())
+        ]);
+        Console.WriteLine($"  ✓ Appended (expected: {(long)expectedRevision})");
         break;
-    } catch (OptimisticConcurrencyException ex) {
-        Console.WriteLine($"Concurrency conflict: {ex.Message}");
-        Console.WriteLine("Reading current tail revision and retrying...");
-
-        ulong tail = 0;
-        await foreach (var e in client.ReadAsync(streamId))
-            tail = e.Revision;
-
-        expectedRevision = tail;  // implicit conversion from ulong to StreamRevision
+    } catch (OptimisticConcurrencyException) {
+        Console.WriteLine($"  Stream already exists (OCE at expected={(long)expectedRevision}), retrying with Any...");
+        expectedRevision = StreamRevision.Any;
+    } catch (RpcException ex) when (ex.StatusCode is StatusCode.Unavailable or StatusCode.Cancelled) {
+        Console.WriteLine($"  Server unavailable/cancelled ({ex.StatusCode}: {ex.Status.Detail}), retrying in 500ms...");
+        await Task.Delay(500);
     }
 }
 
-// Read the full stream back from the server.
 Console.WriteLine("\nReading all events in stream:");
 await foreach (var e in client.ReadAsync(streamId)) {
     Console.WriteLine($"  rev={e.Revision}  {e.EventType}  {System.Text.Encoding.UTF8.GetString(e.Data.Span)}");

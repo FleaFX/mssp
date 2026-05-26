@@ -108,6 +108,11 @@ public sealed partial class RaftNode(
     public Task<RaftApplyResult> ProposeAsync(ReadOnlyMemory<byte> command, CancellationToken cancellationToken = default) {
         var tcs = new TaskCompletionSource<RaftApplyResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         CancelTcsOnStop(tcs);
+        // Also cancel the proposal when the caller's token fires (e.g. client disconnect or deadline).
+        // NOTE: a cancelled proposal does not roll back a committed entry — the write may still
+        // commit after cancellation. Callers that retry must be prepared for duplicate commits.
+        if (cancellationToken.CanBeCanceled)
+            cancellationToken.Register(() => tcs.TrySetCanceled(cancellationToken), useSynchronizationContext: false);
         Post(() => _role.ProposeAsync(command, tcs));
         return tcs.Task;
     }
@@ -121,6 +126,8 @@ public sealed partial class RaftNode(
     public ValueTask<VoteResponse> ReceiveVoteRequestAsync(VoteRequest request, CancellationToken cancellationToken = default) {
         var tcs = new TaskCompletionSource<VoteResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
         CancelTcsOnStop(tcs);
+        if (cancellationToken.CanBeCanceled)
+            cancellationToken.Register(() => tcs.TrySetCanceled(cancellationToken), useSynchronizationContext: false);
         Post(async () => tcs.TrySetResult(await _role.HandleVoteRequestAsync(request)));
         return new ValueTask<VoteResponse>(tcs.Task);
     }
@@ -134,6 +141,8 @@ public sealed partial class RaftNode(
     public ValueTask<AppendEntriesResponse> ReceiveAppendEntriesAsync(AppendEntriesRequest request, CancellationToken cancellationToken = default) {
         var tcs = new TaskCompletionSource<AppendEntriesResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
         CancelTcsOnStop(tcs);
+        if (cancellationToken.CanBeCanceled)
+            cancellationToken.Register(() => tcs.TrySetCanceled(cancellationToken), useSynchronizationContext: false);
         Post(async () => tcs.TrySetResult(await _role.HandleAppendEntriesAsync(request)));
         return new ValueTask<AppendEntriesResponse>(tcs.Task);
     }
@@ -147,6 +156,8 @@ public sealed partial class RaftNode(
     public ValueTask<InstallSnapshotResponse> ReceiveInstallSnapshotAsync(InstallSnapshotRequest request, CancellationToken cancellationToken = default) {
         var tcs = new TaskCompletionSource<InstallSnapshotResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
         CancelTcsOnStop(tcs);
+        if (cancellationToken.CanBeCanceled)
+            cancellationToken.Register(() => tcs.TrySetCanceled(cancellationToken), useSynchronizationContext: false);
         Post(async () => tcs.TrySetResult(await _role.HandleInstallSnapshotAsync(request)));
         return new ValueTask<InstallSnapshotResponse>(tcs.Task);
     }
@@ -172,6 +183,12 @@ public sealed partial class RaftNode(
     }
 
     async Task TransitionToCandidateAsync() {
+        // Guard: stale timer callbacks can arrive in the mailbox after the node has already
+        // transitioned to leader (e.g. the timer fires just before TransitionToLeaderAsync
+        // is processed). Silently discard such callbacks to avoid spurious term increments
+        // and election churn. See Raft §5.2: only followers and candidates start elections.
+        if (_role is not (FollowerRole or CandidateRole)) return;
+
         _currentTerm++;
         _votedFor = _config.NodeId;
         _leaderId = null;

@@ -39,6 +39,8 @@ var builder = WebApplication.CreateBuilder(args[2..]);
 
 // ListenAnyIP binds to 0.0.0.0 so the node is reachable from peer containers.
 // When running locally it still accepts connections on localhost:<port>.
+// ListenAnyIP binds to 0.0.0.0 so the node is reachable from peer containers.
+// When running locally it still accepts connections on localhost:<port>.
 builder.WebHost.ConfigureKestrel(options => {
     options.ListenAnyIP(port, o => o.Protocols = HttpProtocols.Http2);
 });
@@ -48,6 +50,10 @@ builder.Services
     .AddCluster(o => {
         o.NodeId = nodeId;
         o.Peers = peers;
+        // Use conservative timeouts: 10× heartbeat gives ample margin for gRPC latency on localhost.
+        o.HeartbeatIntervalMs = 100;
+        o.ElectionTimeoutMinMs = 1000;
+        o.ElectionTimeoutMaxMs = 2000;
     })
     .AddServer();
 

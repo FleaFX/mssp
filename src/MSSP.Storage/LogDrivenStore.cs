@@ -78,6 +78,25 @@ public sealed class LogDrivenStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKe
     public IEnumerable<KeyValuePair<TKey, ReadOnlyMemory<byte>?>> ScanSnapshotFrom(TKey from)
         => _inner.ScanSnapshotFrom(from);
 
+    /// <summary>
+    /// Applies a raw WAL record directly to the inner store, bypassing the log and the
+    /// <see cref="_pending"/> TCS queue. Used during startup replay, where committed Raft
+    /// log entries must be forwarded to the inner store synchronously — before the Raft
+    /// node starts — so that replay entries never mix with real-write TCS slots in
+    /// <see cref="_pending"/>.
+    /// </summary>
+    internal async ValueTask ReplayAsync(ReadOnlyMemory<byte> payload, CancellationToken cancellationToken) {
+        var span = payload.Span;
+        if (span.Length < 5) return;
+
+        var keyLen = BinaryPrimitives.ReadInt32LittleEndian(span[1..]);
+        if (keyLen < 0 || 5 + keyLen > span.Length) return;
+
+        TKey key = payload.Slice(5, keyLen);
+        Memory<byte> value = payload[(5 + keyLen)..].ToArray();
+        await _inner.WriteAsync(key, value, cancellationToken);
+    }
+
     void StartApplyLoop() {
         _loopCts = new CancellationTokenSource();
         _loopTask = RunApplyLoopAsync(_loopCts.Token);

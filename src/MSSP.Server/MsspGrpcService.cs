@@ -38,6 +38,13 @@ public sealed class MsspGrpcService(IMsspClient client) : MsspBase {
             return new AppendResponse();
         } catch (OptimisticConcurrencyException ex) {
             throw new RpcException(new Status(StatusCode.FailedPrecondition, ex.Message));
+        } catch (TimeoutException ex) {
+            // No cluster leader could be determined within the timeout period; the client should retry.
+            throw new RpcException(new Status(StatusCode.Unavailable, ex.Message));
+        } catch (OperationCanceledException) when (!context.CancellationToken.IsCancellationRequested) {
+            // ProposeAsync was cancelled because it timed out waiting for quorum (not because the
+            // client disconnected).  Surface as Unavailable so the client can retry.
+            throw new RpcException(new Status(StatusCode.Unavailable, "Write timed out waiting for cluster quorum."));
         }
     }
 

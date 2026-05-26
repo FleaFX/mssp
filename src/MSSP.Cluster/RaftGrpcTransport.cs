@@ -17,14 +17,32 @@ namespace MSSP.Cluster;
 /// </summary>
 sealed class RaftGrpcTransport : IRaftTransport, IDisposable {
     readonly Dictionary<string, (GrpcChannel Channel, RaftConsensus.RaftConsensusClient Client)> _peers = new();
+    readonly TimeSpan _rpcTimeout;
 
     /// <summary>
     /// Creates a transport and opens a gRPC channel to each peer in <paramref name="peers"/>.
     /// </summary>
     /// <param name="peers">The cluster members this node can send RPCs to.</param>
-    public RaftGrpcTransport(IEnumerable<RaftClusterMember> peers) {
+    /// <param name="rpcTimeout">
+    /// Deadline applied to every Raft RPC call. If a call exceeds this duration the remote peer
+    /// is treated as temporarily unavailable and the call is retried on the next heartbeat.
+    /// A sensible default is five times the heartbeat interval.
+    /// </param>
+    public RaftGrpcTransport(IEnumerable<RaftClusterMember> peers, TimeSpan rpcTimeout) {
+        _rpcTimeout = rpcTimeout;
         foreach (var peer in peers) {
-            var channel = GrpcChannel.ForAddress(peer.Address);
+            var socketsHandler = new System.Net.Http.SocketsHttpHandler {
+                // HTTP/2 keep-alive pings prevent idle connections from being silently
+                // closed by the OS or by Kestrel's idle-connection timeout.
+                KeepAlivePingDelay = TimeSpan.FromSeconds(15),
+                KeepAlivePingTimeout = TimeSpan.FromSeconds(10),
+            };
+            var invoker = new System.Net.Http.HttpMessageInvoker(socketsHandler, disposeHandler: false);
+            var opaqueHandler = new OpaqueInvokerHandler(invoker, socketsHandler);
+            var channel = GrpcChannel.ForAddress(peer.Address, new GrpcChannelOptions {
+                HttpHandler = opaqueHandler,
+                DisposeHttpClient = true,
+            });
             _peers[peer.NodeId] = (channel, new RaftConsensus.RaftConsensusClient(channel));
         }
     }
@@ -38,7 +56,9 @@ sealed class RaftGrpcTransport : IRaftTransport, IDisposable {
             LastLogIndex = request.LastLogIndex,
             LastLogTerm = request.LastLogTerm
         };
-        var response = await client.RequestVoteAsync(grpcRequest, cancellationToken: cancellationToken);
+        var response = await client.RequestVoteAsync(grpcRequest,
+            deadline: DateTime.UtcNow.Add(_rpcTimeout),
+            cancellationToken: cancellationToken);
         return new VoteResponse(response.Term, response.VoteGranted);
     }
 
@@ -58,7 +78,9 @@ sealed class RaftGrpcTransport : IRaftTransport, IDisposable {
             Type = (uint)e.Type,
             Payload = Google.Protobuf.ByteString.CopyFrom(e.Payload.Span)
         }));
-        var response = await client.AppendEntriesAsync(grpcRequest, cancellationToken: cancellationToken);
+        var response = await client.AppendEntriesAsync(grpcRequest,
+            deadline: DateTime.UtcNow.Add(_rpcTimeout),
+            cancellationToken: cancellationToken);
         return new AppendEntriesResponse(response.Term, response.Success, response.ConflictIndex, response.ConflictTerm);
     }
 
@@ -74,7 +96,9 @@ sealed class RaftGrpcTransport : IRaftTransport, IDisposable {
             Data = Google.Protobuf.ByteString.CopyFrom(request.Data.Span),
             Done = request.Done
         };
-        var response = await client.InstallSnapshotAsync(grpcRequest, cancellationToken: cancellationToken);
+        var response = await client.InstallSnapshotAsync(grpcRequest,
+            deadline: DateTime.UtcNow.Add(_rpcTimeout),
+            cancellationToken: cancellationToken);
         return new InstallSnapshotResponse(response.Term);
     }
 

@@ -34,6 +34,15 @@ sealed class RaftLogStateMachine : IRaftStateMachine {
     }
 
     /// <summary>
+    /// Advances <see cref="LastAppliedIndex"/> to <paramref name="index"/> without writing
+    /// a WAL record to the committed-records channel. Used during startup replay, where WAL
+    /// records are applied directly to the store via <see cref="LogDrivenStore{TKey}.ReplayAsync"/>
+    /// instead of going through the channel.
+    /// </summary>
+    internal void MarkApplied(ulong index) =>
+        Volatile.Write(ref _lastAppliedIndex, index);
+
+    /// <summary>
     /// Invoked by <see cref="RaftHostedService"/> to provide the physical snapshot bytes.
     /// When <see langword="null"/>, <see cref="CreateSnapshotAsync"/> returns an empty archive.
     /// </summary>
