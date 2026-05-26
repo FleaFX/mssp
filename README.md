@@ -27,6 +27,15 @@ await foreach (var e in client.ReadAsync("orders-42"))
 
 See the [wiki](../../wiki) for full setup instructions, architecture details, and operations guidance.
 
+## Samples
+
+Working examples for all three deployment modes live in [`src/Samples/`](src/Samples/README.md).
+The quickest way to see MSSP in action is the embedded sample:
+
+```bash
+cd src/Samples/EmbeddedSample && dotnet run
+```
+
 ## Building
 
 Requires .NET 10 SDK.

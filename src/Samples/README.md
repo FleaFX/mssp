@@ -41,14 +41,13 @@ docker compose up --build
 ```
 
 This starts all three nodes, wires up the inter-node network automatically, and persists
-each node's data in a named Docker volume. Once a leader is elected, point `ClientSample`
-at any node port (6001, 6002, or 6003):
+each node's data in a named Docker volume. Once a leader is elected, run `ClientSample`
+against any node port (6001, 6002, or 6003):
 
 ```powershell
-# In a separate terminal — update the address in ClientSample/Program.cs to
-# http://localhost:6001 (or 6002 / 6003), then:
+# In a separate terminal:
 cd src/Samples/ClientSample
-dotnet run
+dotnet run          # connects to http://localhost:6001 by default
 ```
 
 To stop and remove containers (data volumes are preserved):
