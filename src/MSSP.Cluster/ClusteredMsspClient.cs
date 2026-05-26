@@ -99,8 +99,7 @@ sealed class ClusteredMsspClient(
             // no-op commits, IsLeader flips to true and we can serve the request locally.
             if (node.IsLeader)
                 return null;
-            var hint = node.LeaderHint;
-            if (hint is not null && hint != node.NodeId && peers.Any(p => p.NodeId == hint))
+            if (node.LeaderHint is { }hint && hint != node.NodeId && peers.Any(p => p.NodeId == hint))
                 return hint;
             await Task.Delay(50, cancellationToken);
         }

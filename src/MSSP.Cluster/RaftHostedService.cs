@@ -129,7 +129,7 @@ sealed class RaftHostedService(MsspOptions msspOptions, MsspClusterOptions clust
     /// <inheritdoc/>
     public async Task StopAsync(CancellationToken cancellationToken) {
         if (_node is not null)
-            await _node.StopAsync(cancellationToken);
+            await _node.DisposeAsync();
         Dispose();
     }
 
@@ -139,7 +139,7 @@ sealed class RaftHostedService(MsspOptions msspOptions, MsspClusterOptions clust
         _disposed = true;
         _client?.Dispose();
         _local?.Dispose();
-        _node?.Dispose();
+        // _node is IAsyncDisposable; disposed in StopAsync via DisposeAsync()
         _transport?.Dispose();
         _raftLog?.Dispose();
     }
