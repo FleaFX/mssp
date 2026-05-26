@@ -147,7 +147,7 @@ public class MsspGrpcServiceTests : IAsyncLifetime {
         public async Task EmptyStreamId_ThrowsRpcException_WithInvalidArgument() {
             var act = async () => {
                 using var call = _rawClient.Read(new ReadRequest { StreamId = "" });
-                await call.ResponseStream.MoveNext(CancellationToken.None);
+                await call.ResponseStream.MoveNext(TestContext.Current.CancellationToken);
             };
 
             await act.Should().ThrowAsync<RpcException>()

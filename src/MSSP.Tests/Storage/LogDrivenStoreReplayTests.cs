@@ -43,7 +43,7 @@ public class LogDrivenStoreReplayTests : IAsyncLifetime {
         var lsm = await LsmStore<StringKey>.OpenAsync(
             new LsmStoreOptions<StringKey>(_dataDir, capacity, _ => ValueTask.CompletedTask),
             AsyncEnumerable.Empty<ReadOnlyMemory<byte>>(),
-            CancellationToken.None);
+            TestContext.Current.CancellationToken);
         var log = new CountingLog();
         // LogDrivenStore.Dispose() also disposes lsm via _inner.Dispose().
         var logDriven = LogDrivenStore<StringKey>.Create(log, lsm, capacity);
@@ -57,7 +57,7 @@ public class LogDrivenStoreReplayTests : IAsyncLifetime {
         var (lsm, logDriven, _) = await CreateAsync();
         using (logDriven) {
             var payload = (ReadOnlyMemory<byte>)WalRecord.From(new StringKey("replayed"), Bytes("val"));
-            await logDriven.ReplayAsync(payload, CancellationToken.None);
+            await logDriven.ReplayAsync(payload, TestContext.Current.CancellationToken);
 
             lsm.ScanAllFrom(new StringKey("replayed"))
                .Should().ContainSingle(e => e.Key == new StringKey("replayed"));
@@ -71,7 +71,7 @@ public class LogDrivenStoreReplayTests : IAsyncLifetime {
         var (_, logDriven, log) = await CreateAsync();
         using (logDriven) {
             var payload = (ReadOnlyMemory<byte>)WalRecord.From(new StringKey("key"), Bytes("val"));
-            await logDriven.ReplayAsync(payload, CancellationToken.None);
+            await logDriven.ReplayAsync(payload, TestContext.Current.CancellationToken);
 
             log.AppendCount.Should().Be(0,
                 "ReplayAsync must write directly to the inner store, not through the log");
@@ -84,7 +84,7 @@ public class LogDrivenStoreReplayTests : IAsyncLifetime {
         using (logDriven) {
             for (var i = 0; i < 5; i++) {
                 var payload = (ReadOnlyMemory<byte>)WalRecord.From(new StringKey($"replay-{i}"), Bytes($"val-{i}"));
-                await logDriven.ReplayAsync(payload, CancellationToken.None);
+                await logDriven.ReplayAsync(payload, TestContext.Current.CancellationToken);
             }
 
             lsm.ScanAllFrom(new StringKey(""))
@@ -98,7 +98,7 @@ public class LogDrivenStoreReplayTests : IAsyncLifetime {
         var (_, logDriven, _) = await CreateAsync();
         using (logDriven) {
             // A payload shorter than the 5-byte minimum header must be silently skipped.
-            var act = async () => await logDriven.ReplayAsync(new byte[] { 0x01, 0x00 }, CancellationToken.None);
+            var act = async () => await logDriven.ReplayAsync(new byte[] { 0x01, 0x00 }, TestContext.Current.CancellationToken);
             await act.Should().NotThrowAsync();
         }
     }
@@ -112,7 +112,7 @@ public class LogDrivenStoreReplayTests : IAsyncLifetime {
         var (lsm, logDriven, _) = await CreateAsync();
         using (logDriven) {
             var replayPayload = (ReadOnlyMemory<byte>)WalRecord.From(new StringKey("replayed"), Bytes("old"));
-            await logDriven.ReplayAsync(replayPayload, CancellationToken.None);
+            await logDriven.ReplayAsync(replayPayload, TestContext.Current.CancellationToken);
 
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             await logDriven.WriteAsync(new StringKey("written"), Bytes("new"), cts.Token);
@@ -129,7 +129,7 @@ public class LogDrivenStoreReplayTests : IAsyncLifetime {
         using (logDriven) {
             for (var i = 0; i < 10; i++) {
                 var payload = (ReadOnlyMemory<byte>)WalRecord.From(new StringKey($"r-{i}"), Bytes($"rv-{i}"));
-                await logDriven.ReplayAsync(payload, CancellationToken.None);
+                await logDriven.ReplayAsync(payload, TestContext.Current.CancellationToken);
             }
 
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
