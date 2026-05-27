@@ -32,7 +32,7 @@ sealed class InMemoryCluster : IAsyncDisposable {
 
             var raftLog = new RaftLog(node, stateMachine);
 
-            var lsmOptions = new LsmStoreOptions<EventKey>(dataDir, memTableCapacityBytes, _ => ValueTask.CompletedTask);
+            var lsmOptions = new LsmStoreOptions<EventKey>(dataDir, memTableCapacityBytes, _ => ValueTask.CompletedTask, BaseLevelSizeBytes: -1, LevelSizeMultiplier: 10);
             var store = await LsmStore<EventKey>.OpenAsync(lsmOptions, AsyncEnumerable.Empty<ReadOnlyMemory<byte>>(), cancellationToken);
 
             var subLog = SubscriptionLog.Open(dataDir, SubscriptionLogFormat.FullPayload, 64 * 1024 * 1024);
