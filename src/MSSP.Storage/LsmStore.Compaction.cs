@@ -3,11 +3,11 @@ namespace MSSP.Storage;
 public sealed partial class LsmStore<TKey> {
     /// <summary>
     /// Triggers compaction starting at L1, cascading upwards until no level exceeds its size target.
-    /// <para>
-    /// IMPORTANT: Must be called under the store's write lock to prevent race conditions
-    /// with concurrent writes or other compactions.
-    /// </para>
     /// </summary>
+    /// <remarks>
+    /// <see cref="LsmStore{TKey}"/> is not thread-safe. The caller is responsible for ensuring
+    /// no concurrent writes, flushes, or compactions are in progress.
+    /// </remarks>
     internal async ValueTask CompactAsync(CancellationToken cancellationToken) {
         if (_sstLevels.Count > 0 && EstimateLevelSize(0) >= GetLevelTarget(0))
             await CompactLevelAsync(0, cancellationToken);

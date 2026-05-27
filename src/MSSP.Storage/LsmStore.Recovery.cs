@@ -40,10 +40,11 @@ public sealed partial class LsmStore<TKey> {
     /// resets the MemTable to empty. Called by the cluster layer after an
     /// <c>InstallSnapshot</c> RPC has delivered a snapshot archive to
     /// <paramref name="sourceDirectory"/>.
-    /// <para>
-    /// IMPORTANT: Must be called under the store's write lock.
-    /// </para>
     /// </summary>
+    /// <remarks>
+    /// <see cref="LsmStore{TKey}"/> is not thread-safe. The caller is responsible for ensuring
+    /// no concurrent writes, flushes, or compactions are in progress.
+    /// </remarks>
     internal async ValueTask ReloadAsync(string sourceDirectory, CancellationToken cancellationToken) {
         // Remove all current SST files (ISstAccess.Delete also removes .bf sidecars).
         foreach (var level in _sstLevels) {

@@ -7,6 +7,10 @@ namespace MSSP.Storage;
 /// is full it is flushed to a new SST file in L1. When the size of a level reaches its target,
 /// all files in that level are merged into one file in the next level (cascading compaction).
 /// </summary>
+/// <remarks>
+/// This class is not thread-safe. Callers are responsible for ensuring that writes, reads,
+/// flushes, and compactions are not executed concurrently.
+/// </remarks>
 public sealed partial class LsmStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKey> {
     readonly string _dataDirectory;
     readonly int _capacityBytes;
