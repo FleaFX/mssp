@@ -3,280 +3,514 @@ using FluentAssertions;
 namespace MSSP.Raft;
 
 public class RaftNodeTests {
-    static RaftNode CreateNode(string nodeId, string[] peers, InMemoryRaftTransport transport,
-        int electionTimeoutMinMs = 50, int electionTimeoutMaxMs = 100, int heartbeatMs = 20) {
+    
+    static RaftNode CreateNode(
+        string nodeId,
+        string[] peers,
+        IRaftTransport transport,
+        IRaftLog? log = null,
+        int electionTimeoutMinMs = 10_000,
+        int electionTimeoutMaxMs = 20_000,
+        int heartbeatMs = 5_000) {
         var config = new RaftNodeConfig(nodeId, peers, electionTimeoutMinMs, electionTimeoutMaxMs, heartbeatMs);
-        var node = new RaftNode(config, new InMemoryRaftLog(), transport, new NullStateMachine(), new InMemoryRaftStateStorage());
+        return new RaftNode(config, log ?? new InMemoryRaftLog(), transport, new NullStateMachine(), new InMemoryRaftStateStorage());
+    }
+
+    static RaftNode CreateNodeWithTransport(
+        string nodeId,
+        string[] peers,
+        InMemoryRaftTransport transport,
+        IRaftLog? log = null,
+        int electionTimeoutMinMs = 10_000,
+        int electionTimeoutMaxMs = 20_000,
+        int heartbeatMs = 5_000) {
+        var node = CreateNode(nodeId, peers, transport, log, electionTimeoutMinMs, electionTimeoutMaxMs, heartbeatMs);
         transport.Register(node);
         return node;
     }
 
-    [Fact]
-    public async Task SingleNode_BecomesLeaderWithinTimeout() {
-        var transport = new InMemoryRaftTransport();
-        var node = CreateNode("n1", [], transport);
+    public class Election {
+        [Fact]
+        public async Task SingleNode_becomesLeader_after_electionTimer() {
+            var transport = new RecordingRaftTransport();
+            var node = CreateNode("n1", [], transport);
 
-        await node.StartAsync();
-        try {
-            await WaitForLeader([node], TimeSpan.FromSeconds(2));
-            node.IsLeader.Should().BeTrue();
-        } finally {
-            await node.StopAsync();
+            await node.StartAsync();
+            try {
+                await node.TriggerElectionTimerAsync();
+
+                node.IsLeader.Should().BeTrue("single-node cluster wins election immediately");
+                node.LeaderHint.Should().Be("n1");
+            } finally {
+                await node.DisposeAsync();
+            }
+        }
+
+        [Fact]
+        public async Task SingleNode_doesNotStartElection_on_staleTimerGeneration() {
+            var transport = new RecordingRaftTransport();
+            var node = CreateNode("n1", [], transport);
+
+            await node.StartAsync();
+            try {
+                // Inject a timer message with generation 0 (stale — StartAsync already incremented to 1).
+                node.Inject(new ElectionTimerFired(0));
+                await node.WhenIdleAsync();
+
+                node.IsLeader.Should().BeFalse("stale timer message must be silently discarded");
+            } finally {
+                await node.DisposeAsync();
+            }
+        }
+
+        [Fact]
+        public async Task ThreeNodes_elects_single_leader_deterministically() {
+            var transport = new InMemoryRaftTransport();
+            var n1 = CreateNodeWithTransport("n1", ["n2", "n3"], transport);
+            var n2 = CreateNodeWithTransport("n2", ["n1", "n3"], transport);
+            var n3 = CreateNodeWithTransport("n3", ["n1", "n2"], transport);
+
+            await Task.WhenAll(n1.StartAsync(), n2.StartAsync(), n3.StartAsync());
+            try {
+                // Drive n1 through an election without any real timer delays.
+                await n1.TriggerElectionTimerAsync(); // n1 → Candidate, sends VoteRequest to n2 and n3
+                await n2.WhenIdleAsync(); // n2 processes VoteRequestReceived, grants vote
+                await n3.WhenIdleAsync(); // n3 processes VoteRequestReceived, grants vote
+                await n1.WhenIdleAsync(); // n1 receives both votes, becomes Leader; sends no-op AppendEntries
+
+                // The no-op AppendEntries to n2 and n3 are in-flight (background tasks).
+                await n2.WhenIdleAsync(); // n2 processes the no-op AppendEntries, sends response
+                await n3.WhenIdleAsync(); // n3 processes the no-op AppendEntries, sends response
+                await n1.WhenIdleAsync(); // n1 processes the AppendEntries responses, commits no-op
+
+                n1.IsLeader.Should().BeTrue();
+                n2.IsLeader.Should().BeFalse();
+                n3.IsLeader.Should().BeFalse();
+            } finally {
+                await Task.WhenAll(n1.DisposeAsync().AsTask(), n2.DisposeAsync().AsTask(), n3.DisposeAsync().AsTask());
+            }
+        }
+
+        [Fact]
+        public async Task ThreeNodes_exactlyOneLeader_with_realTimers() {
+            var transport = new InMemoryRaftTransport();
+            var n1 = CreateNodeWithTransport("n1", ["n2", "n3"], transport, electionTimeoutMinMs: 50,
+                electionTimeoutMaxMs: 100, heartbeatMs: 20);
+            var n2 = CreateNodeWithTransport("n2", ["n1", "n3"], transport, electionTimeoutMinMs: 50,
+                electionTimeoutMaxMs: 100, heartbeatMs: 20);
+            var n3 = CreateNodeWithTransport("n3", ["n1", "n2"], transport, electionTimeoutMinMs: 50,
+                electionTimeoutMaxMs: 100, heartbeatMs: 20);
+
+            await Task.WhenAll(n1.StartAsync(), n2.StartAsync(), n3.StartAsync());
+            try {
+                await WaitForLeader([n1, n2, n3], TimeSpan.FromSeconds(5));
+
+                new[] { n1, n2, n3 }.Count(n => n.IsLeader).Should().Be(1);
+            } finally {
+                await Task.WhenAll(n1.DisposeAsync().AsTask(), n2.DisposeAsync().AsTask(), n3.DisposeAsync().AsTask());
+            }
+        }
+
+        [Fact]
+        public async Task VoteResponse_fromPreviousTerm_isIgnored() {
+            var transport = new RecordingRaftTransport();
+            var node = CreateNode("n1", ["n2"], transport);
+
+            await node.StartAsync();
+            try {
+                await node.TriggerElectionTimerAsync();
+                // n1 is now a Candidate in term 1, with 1 vote (self).
+
+                // Inject a vote response for an earlier term — must be discarded.
+                node.Inject(new VoteResponseReceived("n2", new VoteResponse(Term: 1, VoteGranted: true), SentTerm: 0));
+                await node.WhenIdleAsync();
+
+                node.IsLeader.Should().BeFalse("vote response with stale SentTerm must be ignored");
+            } finally {
+                await node.DisposeAsync();
+            }
+        }
+
+        [Fact]
+        public async Task VoteResponse_afterRoleChange_isIgnored() {
+            var transport = new RecordingRaftTransport();
+            var node = CreateNode("n1", ["n2"], transport);
+
+            await node.StartAsync();
+            try {
+                // Trigger election so the node is in Candidate role at term 1.
+                await node.TriggerElectionTimerAsync();
+
+                // Force the node back to Follower by injecting a higher-term AppendEntries.
+                node.Inject(new AppendEntriesReceived(
+                    new AppendEntriesRequest(Term: 5, LeaderId: "n2", PrevLogIndex: 0, PrevLogTerm: 0, Entries: [],
+                        LeaderCommit: 0),
+                    new TaskCompletionSource<AppendEntriesResponse>()));
+                await node.WhenIdleAsync();
+
+                // Now inject a vote response for term 1 — the node is a Follower, so it must be ignored.
+                node.Inject(new VoteResponseReceived("n2", new VoteResponse(Term: 1, VoteGranted: true), SentTerm: 1));
+                await node.WhenIdleAsync();
+
+                node.IsLeader.Should().BeFalse("vote response after role change must be discarded");
+            } finally {
+                await node.DisposeAsync();
+            }
+        }
+
+        [Fact]
+        public async Task VoteDenied_whenCandidateLogIsBehind() {
+            var transport = new InMemoryRaftTransport();
+            var log = new InMemoryRaftLog();
+            await log.AppendAsync([new RaftLogEntry(1, 1, RaftLogEntryType.Command, "data"u8.ToArray())]);
+
+            var n1 = CreateNodeWithTransport("n1", ["n2"], transport, log: log);
+            await n1.StartAsync();
+            try {
+                var response = await n1.ReceiveVoteRequestAsync(new VoteRequest(Term: 1, CandidateId: "n2", LastLogIndex: 0, LastLogTerm: 0));
+
+                response.VoteGranted.Should().BeFalse("candidate with a shorter log must not receive a vote");
+            } finally {
+                await n1.DisposeAsync();
+            }
+        }
+
+        [Fact]
+        public async Task VoteGranted_resetsElectionTimer() {
+            var transport = new RecordingRaftTransport();
+            var node = CreateNode("n1", ["n2"], transport);
+
+            await node.StartAsync();
+            try {
+                var generationBefore = node._electionTimerGeneration;
+
+                var response = await node.ReceiveVoteRequestAsync(new VoteRequest(Term: 1, CandidateId: "n2", LastLogIndex: 0, LastLogTerm: 0));
+
+                response.VoteGranted.Should().BeTrue();
+                node._electionTimerGeneration.Should().BeGreaterThan(generationBefore,
+                    "granting a vote must restart the election timer");
+            } finally {
+                await node.DisposeAsync();
+            }
         }
     }
 
-    [Fact]
-    public async Task ThreeNodes_ExactlyOneLeader() {
-        var transport = new InMemoryRaftTransport();
-        var n1 = CreateNode("n1", ["n2", "n3"], transport);
-        var n2 = CreateNode("n2", ["n1", "n3"], transport);
-        var n3 = CreateNode("n3", ["n1", "n2"], transport);
+    public class ProposeAppendEntries {
+        [Fact]
+        public async Task Propose_commitsAfterQuorum() {
+            var transport = new InMemoryRaftTransport();
+            var n1 = CreateNodeWithTransport("n1", ["n2", "n3"], transport, electionTimeoutMinMs: 50, electionTimeoutMaxMs: 100, heartbeatMs: 20);
+            var n2 = CreateNodeWithTransport("n2", ["n1", "n3"], transport, electionTimeoutMinMs: 50, electionTimeoutMaxMs: 100, heartbeatMs: 20);
+            var n3 = CreateNodeWithTransport("n3", ["n1", "n2"], transport, electionTimeoutMinMs: 50, electionTimeoutMaxMs: 100, heartbeatMs: 20);
 
-        await Task.WhenAll(n1.StartAsync(), n2.StartAsync(), n3.StartAsync());
-        try {
-            await WaitForLeader([n1, n2, n3], TimeSpan.FromSeconds(5));
+            await Task.WhenAll(n1.StartAsync(), n2.StartAsync(), n3.StartAsync());
+            try {
+                var leader = await WaitForLeader([n1, n2, n3], TimeSpan.FromSeconds(5));
+                var result = await leader.ProposeAsync("hello"u8.ToArray());
 
-            var leaders = new[] { n1, n2, n3 }.Count(n => n.IsLeader);
-            leaders.Should().Be(1);
-        } finally {
-            await Task.WhenAll(n1.StopAsync(), n2.StopAsync(), n3.StopAsync());
+                result.IsOccConflict.Should().BeFalse();
+            } finally {
+                await Task.WhenAll(n1.DisposeAsync().AsTask(), n2.DisposeAsync().AsTask(), n3.DisposeAsync().AsTask());
+            }
+        }
+
+        [Fact]
+        public async Task Propose_failsImmediately_whenNotLeader() {
+            var transport = new RecordingRaftTransport();
+            var node = CreateNode("n1", ["n2"], transport);
+
+            await node.StartAsync();
+            try {
+                var act = async () => await node.ProposeAsync("hello"u8.ToArray());
+
+                await act.Should().ThrowAsync<NotLeaderException>();
+            } finally {
+                await node.DisposeAsync();
+            }
+        }
+
+        [Fact]
+        public async Task Propose_failsImmediately_whenLeaderButNoOpNotYetCommitted() {
+            // Use a two-node cluster with a RecordingTransport so we can prevent the no-op from
+            // being committed: the node becomes leader but the peer never acknowledges AppendEntries.
+            var transport = new RecordingRaftTransport();
+            var node = CreateNode("n1", ["n2"], transport);
+
+            await node.StartAsync();
+            try {
+                await node.TriggerElectionTimerAsync();
+                // n1 is now Candidate and sent a VoteRequest to n2; grant it so n1 becomes Leader.
+                transport.VoteRequests.TryDequeue(out var voteCall).Should().BeTrue();
+                voteCall.Reply.SetResult(new VoteResponse(Term: 1, VoteGranted: true));
+                await node.WhenIdleAsync();
+
+                // n1 is Leader but the no-op AppendEntries to n2 is pending (not acknowledged).
+                // ProposeAsync must throw NotLeaderException because IsLeader returns false (no-op uncommitted).
+                var act = async () => await node.ProposeAsync("hello"u8.ToArray());
+                await act.Should().ThrowAsync<NotLeaderException>("no-op is not yet committed");
+            } finally {
+                await node.DisposeAsync();
+            }
         }
     }
 
-    [Fact]
-    public async Task Propose_CommitsAfterQuorum() {
-        var transport = new InMemoryRaftTransport();
-        var n1 = CreateNode("n1", ["n2", "n3"], transport);
-        var n2 = CreateNode("n2", ["n1", "n3"], transport);
-        var n3 = CreateNode("n3", ["n1", "n2"], transport);
+    public class LeaderStepDown {
+        [Fact]
+        public async Task HigherTerm_causesLeaderToStepDown() {
+            var transport = new InMemoryRaftTransport();
+            var n1 = CreateNodeWithTransport("n1", ["n2", "n3"], transport, electionTimeoutMinMs: 50, electionTimeoutMaxMs: 100, heartbeatMs: 20);
+            var n2 = CreateNodeWithTransport("n2", ["n1", "n3"], transport, electionTimeoutMinMs: 50, electionTimeoutMaxMs: 100, heartbeatMs: 20);
+            var n3 = CreateNodeWithTransport("n3", ["n1", "n2"], transport, electionTimeoutMinMs: 50, electionTimeoutMaxMs: 100, heartbeatMs: 20);
 
-        await Task.WhenAll(n1.StartAsync(), n2.StartAsync(), n3.StartAsync());
-        try {
-            var leader = await WaitForLeader([n1, n2, n3], TimeSpan.FromSeconds(5));
-            var result = await leader.ProposeAsync("hello"u8.ToArray());
-            result.IsOccConflict.Should().BeFalse();
-        } finally {
-            await Task.WhenAll(n1.StopAsync(), n2.StopAsync(), n3.StopAsync());
+            await Task.WhenAll(n1.StartAsync(), n2.StartAsync(), n3.StartAsync());
+            try {
+                var leader = await WaitForLeader([n1, n2, n3], TimeSpan.FromSeconds(5));
+
+                await leader.ReceiveAppendEntriesAsync(
+                    new AppendEntriesRequest(Term: 999, LeaderId: "fake", PrevLogIndex: 0, PrevLogTerm: 0, Entries: [], LeaderCommit: 0));
+
+                leader.IsLeader.Should().BeFalse("a higher-term AppendEntries must cause the leader to step down");
+            } finally {
+                await Task.WhenAll(n1.DisposeAsync().AsTask(), n2.DisposeAsync().AsTask(), n3.DisposeAsync().AsTask());
+            }
+        }
+
+        [Fact]
+        public async Task HigherTerm_onVoteResponse_causesStepDown() {
+            var transport = new RecordingRaftTransport();
+            var node = CreateNode("n1", ["n2"], transport);
+
+            await node.StartAsync();
+            try {
+                // Start an election so the node is a Candidate at term 1.
+                await node.TriggerElectionTimerAsync();
+
+                // Peer responds with a higher term — node must step down to Follower.
+                node.Inject(new VoteResponseReceived("n2", new VoteResponse(Term: 5, VoteGranted: false), SentTerm: 1));
+                await node.WhenIdleAsync();
+
+                node.IsLeader.Should().BeFalse();
+                node._currentTerm.Should().Be(5UL);
+                node._role.Should().Be(NodeRole.Follower);
+            } finally {
+                await node.DisposeAsync();
+            }
         }
     }
 
-    [Fact]
-    public async Task HigherTerm_CausesLeaderToStepDown() {
-        var transport = new InMemoryRaftTransport();
-        var n1 = CreateNode("n1", ["n2", "n3"], transport);
-        var n2 = CreateNode("n2", ["n1", "n3"], transport);
-        var n3 = CreateNode("n3", ["n1", "n2"], transport);
+    public class Reelection {
+        [Fact]
+        public async Task ReElection_afterLeaderStop() {
+            var transport = new InMemoryRaftTransport();
+            var n1 = CreateNodeWithTransport("n1", ["n2", "n3"], transport, electionTimeoutMinMs: 50, electionTimeoutMaxMs: 100, heartbeatMs: 20);
+            var n2 = CreateNodeWithTransport("n2", ["n1", "n3"], transport, electionTimeoutMinMs: 50, electionTimeoutMaxMs: 100, heartbeatMs: 20);
+            var n3 = CreateNodeWithTransport("n3", ["n1", "n2"], transport, electionTimeoutMinMs: 50, electionTimeoutMaxMs: 100, heartbeatMs: 20);
 
-        await Task.WhenAll(n1.StartAsync(), n2.StartAsync(), n3.StartAsync());
-        try {
-            var leader = await WaitForLeader([n1, n2, n3], TimeSpan.FromSeconds(5));
+            await Task.WhenAll(n1.StartAsync(), n2.StartAsync(), n3.StartAsync());
+            RaftNode? firstLeader = null;
+            try {
+                firstLeader = await WaitForLeader([n1, n2, n3], TimeSpan.FromSeconds(5));
+                await firstLeader.StopAsync();
 
-            // send AppendEntries with a higher term → leader must step down
-            var higherTerm = new AppendEntriesRequest(999, "fake", 0, 0, [], 0);
-            await leader.ReceiveAppendEntriesAsync(higherTerm);
-
-            // IsLeader is false immediately after the await: BecomeFollowerAsync runs before the TCS is set
-            leader.IsLeader.Should().BeFalse();
-        } finally {
-            await Task.WhenAll(n1.StopAsync(), n2.StopAsync(), n3.StopAsync());
+                var remaining = new[] { n1, n2, n3 }.Where(n => n != firstLeader).ToArray();
+                var newLeader = await WaitForLeader(remaining, TimeSpan.FromSeconds(5));
+                newLeader.Should().NotBe(firstLeader);
+            } finally {
+                foreach (var n in new[] { n1, n2, n3 }.Where(n => n != firstLeader))
+                    await n.DisposeAsync();
+            }
         }
     }
 
-    [Fact]
-    public async Task VoteDenied_WhenCandidateLogIsBehind() {
-        var transport = new InMemoryRaftTransport();
-        // n1 has a longer log; n2 tries to request vote
-        var logN1 = new InMemoryRaftLog();
-        await logN1.AppendAsync([new RaftLogEntry(1, 1, RaftLogEntryType.Command, "data"u8.ToArray())]);
+    public class InstallSnapshot {
+        [Fact]
+        public async Task AdvancesLogAndStateMachine() {
+            var transport = new RecordingRaftTransport();
+            var log = new InMemoryRaftLog();
+            var stateMachine = new NullStateMachine();
+            var config = new RaftNodeConfig("n1", [], 10_000, 20_000, 5_000);
+            var node = new RaftNode(config, log, transport, stateMachine, new InMemoryRaftStateStorage());
 
-        var config = new RaftNodeConfig("n1", ["n2"], 50, 100, 20);
-        var n1 = new RaftNode(config, logN1, transport, new NullStateMachine(), new InMemoryRaftStateStorage());
-        transport.Register(n1);
-        await n1.StartAsync();
+            await node.StartAsync();
+            try {
+                var resp = await node.ReceiveInstallSnapshotAsync(
+                    new InstallSnapshotRequest(5, "leader", 5, 2, 0, ReadOnlyMemory<byte>.Empty, Done: true));
 
-        try {
-            // n2 candidate with empty log requests vote from n1 with term 1
-            var voteRequest = new VoteRequest(1, "n2", 0, 0);
-            var response = await n1.ReceiveVoteRequestAsync(voteRequest);
+                resp.Term.Should().Be(5);
+                log.LastIncludedIndex.Should().Be(5);
+                stateMachine.LastAppliedIndex.Should().Be(5);
+            } finally {
+                await node.DisposeAsync();
+            }
+        }
 
-            response.VoteGranted.Should().BeFalse();
-        } finally {
-            await n1.StopAsync();
+        [Fact]
+        public async Task StaleTerm_isIgnored() {
+            var transport = new RecordingRaftTransport();
+            var log = new InMemoryRaftLog();
+            var config = new RaftNodeConfig("n1", [], 10_000, 20_000, 5_000);
+            var node = new RaftNode(config, log, transport, new NullStateMachine(), new InMemoryRaftStateStorage());
+
+            await node.StartAsync();
+            try {
+                await node.ReceiveInstallSnapshotAsync(
+                    new InstallSnapshotRequest(5, "leader", 3, 2, 0, ReadOnlyMemory<byte>.Empty, Done: true));
+
+                var resp = await node.ReceiveInstallSnapshotAsync(
+                    new InstallSnapshotRequest(1, "oldleader", 1, 1, 0, ReadOnlyMemory<byte>.Empty, Done: true));
+
+                resp.Term.Should().Be(5);
+                log.LastIncludedIndex.Should().Be(3, "stale snapshot must not roll back the log");
+            } finally {
+                await node.DisposeAsync();
+            }
+        }
+
+        [Fact]
+        public async Task AlreadyAhead_isNoop() {
+            var transport = new RecordingRaftTransport();
+            var log = new InMemoryRaftLog();
+            var config = new RaftNodeConfig("n1", [], 10_000, 20_000, 5_000);
+            var node = new RaftNode(config, log, transport, new NullStateMachine(), new InMemoryRaftStateStorage());
+
+            await node.StartAsync();
+            try {
+                await node.ReceiveInstallSnapshotAsync(
+                    new InstallSnapshotRequest(5, "leader", 10, 3, 0, ReadOnlyMemory<byte>.Empty, Done: true));
+                log.LastIncludedIndex.Should().Be(10);
+
+                var resp = await node.ReceiveInstallSnapshotAsync(
+                    new InstallSnapshotRequest(5, "leader", 5, 2, 0, ReadOnlyMemory<byte>.Empty, Done: true));
+
+                resp.Term.Should().Be(5);
+                log.LastIncludedIndex.Should().Be(10, "a lower-boundary snapshot must not roll back the log");
+            } finally {
+                await node.DisposeAsync();
+            }
+        }
+
+        [Fact]
+        public async Task HigherTerm_causesStepDown() {
+            var transport = new InMemoryRaftTransport();
+            var n1 = CreateNodeWithTransport("n1", [], transport, electionTimeoutMinMs: 50, electionTimeoutMaxMs: 100);
+
+            await n1.StartAsync();
+            try {
+                await WaitForLeader([n1], TimeSpan.FromSeconds(2));
+                n1.IsLeader.Should().BeTrue();
+
+                var resp = await n1.ReceiveInstallSnapshotAsync(
+                    new InstallSnapshotRequest(99, "n2", 5, 2, 0, ReadOnlyMemory<byte>.Empty, Done: true));
+
+                resp.Term.Should().Be(99);
+                n1.IsLeader.Should().BeFalse("a higher-term snapshot must cause step-down");
+            } finally {
+                await n1.DisposeAsync();
+            }
+        }
+
+        [Fact]
+        public async Task MultipleChunks_assemblesAndInstalls() {
+            var transport = new RecordingRaftTransport();
+            var log = new InMemoryRaftLog();
+            var stateMachine = new NullStateMachine();
+            var config = new RaftNodeConfig("n1", [], 10_000, 20_000, 5_000);
+            var node = new RaftNode(config, log, transport, stateMachine, new InMemoryRaftStateStorage());
+
+            var payload = new byte[] { 10, 20, 30, 40, 50, 60 };
+
+            await node.StartAsync();
+            try {
+                await node.ReceiveInstallSnapshotAsync(new InstallSnapshotRequest(
+                    5, "leader", 5, 2, 0, new ReadOnlyMemory<byte>(payload, 0, 2), Done: false));
+                log.LastIncludedIndex.Should().Be(0, "partial chunk must not install");
+
+                await node.ReceiveInstallSnapshotAsync(new InstallSnapshotRequest(
+                    5, "leader", 5, 2, 2, new ReadOnlyMemory<byte>(payload, 2, 2), Done: false));
+                log.LastIncludedIndex.Should().Be(0, "partial chunk must not install");
+
+                var resp = await node.ReceiveInstallSnapshotAsync(new InstallSnapshotRequest(
+                    5, "leader", 5, 2, 4, new ReadOnlyMemory<byte>(payload, 4, 2), Done: true));
+
+                resp.Term.Should().Be(5);
+                log.LastIncludedIndex.Should().Be(5);
+                stateMachine.LastAppliedIndex.Should().Be(5);
+                stateMachine.InstalledData!.Value.ToArray().Should().Equal(payload,
+                    "all chunks must be reassembled into the original payload before installation");
+            } finally {
+                await node.DisposeAsync();
+            }
+        }
+
+        [Fact]
+        public async Task NewSnapshotAbandonsPreviousBuffer() {
+            var transport = new RecordingRaftTransport();
+            var log = new InMemoryRaftLog();
+            var stateMachine = new NullStateMachine();
+            var config = new RaftNodeConfig("n1", [], 10_000, 20_000, 5_000);
+            var node = new RaftNode(config, log, transport, stateMachine, new InMemoryRaftStateStorage());
+
+            await node.StartAsync();
+            try {
+                var staleChunk = new byte[] { 0xFF };
+                var finalPayload = new byte[] { 0xAB, 0xCD };
+
+                await node.ReceiveInstallSnapshotAsync(new InstallSnapshotRequest(
+                    5, "leader", 5, 2, 0, staleChunk, Done: false));
+
+                var resp = await node.ReceiveInstallSnapshotAsync(new InstallSnapshotRequest(
+                    5, "leader", 10, 3, 0, finalPayload, Done: true));
+
+                resp.Term.Should().Be(5);
+                log.LastIncludedIndex.Should().Be(10);
+                stateMachine.InstalledData!.Value.ToArray().Should().Equal(finalPayload,
+                    "only the completed snapshot must be installed; the abandoned chunk must be discarded");
+            } finally {
+                await node.DisposeAsync();
+            }
         }
     }
 
-    [Fact]
-    public async Task ReElection_AfterLeaderStop() {
-        var transport = new InMemoryRaftTransport();
-        var n1 = CreateNode("n1", ["n2", "n3"], transport);
-        var n2 = CreateNode("n2", ["n1", "n3"], transport);
-        var n3 = CreateNode("n3", ["n1", "n2"], transport);
+    public class AppendEntries {
+        [Fact]
+        public async Task CandidateSteepsDown_onValidCurrentTermMessage() {
+            var transport = new RecordingRaftTransport();
+            var node = CreateNode("n1", ["n2"], transport);
 
-        await Task.WhenAll(n1.StartAsync(), n2.StartAsync(), n3.StartAsync());
-        RaftNode? firstLeader = null;
-        try {
-            firstLeader = await WaitForLeader([n1, n2, n3], TimeSpan.FromSeconds(5));
-            await firstLeader.StopAsync();
+            await node.StartAsync();
+            try {
+                // Trigger election; node is now a Candidate in term 1.
+                await node.TriggerElectionTimerAsync();
+                node._role.Should().Be(NodeRole.Candidate);
 
-            var remaining = new[] { n1, n2, n3 }.Where(n => n != firstLeader).ToArray();
-            var newLeader = await WaitForLeader(remaining, TimeSpan.FromSeconds(5));
-            newLeader.Should().NotBe(firstLeader);
-        } finally {
-            foreach (var n in new[] { n1, n2, n3 }.Where(n => n != firstLeader))
-                await n.StopAsync();
+                // Receive AppendEntries from the new leader in the same term.
+                await node.ReceiveAppendEntriesAsync(
+                    new AppendEntriesRequest(Term: 1, LeaderId: "n2", PrevLogIndex: 0, PrevLogTerm: 0, Entries: [], LeaderCommit: 0));
+
+                node._role.Should().Be(NodeRole.Follower, "a Candidate must step down when it receives AppendEntries from the current term's leader");
+            } finally {
+                await node.DisposeAsync();
+            }
         }
-    }
 
-    [Fact]
-    public async Task InstallSnapshot_AdvancesLogAndStateMachine() {
-        var transport = new InMemoryRaftTransport();
-        var log = new InMemoryRaftLog();
-        var stateMachine = new NullStateMachine();
-        var config = new RaftNodeConfig("n1", [], 10_000, 20_000, 5_000);
-        var node = new RaftNode(config, log, transport, stateMachine, new InMemoryRaftStateStorage());
-        transport.Register(node);
+        [Fact]
+        public async Task ResetsElectionTimer_onValidMessage() {
+            var transport = new RecordingRaftTransport();
+            var node = CreateNode("n1", [], transport);  // single node — no peers needed for this test
 
-        await node.StartAsync();
-        try {
-            var resp = await node.ReceiveInstallSnapshotAsync(new InstallSnapshotRequest(5, "leader", 5, 2, 0, ReadOnlyMemory<byte>.Empty, Done: true));
-            resp.Term.Should().Be(5);
-            log.LastIncludedIndex.Should().Be(5);
-            stateMachine.LastAppliedIndex.Should().Be(5);
-        } finally {
-            await node.StopAsync();
-        }
-    }
+            await node.StartAsync();
+            try {
+                var generationBefore = node._electionTimerGeneration;
 
-    [Fact]
-    public async Task InstallSnapshot_StaleTerm_IsIgnored() {
-        var transport = new InMemoryRaftTransport();
-        var log = new InMemoryRaftLog();
-        var stateMachine = new NullStateMachine();
-        var config = new RaftNodeConfig("n1", [], 10_000, 20_000, 5_000);
-        var node = new RaftNode(config, log, transport, stateMachine, new InMemoryRaftStateStorage());
-        transport.Register(node);
+                // Receive a valid AppendEntries from a node claiming term 1.
+                await node.ReceiveAppendEntriesAsync(
+                    new AppendEntriesRequest(Term: 1, LeaderId: "n2", PrevLogIndex: 0, PrevLogTerm: 0, Entries: [], LeaderCommit: 0));
 
-        await node.StartAsync();
-        try {
-            // Advance the node's term to 5 via a valid snapshot.
-            await node.ReceiveInstallSnapshotAsync(new InstallSnapshotRequest(5, "leader", 3, 2, 0, ReadOnlyMemory<byte>.Empty, Done: true));
-
-            // A stale snapshot with term=1 should be rejected.
-            var resp = await node.ReceiveInstallSnapshotAsync(new InstallSnapshotRequest(1, "oldleader", 1, 1, 0, ReadOnlyMemory<byte>.Empty, Done: true));
-            resp.Term.Should().Be(5);
-            log.LastIncludedIndex.Should().Be(3); // unchanged
-        } finally {
-            await node.StopAsync();
-        }
-    }
-
-    [Fact]
-    public async Task InstallSnapshot_AlreadyAhead_IsNoop() {
-        var transport = new InMemoryRaftTransport();
-        var log = new InMemoryRaftLog();
-        var stateMachine = new NullStateMachine();
-        var config = new RaftNodeConfig("n1", [], 10_000, 20_000, 5_000);
-        var node = new RaftNode(config, log, transport, stateMachine, new InMemoryRaftStateStorage());
-        transport.Register(node);
-
-        await node.StartAsync();
-        try {
-            // Compact the follower's log ahead to index 10.
-            await node.ReceiveInstallSnapshotAsync(new InstallSnapshotRequest(5, "leader", 10, 3, 0, ReadOnlyMemory<byte>.Empty, Done: true));
-            log.LastIncludedIndex.Should().Be(10);
-
-            // A later snapshot at index 5 is stale and must not roll back the log.
-            var resp = await node.ReceiveInstallSnapshotAsync(new InstallSnapshotRequest(5, "leader", 5, 2, 0, ReadOnlyMemory<byte>.Empty, Done: true));
-            resp.Term.Should().Be(5);
-            log.LastIncludedIndex.Should().Be(10); // unchanged
-        } finally {
-            await node.StopAsync();
-        }
-    }
-
-    [Fact]
-    public async Task InstallSnapshot_HigherTerm_CausesStepDown() {
-        var transport = new InMemoryRaftTransport();
-        var node = CreateNode("n1", [], transport, electionTimeoutMinMs: 50, electionTimeoutMaxMs: 100);
-
-        await node.StartAsync();
-        try {
-            await WaitForLeader([node], TimeSpan.FromSeconds(2));
-            node.IsLeader.Should().BeTrue();
-
-            var resp = await node.ReceiveInstallSnapshotAsync(new InstallSnapshotRequest(99, "n2", 5, 2, 0, ReadOnlyMemory<byte>.Empty, Done: true));
-            resp.Term.Should().Be(99);
-            node.IsLeader.Should().BeFalse();
-        } finally {
-            await node.StopAsync();
-        }
-    }
-
-    [Fact]
-    public async Task InstallSnapshot_MultipleChunks_AssemblesAndInstalls() {
-        var transport = new InMemoryRaftTransport();
-        var log = new InMemoryRaftLog();
-        var stateMachine = new NullStateMachine();
-        var config = new RaftNodeConfig("n1", [], 10_000, 20_000, 5_000);
-        var node = new RaftNode(config, log, transport, stateMachine, new InMemoryRaftStateStorage());
-        transport.Register(node);
-
-        var payload = new byte[] { 10, 20, 30, 40, 50, 60 };
-
-        await node.StartAsync();
-        try {
-            // chunk 1: not yet installed
-            await node.ReceiveInstallSnapshotAsync(new InstallSnapshotRequest(
-                5, "leader", 5, 2, 0, new ReadOnlyMemory<byte>(payload, 0, 2), Done: false));
-            log.LastIncludedIndex.Should().Be(0, "snapshot must not install after the first partial chunk");
-
-            // chunk 2: still not installed
-            await node.ReceiveInstallSnapshotAsync(new InstallSnapshotRequest(
-                5, "leader", 5, 2, 2, new ReadOnlyMemory<byte>(payload, 2, 2), Done: false));
-            log.LastIncludedIndex.Should().Be(0, "snapshot must not install after the second partial chunk");
-
-            // chunk 3: done — snapshot is now installed
-            var resp = await node.ReceiveInstallSnapshotAsync(new InstallSnapshotRequest(
-                5, "leader", 5, 2, 4, new ReadOnlyMemory<byte>(payload, 4, 2), Done: true));
-
-            resp.Term.Should().Be(5);
-            log.LastIncludedIndex.Should().Be(5);
-            stateMachine.LastAppliedIndex.Should().Be(5);
-            stateMachine.InstalledData!.Value.ToArray().Should().Equal(payload,
-                "the three chunks must be reassembled into the original payload before installation");
-        } finally {
-            await node.StopAsync();
-        }
-    }
-
-    [Fact]
-    public async Task InstallSnapshot_NewSnapshotAbandonsPreviousBuffer() {
-        var transport = new InMemoryRaftTransport();
-        var log = new InMemoryRaftLog();
-        var stateMachine = new NullStateMachine();
-        var config = new RaftNodeConfig("n1", [], 10_000, 20_000, 5_000);
-        var node = new RaftNode(config, log, transport, stateMachine, new InMemoryRaftStateStorage());
-        transport.Register(node);
-
-        await node.StartAsync();
-        try {
-            var staleChunk = new byte[] { 0xFF };
-            var finalPayload = new byte[] { 0xAB, 0xCD };
-
-            // start snapshot for index 5 but do not complete it
-            await node.ReceiveInstallSnapshotAsync(new InstallSnapshotRequest(
-                5, "leader", 5, 2, 0, staleChunk, Done: false));
-
-            // replace it with a complete snapshot for index 10
-            var resp = await node.ReceiveInstallSnapshotAsync(new InstallSnapshotRequest(
-                5, "leader", 10, 3, 0, finalPayload, Done: true));
-
-            resp.Term.Should().Be(5);
-            log.LastIncludedIndex.Should().Be(10);
-            stateMachine.InstalledData!.Value.ToArray().Should().Equal(finalPayload,
-                "only the completed snapshot's data must be installed; the abandoned chunk must be discarded");
-        } finally {
-            await node.StopAsync();
+                node._electionTimerGeneration.Should().BeGreaterThan(generationBefore,
+                    "a valid AppendEntries must restart the election timer");
+            } finally {
+                await node.DisposeAsync();
+            }
         }
     }
 

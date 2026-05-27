@@ -61,7 +61,7 @@ sealed class InMemoryCluster : IAsyncDisposable {
 
     public async ValueTask DisposeAsync() {
         foreach (var h in _nodes)
-            await h.Node.StopAsync();
+            await h.Node.DisposeAsync();
         foreach (var h in _nodes) {
             h.Client.Dispose();
             h.Local.Dispose();

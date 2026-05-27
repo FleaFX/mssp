@@ -1,13 +1,33 @@
 using System.Threading.Channels;
+using Microsoft.Extensions.Logging;
 
 namespace MSSP.Raft;
+
+/// <summary>
+/// Distinguishes the three roles a <see cref="RaftNode"/> may occupy at any given moment.
+/// </summary>
+internal enum NodeRole {
+    /// <summary>
+    /// Passively replicates entries from the leader. Default role at startup.
+    /// </summary>
+    Follower = 0,
+    /// <summary>
+    /// Solicits votes from peers in an attempt to win a leader election.
+    /// </summary>
+    Candidate = 1,
+    /// <summary>
+    /// Drives log replication and accepts client proposals.
+    /// </summary>
+    Leader = 2,
+}
 
 /// <summary>
 /// A single node in a Raft consensus cluster.
 /// </summary>
 /// <remarks>
-/// All state mutations are serialized through an internal mailbox (a <see cref="Channel{T}"/>
-/// single-consumer loop), so callers may invoke the public API concurrently without external locking.
+/// All state mutations are serialised through an internal actor channel — a
+/// <see cref="Channel{T}"/> of typed <see cref="RaftMessage"/> values consumed by a single
+/// background task. Callers may invoke the public API concurrently without external locking.
 /// <para>
 /// A node starts as a follower. It transitions to candidate when its election timer fires,
 /// and to leader once it wins a majority vote. A newly elected leader appends a no-op entry
@@ -19,30 +39,56 @@ namespace MSSP.Raft;
 /// <param name="transport">The network layer used to contact peers.</param>
 /// <param name="stateMachine">The application state machine that applies committed entries.</param>
 /// <param name="stateStorage">Durable storage for the node's persistent Raft state.</param>
+/// <param name="logger">Optional logger for diagnostic output.</param>
 public sealed partial class RaftNode(
     RaftNodeConfig config,
     IRaftLog log,
     IRaftTransport transport,
     IRaftStateMachine stateMachine,
-    IRaftStateStorage stateStorage
-) : IDisposable {
+    IRaftStateStorage stateStorage,
+    ILogger<RaftNode>? logger = null) : IAsyncDisposable {
+
+    readonly Channel<RaftMessage> _channel = Channel.CreateUnbounded<RaftMessage>(
+        new UnboundedChannelOptions { SingleReader = true });
+
+    Task? _actorTask;
+    CancellationTokenSource? _cts;
 
     readonly RaftNodeConfig _config = config;
     readonly IRaftLog _log = log;
     readonly IRaftTransport _transport = transport;
     readonly IRaftStateMachine _stateMachine = stateMachine;
     readonly IRaftStateStorage _stateStorage = stateStorage;
-    readonly Random _rng = new();
+    readonly ILogger<RaftNode>? _logger = logger;
 
-    ulong _currentTerm;
+    // Persistent Raft state — persisted to storage on every change.
+    internal ulong _currentTerm;   // internal: read by tests
     string? _votedFor;
-    string? _leaderId;
-    ulong _commitIndex;
-    RaftRole _role = null!;
 
-    // snapshot chunk-reassembly state; lives on the node so it survives role transitions
-    internal MemoryStream? _snapshotBuffer;
-    internal ulong? _pendingSnapshotIndex;
+    // Volatile state — reset on role transitions.
+    // _role, _leaderHint and _noOpCommitted are read from external threads (e.g. ClusteredMsspClient
+    // polling IsLeader/LeaderHint); volatile ensures memory visibility without a lock.
+    internal volatile NodeRole _role;       // internal: read by tests
+    volatile string? _leaderHint;
+    ulong _commitIndex;
+
+    // Timer generations — incremented on every (re)start; stale timer messages carry an old generation and are discarded.
+    internal ulong _electionTimerGeneration;  // internal: read by tests
+    ulong _heartbeatTimerGeneration;
+
+    // Snapshot chunk reassembly — stored on the node (not on a role object) so chunks survive
+    // role transitions within the same term. Cleared in BecomeFollowerAsync on term change.
+    MemoryStream? _snapshotBuffer;
+    ulong? _pendingSnapshotIndex;
+
+    // Candidate state — valid only while _role == Candidate.
+    int _votesGranted;
+
+    // Leader state — allocated in BecomeLeaderAsync; null when not leader.
+    Dictionary<string, ulong>? _nextIndex;
+    Dictionary<string, ulong>? _matchIndex;
+    Dictionary<ulong, TaskCompletionSource<RaftApplyResult>>? _pendingProposals;
+    volatile bool _noOpCommitted;
 
     /// <summary>
     /// Gets the unique identifier of this node within the cluster.
@@ -50,19 +96,19 @@ public sealed partial class RaftNode(
     public string NodeId => _config.NodeId;
 
     /// <summary>
-    /// Gets a value indicating whether this node is the current Raft leader and has committed
-    /// its initial no-op entry, meaning it is ready to accept client proposals.
+    /// Gets a value indicating whether this node is the current Raft leader and has committed its
+    /// initial no-op entry, meaning it is ready to accept client proposals.
     /// </summary>
-    public bool IsLeader => _role is LeaderRole { NoOpCommitted: true };
+    public bool IsLeader => _role == NodeRole.Leader && _noOpCommitted;
 
     /// <summary>
     /// Gets the node ID of the node this node believes to be the current leader,
     /// or <c>null</c> if the leader is unknown (e.g. during an election).
     /// </summary>
-    public string? LeaderHint => _leaderId;
+    public string? LeaderHint => _leaderHint;
 
     /// <summary>
-    /// Loads durable state, starts the mailbox consumer, and begins the election timer.
+    /// Loads durable state, starts the actor loop, and arms the election timer.
     /// </summary>
     /// <param name="cancellationToken">Token to cancel startup.</param>
     public async Task StartAsync(CancellationToken cancellationToken = default) {
@@ -71,31 +117,37 @@ public sealed partial class RaftNode(
         _votedFor = state.VotedFor;
 
         _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        _mailboxTask = Task.Run(() => RunMailboxAsync(_cts.Token), _cts.Token);
+        _actorTask = Task.Run(() => RunActorAsync(_cts.Token), cancellationToken);
 
-        _role = new FollowerRole(this);
+        // Assign role before arming the timer so the first timer message is dispatched correctly.
+        _role = NodeRole.Follower;
+        RestartElectionTimer();
     }
 
     /// <summary>
-    /// Cancels the mailbox consumer, stops timers, and awaits any in-flight mailbox work.
+    /// Cancels the actor loop, awaits shutdown, and fails any pending proposals.
     /// </summary>
-    /// <param name="cancellationToken">Token to cancel the stop operation (not used for forced cancellation — that is handled internally).</param>
+    /// <param name="cancellationToken">
+    /// Token to cancel waiting for the actor to drain (not used for forced cancellation —
+    /// that is handled internally via the node's own <see cref="CancellationTokenSource"/>).
+    /// </param>
     public async Task StopAsync(CancellationToken cancellationToken = default) {
-        if (_cts is not null) {
-            await _cts.CancelAsync();
-            if (_mailboxTask is not null)
-                await _mailboxTask.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-        }
-        if (_role is LeaderRole leader)
-            await leader.StopAsync();
-        else
-            _role?.Dispose();
+        if (_cts is null) return;
+        await _cts.CancelAsync();
+
+        if (_actorTask is not null)
+            await _actorTask.WaitAsync(cancellationToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+        FailPendingProposals();
+        _channel.Writer.TryComplete();
     }
 
     /// <inheritdoc/>
-    public void Dispose() {
+    public async ValueTask DisposeAsync() {
+        await StopAsync();
         _cts?.Dispose();
-        _role?.Dispose();
+        _cts = null;            // null after dispose so _cts?.Token in public methods doesn't throw ObjectDisposedException
+        _snapshotBuffer?.Dispose();
     }
 
     /// <summary>
@@ -103,118 +155,96 @@ public sealed partial class RaftNode(
     /// committed by a quorum and applied to the state machine.
     /// </summary>
     /// <param name="command">The opaque command payload to replicate.</param>
-    /// <param name="cancellationToken">Token to cancel the proposal; cancellation does not roll back an already-committed entry.</param>
-    /// <exception cref="NotLeaderException">Thrown immediately if this node is not the current leader.</exception>
+    /// <param name="cancellationToken">
+    /// Token to cancel waiting for the result. Cancellation does not roll back an already-committed entry.
+    /// </param>
+    /// <exception cref="NotLeaderException">
+    /// Thrown if this node is not the current leader, or if the initial no-op has not yet been committed.
+    /// </exception>
     public Task<RaftApplyResult> ProposeAsync(ReadOnlyMemory<byte> command, CancellationToken cancellationToken = default) {
         var tcs = new TaskCompletionSource<RaftApplyResult>(TaskCreationOptions.RunContinuationsAsynchronously);
-        CancelTcsOnStop(tcs);
-        // Also cancel the proposal when the caller's token fires (e.g. client disconnect or deadline).
-        // NOTE: a cancelled proposal does not roll back a committed entry — the write may still
-        // commit after cancellation. Callers that retry must be prepared for duplicate commits.
         if (cancellationToken.CanBeCanceled)
-            cancellationToken.Register(() => tcs.TrySetCanceled(cancellationToken), useSynchronizationContext: false);
-        Post(() => _role.ProposeAsync(command, tcs));
-        return tcs.Task;
+            cancellationToken.UnsafeRegister(static s => ((TaskCompletionSource<RaftApplyResult>)s!).TrySetCanceled(), tcs);
+        _channel.Writer.TryWrite(new ProposeReceived(command, tcs));
+
+        // WaitAsync propagates node shutdown (stop-token) to the caller without leaking a registration
+        // on _cts: the registration lives only for the duration of the WaitAsync, not until _cts is disposed.
+        return tcs.Task.WaitAsync(_cts?.Token ?? CancellationToken.None);
     }
 
     /// <summary>
     /// Handles an inbound <see cref="VoteRequest"/> from a candidate peer.
-    /// The response is enqueued via the mailbox and returned once processed.
+    /// The response is processed by the actor and returned once resolved.
     /// </summary>
     /// <param name="request">The vote request sent by the candidate.</param>
     /// <param name="cancellationToken">Token to cancel waiting for the response.</param>
     public ValueTask<VoteResponse> ReceiveVoteRequestAsync(VoteRequest request, CancellationToken cancellationToken = default) {
         var tcs = new TaskCompletionSource<VoteResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
-        CancelTcsOnStop(tcs);
         if (cancellationToken.CanBeCanceled)
-            cancellationToken.Register(() => tcs.TrySetCanceled(cancellationToken), useSynchronizationContext: false);
-        Post(async () => tcs.TrySetResult(await _role.HandleVoteRequestAsync(request)));
-        return new ValueTask<VoteResponse>(tcs.Task);
+            cancellationToken.UnsafeRegister(static s => ((TaskCompletionSource<VoteResponse>)s!).TrySetCanceled(), tcs);
+
+        _channel.Writer.TryWrite(new VoteRequestReceived(request, tcs));
+        return new ValueTask<VoteResponse>(tcs.Task.WaitAsync(_cts?.Token ?? CancellationToken.None));
     }
 
     /// <summary>
-    /// Handles an inbound <see cref="AppendEntriesRequest"/> from the leader (or a higher-term node).
-    /// The response is enqueued via the mailbox and returned once processed.
+    /// Handles an inbound <see cref="AppendEntriesRequest"/> from the leader.
+    /// The response is processed by the actor and returned once resolved.
     /// </summary>
     /// <param name="request">The append-entries request (or heartbeat) sent by the leader.</param>
     /// <param name="cancellationToken">Token to cancel waiting for the response.</param>
     public ValueTask<AppendEntriesResponse> ReceiveAppendEntriesAsync(AppendEntriesRequest request, CancellationToken cancellationToken = default) {
         var tcs = new TaskCompletionSource<AppendEntriesResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
-        CancelTcsOnStop(tcs);
         if (cancellationToken.CanBeCanceled)
-            cancellationToken.Register(() => tcs.TrySetCanceled(cancellationToken), useSynchronizationContext: false);
-        Post(async () => tcs.TrySetResult(await _role.HandleAppendEntriesAsync(request)));
-        return new ValueTask<AppendEntriesResponse>(tcs.Task);
+            cancellationToken.UnsafeRegister(static s => ((TaskCompletionSource<AppendEntriesResponse>)s!).TrySetCanceled(), tcs);
+
+        _channel.Writer.TryWrite(new AppendEntriesReceived(request, tcs));
+        return new ValueTask<AppendEntriesResponse>(tcs.Task.WaitAsync(_cts?.Token ?? CancellationToken.None));
     }
 
     /// <summary>
     /// Handles an inbound <see cref="InstallSnapshotRequest"/> from the leader.
-    /// The response is enqueued via the mailbox and returned once processed.
+    /// The response is processed by the actor and returned once resolved.
     /// </summary>
     /// <param name="request">The install-snapshot request sent by the leader.</param>
     /// <param name="cancellationToken">Token to cancel waiting for the response.</param>
     public ValueTask<InstallSnapshotResponse> ReceiveInstallSnapshotAsync(InstallSnapshotRequest request, CancellationToken cancellationToken = default) {
         var tcs = new TaskCompletionSource<InstallSnapshotResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
-        CancelTcsOnStop(tcs);
         if (cancellationToken.CanBeCanceled)
-            cancellationToken.Register(() => tcs.TrySetCanceled(cancellationToken), useSynchronizationContext: false);
-        Post(async () => tcs.TrySetResult(await _role.HandleInstallSnapshotAsync(request)));
-        return new ValueTask<InstallSnapshotResponse>(tcs.Task);
+            cancellationToken.UnsafeRegister(static s => ((TaskCompletionSource<InstallSnapshotResponse>)s!).TrySetCanceled(), tcs);
+
+        _channel.Writer.TryWrite(new InstallSnapshotReceived(request, tcs));
+        return new ValueTask<InstallSnapshotResponse>(tcs.Task.WaitAsync(_cts?.Token ?? CancellationToken.None));
     }
 
-    void CancelTcsOnStop<T>(TaskCompletionSource<T> tcs) =>
-        _cts?.Token.Register(() => tcs.TrySetCanceled());
-
-    async Task TransitionToFollowerAsync(ulong term) {
-        if (term > _currentTerm) {
-            _currentTerm = term;
-            _votedFor = null;
-            await _stateStorage.SaveAsync(new RaftPersistentState(_currentTerm, _votedFor));
+    async Task RunActorAsync(CancellationToken cancellationToken) {
+        await foreach (var msg in _channel.Reader.ReadAllAsync(cancellationToken)) {
+            try {
+                await DispatchAsync(msg);
+            } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
+                break;
+            } catch (Exception ex) {
+                _logger?.LogError(ex, "Unhandled error processing {MessageType}", msg.GetType().Name);
+            }
         }
-        if (_role is LeaderRole leader)
-            await leader.StopAsync();
-        else
-            _role.Dispose();
-        // discard any partially-received snapshot from the previous term/leader
-        _snapshotBuffer?.Dispose();
-        _snapshotBuffer = null;
-        _pendingSnapshotIndex = null;
-        _role = new FollowerRole(this);
     }
 
-    async Task TransitionToCandidateAsync() {
-        // Guard: stale timer callbacks can arrive in the mailbox after the node has already
-        // transitioned to leader (e.g. the timer fires just before TransitionToLeaderAsync
-        // is processed). Silently discard such callbacks to avoid spurious term increments
-        // and election churn. See Raft §5.2: only followers and candidates start elections.
-        if (_role is not (FollowerRole or CandidateRole)) return;
+    Task DispatchAsync(RaftMessage msg) => msg switch {
+        ElectionTimerFired electionTimer => OnElectionTimerFiredAsync(electionTimer.Generation),
+        HeartbeatTimerFired heartBeatTimer => OnHeartbeatTimerFiredAsync(heartBeatTimer.Generation),
+        VoteRequestReceived voteRequest => OnVoteRequestReceivedAsync(voteRequest.Request, voteRequest.Reply),
+        AppendEntriesReceived appendEntries => OnAppendEntriesReceivedAsync(appendEntries.Request, appendEntries.Reply),
+        InstallSnapshotReceived installSnapshot => OnInstallSnapshotReceivedAsync(installSnapshot.Request, installSnapshot.Reply),
+        ProposeReceived proposal => OnProposeReceivedAsync(proposal.Payload, proposal.Reply),
+        VoteResponseReceived voteResponse => OnVoteResponseReceivedAsync(voteResponse.PeerId, voteResponse.Response, voteResponse.SentTerm),
+        AppendEntriesResponseReceived appendEntries => OnAppendEntriesResponseReceivedAsync(appendEntries.PeerId, appendEntries.Response, appendEntries.SentTerm, appendEntries.SentUpToIndex),
+        InstallSnapshotResponseReceived installSnapshot => OnInstallSnapshotResponseReceivedAsync(installSnapshot.PeerId, installSnapshot.Response, installSnapshot.SentTerm, installSnapshot.SentMatchIndex),
+        DrainSentinel drain => DrainAsync(drain),
+        _ => Task.CompletedTask,
+    };
 
-        _currentTerm++;
-        _votedFor = _config.NodeId;
-        _leaderId = null;
-        await _stateStorage.SaveAsync(new RaftPersistentState(_currentTerm, _votedFor));
-        _role.Dispose();
-        _role = new CandidateRole(this);
-    }
-
-    async Task TransitionToLeaderAsync() {
-        _leaderId = _config.NodeId;
-        _role.Dispose();
-        var leader = new LeaderRole(this);
-        _role = leader;
-        var noOp = new RaftLogEntry(_currentTerm, _log.LastIndex + 1, RaftLogEntryType.NoOp, ReadOnlyMemory<byte>.Empty);
-        await _log.AppendAsync([noOp]);
-        leader.StartHeartbeat();
-        leader.ReplicateToAllPeers();
-        await leader.TryAdvanceCommitIndexAsync();
-    }
-
-    async Task ApplyCommittedEntriesAsync() {
-        while (_stateMachine.LastAppliedIndex < _commitIndex) {
-            var idx = _stateMachine.LastAppliedIndex + 1;
-            var entry = await _log.GetEntryAsync(idx);
-            var success = await _stateMachine.ApplyAsync(entry);
-            _role.OnEntryApplied(idx, entry, success);
-        }
+    static Task DrainAsync(DrainSentinel m) {
+        m.Completion.TrySetResult();
+        return Task.CompletedTask;
     }
 }

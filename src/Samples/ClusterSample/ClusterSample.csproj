@@ -8,16 +8,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!--
-      Use local project references so the sample always runs the latest in-tree code.
-      MSSP.Cluster handles the Raft consensus layer and wraps IMsspClient.
-      MSSP.Server exposes the event store to external clients via gRPC.
-      MSSP.Raft (where RaftClusterMember lives) is a private bundle inside MSSP.Cluster
-      but must be referenced explicitly here so its public types are visible.
-    -->
-    <ProjectReference Include="..\..\MSSP.Cluster\MSSP.Cluster.csproj" />
-    <ProjectReference Include="..\..\MSSP.Raft\MSSP.Raft.csproj" />
-    <ProjectReference Include="..\..\MSSP.Server\MSSP.Server.csproj" />
+    <PackageReference Include="MSSP.Cluster" Version="0.4.1" />
+    <PackageReference Include="MSSP.Server" Version="0.4.1" />
   </ItemGroup>
 
 </Project>
