@@ -14,6 +14,8 @@ public sealed partial class LsmStore<TKey> {
     }
 
     async ValueTask CompactLevelAsync(int levelIndex, CancellationToken cancellationToken) {
+        var timer = OperationTimer.Start();
+        var levelName = $"L{levelIndex + 1}";
         var readers = new List<ISstReader<TKey>>();
         try {
             // 1. Open readers for all files in this level.
@@ -46,6 +48,10 @@ public sealed partial class LsmStore<TKey> {
             foreach (var file in _sstLevels[levelIndex])
                 _sst.Delete(file.FilePath);
             _sstLevels[levelIndex].Clear();
+
+            // Record metrics after compaction
+            if (_metrics is not null)
+                _metrics.RecordCompaction(levelName, timer.ElapsedMs, BuildLevelSnapshots(_sstLevels));
 
             // 6. Cascade: check if the next level now exceeds its target.
             for (var nextIndex = nextLevelIndex; nextIndex < _sstLevels.Count; nextIndex++) {

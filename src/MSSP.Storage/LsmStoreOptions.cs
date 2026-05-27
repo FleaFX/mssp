@@ -23,13 +23,17 @@ delegate ValueTask MemTableFlushedDelegate(CancellationToken cancellationToken);
 /// Strategy for SST file I/O. Defaults to <see cref="DefaultSstAccess{TKey}"/> when <c>null</c>.
 /// Decorate to add cross-cutting behaviour such as bloom filter sidecars.
 /// </param>
+/// <param name="Metrics">
+/// Optional metrics collector for LSM store operations. When <c>null</c>, no metrics are collected.
+/// </param>
 readonly record struct LsmStoreOptions<TKey>(
     string DataDirectory,
     int CapacityBytes,
     MemTableFlushedDelegate OnFlushed,
     long BaseLevelSizeBytes = -1,
     int LevelSizeMultiplier = 10,
-    ISstAccess<TKey>? SstAccess = null
+    ISstAccess<TKey>? SstAccess = null,
+    LsmStoreMetrics? Metrics = null
 ) where TKey : IKey<TKey> {
     /// <summary>
     /// Returns the resolved L1 size target: <see cref="BaseLevelSizeBytes"/> when explicitly set
