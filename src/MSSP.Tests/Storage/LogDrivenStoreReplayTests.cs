@@ -41,7 +41,7 @@ public class LogDrivenStoreReplayTests : IAsyncLifetime {
 
     async Task<(LsmStore<StringKey> lsm, LogDrivenStore<StringKey> logDriven, CountingLog log)> CreateAsync(int capacity = 4096) {
         var lsm = await LsmStore<StringKey>.OpenAsync(
-            new LsmStoreOptions<StringKey>(_dataDir, capacity, _ => ValueTask.CompletedTask),
+            new LsmStoreOptions<StringKey>(_dataDir, capacity, _ => ValueTask.CompletedTask, BaseLevelSizeBytes: -1, LevelSizeMultiplier: 10),
             AsyncEnumerable.Empty<ReadOnlyMemory<byte>>(),
             TestContext.Current.CancellationToken);
         var log = new CountingLog();

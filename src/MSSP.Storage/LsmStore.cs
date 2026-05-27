@@ -1,31 +1,35 @@
-using System.Buffers.Binary;
-
 namespace MSSP.Storage;
 
 /// <summary>
 /// Log-Structured Merge-tree store. Provides keyed storage backed by an in-memory
-/// <see cref="MemTable{TKey}"/> (Level 0) and a set of immutable SST files on disk (Levels 1–N).
-/// Writes are applied directly to the MemTable; when the MemTable is full it is flushed
-/// to a new SST file. When the number of SST files reaches the compaction threshold, all
-/// files are merged into one via a k-way merge pass.
+/// <see cref="MemTable{TKey}"/> (Level 0) and a set of immutable SST files on disk organized
+/// in multiple levels (Levels 1-N). Writes are applied directly to the MemTable; when the MemTable
+/// is full it is flushed to a new SST file in L1. When the size of a level reaches its target,
+/// all files in that level are merged into one file in the next level (cascading compaction).
 /// </summary>
-public sealed class LsmStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKey> {
+/// <remarks>
+/// This class is not thread-safe. Callers are responsible for ensuring that writes, reads,
+/// flushes, and compactions are not executed concurrently.
+/// </remarks>
+public sealed partial class LsmStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKey> {
     readonly string _dataDirectory;
     readonly int _capacityBytes;
-    readonly int _compactionThreshold;
+    readonly long _baseLevelSizeBytes;
+    readonly int _levelSizeMultiplier;
     readonly MemTableFlushedDelegate _onFlushed;
     readonly ISstAccess<TKey> _sst;
-    readonly List<string> _sstFiles;
+    readonly List<List<SstFileInfo>> _sstLevels;
     MemTable<TKey> _memTable;
 
-    LsmStore(string dataDirectory, int capacityBytes, int compactionThreshold, List<string> sstFiles, MemTableFlushedDelegate onFlushed, ISstAccess<TKey> sst) {
-        _dataDirectory = dataDirectory;
-        _capacityBytes = capacityBytes;
-        _compactionThreshold = compactionThreshold;
-        _onFlushed = onFlushed;
-        _sst = sst;
-        _sstFiles = sstFiles;
-        _memTable = new MemTable<TKey>(capacityBytes);
+    LsmStore(LsmStoreOptions<TKey> options, List<List<SstFileInfo>> sstLevels) {
+        _dataDirectory = options.DataDirectory;
+        _capacityBytes = options.CapacityBytes;
+        _baseLevelSizeBytes = options.EffectiveBaseLevelSizeBytes;
+        _levelSizeMultiplier = options.LevelSizeMultiplier;
+        _onFlushed = options.OnFlushed;
+        _sst = options.SstAccess ?? DefaultSstAccess<TKey>.Instance;
+        _sstLevels = sstLevels;
+        _memTable = new MemTable<TKey>(options.CapacityBytes);
     }
 
     /// <summary>
@@ -36,198 +40,36 @@ public sealed class LsmStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKey> {
         if (options.CapacityBytes <= 0)
             throw new ArgumentOutOfRangeException(nameof(options), $"{nameof(LsmStoreOptions<>.CapacityBytes)} must be positive.");
 
-        var sstFiles = Directory.EnumerateFiles(options.DataDirectory, "*.sst").OrderBy(f => f).ToList();
-        var sst = options.SstAccess ?? DefaultSstAccess<TKey>.Instance;
-        var store = new LsmStore<TKey>(options.DataDirectory, options.CapacityBytes, options.CompactionThreshold, sstFiles, options.OnFlushed, sst);
+        var store = new LsmStore<TKey>(options, LoadSstLevels(options.DataDirectory));
         await store.RecoverAsync(walRecords, cancellationToken);
         return store;
     }
 
     /// <summary>
-    /// Applies <paramref name="key"/> and <paramref name="value"/> directly to the MemTable,
-    /// flushing first if the table is full.
+    /// Scans <paramref name="directory"/> for <c>*.sst</c> files (ordered by name) and
+    /// organises them into a per-level list. Guarantees at least one (empty) L1 entry so
+    /// the rest of the store can always index into level 0 without a bounds check.
     /// </summary>
-    public async ValueTask WriteAsync(TKey key, Memory<byte> value, CancellationToken cancellationToken) {
-        ReadOnlyMemory<byte> keyBytes = key;
-        var entrySize = keyBytes.Length + value.Length;
-
-        if (entrySize > _capacityBytes)
-            throw new InvalidOperationException("Single event exceeds MemTable capacity.");
-
-        if (_memTable.Size + entrySize > _capacityBytes)
-            await FlushAsync(cancellationToken);
-
-        ReadOnlyMemory<byte> bytes = WalRecord.From(key, value);
-        _memTable.ApplyRecord(bytes);
+    static List<List<SstFileInfo>> LoadSstLevels(string directory) {
+        var levels = new List<List<SstFileInfo>>();
+        foreach (var path in Directory.EnumerateFiles(directory, "*.sst").OrderBy(f => f)) {
+            var file = SstFileInfo.Parse(path, new FileInfo(path).Length);
+            AddFileToLevel(levels, file);
+        }
+        if (levels.Count == 0)
+            levels.Add(new List<SstFileInfo>());
+        return levels;
     }
 
     /// <summary>
-    /// Scans SST files then the MemTable, starting at <paramref name="from"/>. Safe to call under the write lock.
+    /// Appends <paramref name="file"/> to its level's list inside <paramref name="levels"/>,
+    /// growing the outer list with empty buckets as needed.
     /// </summary>
-    public IEnumerable<KeyValuePair<TKey, ReadOnlyMemory<byte>?>> ScanAllFrom(TKey from) {
-        foreach (var sstPath in _sstFiles) {
-            using var reader = _sst.OpenReader(sstPath);
-            foreach (var entry in reader.Scan(from))
-                yield return entry;
-        }
-        foreach (var entry in _memTable.ScanFrom(from))
-            yield return entry;
-    }
-
-    /// <summary>
-    /// Captures a snapshot of the current store state immediately, then yields lazily.
-    /// Safe to iterate after releasing the write lock.
-    /// </summary>
-    public IEnumerable<KeyValuePair<TKey, ReadOnlyMemory<byte>?>> ScanSnapshotFrom(TKey from) {
-        var sstFiles = _sstFiles.ToArray();
-        var memTable = _memTable;
-
-        foreach (var sstPath in sstFiles) {
-            using var reader = _sst.OpenReader(sstPath);
-            foreach (var entry in reader.Scan(from))
-                yield return entry;
-        }
-
-        foreach (var entry in memTable.ScanFrom(from))
-            yield return entry;
-    }
-
-    /// <summary>
-    /// Replays WAL records into the MemTable, skipping any entries already present in SST files.
-    /// </summary>
-    internal async ValueTask RecoverAsync(IAsyncEnumerable<ReadOnlyMemory<byte>> walRecords, CancellationToken cancellationToken) {
-        var sstKeys = new HashSet<TKey>();
-        foreach (var sstPath in _sstFiles) {
-            using var reader = _sst.OpenReader(sstPath);
-            foreach (var (key, _) in reader.Scan())
-                sstKeys.Add(key);
-        }
-
-        await foreach (var bytes in walRecords.WithCancellation(cancellationToken)) {
-            var span = bytes.Span;
-            if (span.Length < 5) continue;
-            var keyLen = BinaryPrimitives.ReadInt32LittleEndian(span[1..]);
-            if (keyLen < 0 || 5 + keyLen > span.Length) continue;
-
-            if (span[0] == WalRecord.TombstoneMarker) {
-                _memTable.ApplyRecord(bytes);
-                continue;
-            }
-
-            if (span[0] != WalRecord.WriteMarker) continue;
-            TKey key = bytes.Slice(5, keyLen);
-            if (!sstKeys.Contains(key))
-                _memTable.ApplyRecord(bytes);
-        }
-    }
-
-    async ValueTask FlushAsync(CancellationToken cancellationToken) {
-        var sstPath = Path.Combine(_dataDirectory, $"{DateTimeOffset.UtcNow.Ticks:D19}.sst");
-        await _sst.WriteAsync(_memTable, sstPath, cancellationToken);
-        _sstFiles.Add(sstPath);
-
-        await _onFlushed(cancellationToken);
-        _memTable = new MemTable<TKey>(_capacityBytes);
-
-        if (_sstFiles.Count >= _compactionThreshold)
-            await CompactAsync(cancellationToken);
-    }
-
-    /// <summary>
-    /// Merges all SST files into a single new SST file and removes the originals.
-    /// </summary>
-    internal async ValueTask CompactAsync(CancellationToken cancellationToken) {
-        if (_sstFiles.Count < 2) return;
-
-        var readers = new List<ISstReader<TKey>>(_sstFiles.Count);
-        try {
-            foreach (var path in _sstFiles)
-                readers.Add(_sst.OpenReader(path));
-
-            var compactedPath = Path.Combine(_dataDirectory, $"{DateTimeOffset.UtcNow.Ticks:D19}.sst");
-            await _sst.WriteAsync(MergeAll(readers), compactedPath, cancellationToken);
-
-            foreach (var reader in readers) reader.Dispose();
-            readers.Clear();
-
-            var oldPaths = _sstFiles.ToList();
-            _sstFiles.Clear();
-            _sstFiles.Add(compactedPath);
-
-            foreach (var path in oldPaths)
-                _sst.Delete(path);
-        } finally {
-            foreach (var reader in readers)
-                reader.Dispose();
-        }
-    }
-
-    static IEnumerable<KeyValuePair<TKey, ReadOnlyMemory<byte>?>> MergeAll(List<ISstReader<TKey>> readers) {
-        var pq = new PriorityQueue<(KeyValuePair<TKey, ReadOnlyMemory<byte>?> Entry, IEnumerator<KeyValuePair<TKey, ReadOnlyMemory<byte>?>> Enumerator), TKey>();
-
-        foreach (var reader in readers) {
-            var enumerator = reader.Scan().GetEnumerator();
-            if (enumerator.MoveNext())
-                pq.Enqueue((enumerator.Current, enumerator), enumerator.Current.Key);
-            else
-                enumerator.Dispose();
-        }
-
-        try {
-            while (pq.Count > 0) {
-                var (entry, enumerator) = pq.Dequeue();
-                yield return entry;
-                if (enumerator.MoveNext())
-                    pq.Enqueue((enumerator.Current, enumerator), enumerator.Current.Key);
-                else
-                    enumerator.Dispose();
-            }
-        } finally {
-            while (pq.TryDequeue(out var item, out _))
-                item.Enumerator.Dispose();
-        }
-    }
-
-    /// <summary>
-    /// Replaces the current SST files with those from <paramref name="sourceDirectory"/> and
-    /// resets the MemTable to empty. Called by the cluster layer after an
-    /// <c>InstallSnapshot</c> RPC has delivered a snapshot archive to
-    /// <paramref name="sourceDirectory"/>.
-    /// </summary>
-    /// <remarks>
-    /// Must be called while no concurrent writes are in progress.
-    /// The caller is responsible for placing both <c>*.sst</c> and <c>*.bf</c> sidecar files
-    /// in <paramref name="sourceDirectory"/> before invoking this method.
-    /// After the call, <paramref name="sourceDirectory"/> can be deleted by the caller.
-    /// </remarks>
-    internal async ValueTask ReloadAsync(string sourceDirectory, CancellationToken cancellationToken) {
-        // remove all current SST files (ISstAccess.Delete also removes .bf sidecars)
-        foreach (var path in _sstFiles)
-            _sst.Delete(path);
-        _sstFiles.Clear();
-
-        // copy new .sst files and update the list
-        foreach (var srcPath in Directory.EnumerateFiles(sourceDirectory, "*.sst").OrderBy(f => f)) {
-            var destPath = Path.Combine(_dataDirectory, Path.GetFileName(srcPath));
-            await CopyFileAsync(srcPath, destPath, cancellationToken);
-            _sstFiles.Add(destPath);
-        }
-
-        // copy .bf sidecar files (managed by ISstAccess, not tracked in _sstFiles)
-        foreach (var srcPath in Directory.EnumerateFiles(sourceDirectory, "*.bf")) {
-            var destPath = Path.Combine(_dataDirectory, Path.GetFileName(srcPath));
-            await CopyFileAsync(srcPath, destPath, cancellationToken);
-        }
-
-        // reset MemTable; entries before the snapshot are now covered by the new SST files
-        _memTable.Dispose();
-        _memTable = new MemTable<TKey>(_capacityBytes);
-    }
-
-    static async ValueTask CopyFileAsync(string source, string destination, CancellationToken cancellationToken) {
-        await using var src  = new FileStream(source,      FileMode.Open,   FileAccess.Read,  FileShare.Read, 81920, FileOptions.Asynchronous | FileOptions.SequentialScan);
-        await using var dest = new FileStream(destination, FileMode.Create, FileAccess.Write, FileShare.None, 81920, FileOptions.Asynchronous);
-        await src.CopyToAsync(dest, cancellationToken);
+    static void AddFileToLevel(List<List<SstFileInfo>> levels, SstFileInfo file) {
+        var levelIndex = file.Level - 1; // L1 → index 0, L2 → index 1, …
+        while (levels.Count <= levelIndex)
+            levels.Add(new List<SstFileInfo>());
+        levels[levelIndex].Add(file);
     }
 
     /// <inheritdoc />

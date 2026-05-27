@@ -43,7 +43,7 @@ public sealed class EmbeddedMsspClient(
         Directory.CreateDirectory(dataDirectory);
         var wal = WalManager.Open(dataDirectory);
         var log = new EmbeddedLog(wal);
-        var lsmOptions = new LsmStoreOptions<EventKey>(dataDirectory, memTableCapacityBytes, _ => ValueTask.CompletedTask, SstAccess: sst);
+        var lsmOptions = new LsmStoreOptions<EventKey>(dataDirectory, memTableCapacityBytes, _ => ValueTask.CompletedTask, BaseLevelSizeBytes: -1, LevelSizeMultiplier: 10, SstAccess: sst);
         var lsmStore = await LsmStore<EventKey>.OpenAsync(lsmOptions, wal.ReadAllAsync(cancellationToken), cancellationToken);
 
         var subscriptionLog = SubscriptionLog.Open(dataDirectory, subscriptionLogFormat, subscriptionLogSegmentSizeBytes);

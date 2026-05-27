@@ -70,7 +70,7 @@ sealed class RaftHostedService(MsspOptions msspOptions, MsspClusterOptions clust
         var capturedRaftLog = _raftLog;
 
         _lsmStore = await LsmStore<EventKey>.OpenAsync(
-            options: new LsmStoreOptions<EventKey>(dataDir, msspOptions.MemTableCapacityBytes, OnFlushed),
+            options: new LsmStoreOptions<EventKey>(dataDir, msspOptions.MemTableCapacityBytes, OnFlushed, BaseLevelSizeBytes: -1, LevelSizeMultiplier: 10),
             walRecords: AsyncEnumerable.Empty<ReadOnlyMemory<byte>>(),
             cancellationToken: cancellationToken);
         var subscriptionLog = SubscriptionLog.Open(
