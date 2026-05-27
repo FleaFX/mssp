@@ -140,7 +140,8 @@ public sealed partial class RaftNode {
     async Task SendSnapshotToPeerAsync(string peerId) {
         var ct = _cts?.Token ?? CancellationToken.None;
         var capturedTerm = _currentTerm;               // captured before first await
-        var sentMatchIndex = _log.LastIncludedIndex;     // captured before first await
+        var sentMatchIndex = _log.LastIncludedIndex;   // captured before first await
+        var sentMatchTerm  = _log.LastIncludedTerm;    // captured before first await — must pair with sentMatchIndex
 
         var snapshotData = await _stateMachine.CreateSnapshotAsync(ct);
         var chunkSize = _config.SnapshotChunkSizeBytes;
@@ -154,7 +155,7 @@ public sealed partial class RaftNode {
 
             var request = new InstallSnapshotRequest(
                 capturedTerm, _config.NodeId,
-                sentMatchIndex, _log.LastIncludedTerm,
+                sentMatchIndex, sentMatchTerm,
                 offset, snapshotData.Slice((int)offset, size), done);
 
             InstallSnapshotResponse response;
@@ -185,9 +186,11 @@ public sealed partial class RaftNode {
 
         for (var n = _log.LastIndex; n > _commitIndex; n--) {
             // Raft §5.4.2: only commit entries from the current term by counting replicas.
+            // Skip (do not break) entries from earlier terms: a current-term entry at a lower
+            // index may still have reached quorum and must not be overlooked.
             var termAtN = await _log.GetTermAtAsync(n);
             if (termAtN != _currentTerm)
-                break;
+                continue;
 
             var replicaCount = _config.PeerIds.Count(peerId => _matchIndex![peerId] >= n) + 1; // self
 

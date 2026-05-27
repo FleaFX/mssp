@@ -66,8 +66,10 @@ public sealed partial class RaftNode(
     string? _votedFor;
 
     // Volatile state — reset on role transitions.
-    internal NodeRole _role;       // internal: read by tests
-    string? _leaderHint;
+    // _role, _leaderHint and _noOpCommitted are read from external threads (e.g. ClusteredMsspClient
+    // polling IsLeader/LeaderHint); volatile ensures memory visibility without a lock.
+    internal volatile NodeRole _role;       // internal: read by tests
+    volatile string? _leaderHint;
     ulong _commitIndex;
 
     // Timer generations — incremented on every (re)start; stale timer messages carry an old generation and are discarded.
@@ -86,7 +88,7 @@ public sealed partial class RaftNode(
     Dictionary<string, ulong>? _nextIndex;
     Dictionary<string, ulong>? _matchIndex;
     Dictionary<ulong, TaskCompletionSource<RaftApplyResult>>? _pendingProposals;
-    bool _noOpCommitted;
+    volatile bool _noOpCommitted;
 
     /// <summary>
     /// Gets the unique identifier of this node within the cluster.
@@ -134,7 +136,7 @@ public sealed partial class RaftNode(
         await _cts.CancelAsync();
 
         if (_actorTask is not null)
-            await _actorTask.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            await _actorTask.WaitAsync(cancellationToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
         FailPendingProposals();
         _channel.Writer.TryComplete();
@@ -144,6 +146,7 @@ public sealed partial class RaftNode(
     public async ValueTask DisposeAsync() {
         await StopAsync();
         _cts?.Dispose();
+        _cts = null;            // null after dispose so _cts?.Token in public methods doesn't throw ObjectDisposedException
         _snapshotBuffer?.Dispose();
     }
 

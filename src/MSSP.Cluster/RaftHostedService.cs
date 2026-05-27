@@ -128,8 +128,12 @@ sealed class RaftHostedService(MsspOptions msspOptions, MsspClusterOptions clust
 
     /// <inheritdoc/>
     public async Task StopAsync(CancellationToken cancellationToken) {
-        if (_node is not null)
+        if (_node is not null) {
+            // Pass the host's shutdown token so the drain wait respects the shutdown deadline.
+            // DisposeAsync is called afterwards to release _cts and _snapshotBuffer regardless.
+            await _node.StopAsync(cancellationToken);
             await _node.DisposeAsync();
+        }
         Dispose();
     }
 

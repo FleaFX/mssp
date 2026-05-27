@@ -125,21 +125,31 @@ public sealed partial class RaftNode {
                 return;
             }
 
-            if (request.PrevLogIndex > _log.LastIndex) {
-                reply.TrySetResult(new AppendEntriesResponse(_currentTerm, false, _log.LastIndex + 1, 0));
-                return;
-            }
+            if (request.PrevLogIndex == _log.LastIncludedIndex) {
+                // Snapshot boundary: the term is guaranteed by the snapshot meta-data; calling
+                // GetTermAtAsync here is fragile because compacted logs may not retain that entry.
+                if (request.PrevLogTerm != _log.LastIncludedTerm) {
+                    reply.TrySetResult(new AppendEntriesResponse(_currentTerm, false, _log.LastIncludedIndex + 1, 0));
+                    return;
+                }
+                // Terms match at snapshot boundary — proceed to entry append below.
+            } else {
+                if (request.PrevLogIndex > _log.LastIndex) {
+                    reply.TrySetResult(new AppendEntriesResponse(_currentTerm, false, _log.LastIndex + 1, 0));
+                    return;
+                }
 
-            var termAtPrev = await _log.GetTermAtAsync(request.PrevLogIndex);
-            if (termAtPrev != request.PrevLogTerm) {
-                // Return the conflict term and the first index of that term so the leader can
-                // skip the entire term in one round-trip (optimised fast back-step).
-                var conflictTerm = termAtPrev;
-                var conflictIndex = request.PrevLogIndex;
-                while (conflictIndex > 1 && await _log.GetTermAtAsync(conflictIndex - 1) == conflictTerm)
-                    conflictIndex--;
-                reply.TrySetResult(new AppendEntriesResponse(_currentTerm, false, conflictIndex, conflictTerm));
-                return;
+                var termAtPrev = await _log.GetTermAtAsync(request.PrevLogIndex);
+                if (termAtPrev != request.PrevLogTerm) {
+                    // Return the conflict term and the first index of that term so the leader can
+                    // skip the entire term in one round-trip (optimised fast back-step).
+                    var conflictTerm = termAtPrev;
+                    var conflictIndex = request.PrevLogIndex;
+                    while (conflictIndex > 1 && await _log.GetTermAtAsync(conflictIndex - 1) == conflictTerm)
+                        conflictIndex--;
+                    reply.TrySetResult(new AppendEntriesResponse(_currentTerm, false, conflictIndex, conflictTerm));
+                    return;
+                }
             }
         }
 
