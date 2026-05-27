@@ -2,6 +2,7 @@ using Microsoft.Extensions.Hosting;
 using MSSP.Embedded;
 using MSSP.Storage;
 using MSSP.Raft;
+using System.Diagnostics.Metrics;
 
 namespace MSSP.Cluster;
 
@@ -10,7 +11,11 @@ namespace MSSP.Cluster;
 /// <see cref="SegmentedRaftLog"/>, <see cref="RaftLog"/>, <see cref="RaftLogStateMachine"/>,
 /// <see cref="LsmStore{TKey}"/>, <see cref="RaftGrpcTransport"/>, and <see cref="RaftNode"/>.
 /// </summary>
-sealed class RaftHostedService(MsspOptions msspOptions, MsspClusterOptions clusterOptions) : IHostedService, IDisposable {
+sealed class RaftHostedService(
+    MsspOptions msspOptions,
+    MsspClusterOptions clusterOptions,
+    IMeterFactory? meterFactory = null
+) : IHostedService, IDisposable {
     SegmentedRaftLog? _raftLog;
     RaftLog? _log;
     RaftLogStateMachine? _stateMachine;
@@ -20,6 +25,10 @@ sealed class RaftHostedService(MsspOptions msspOptions, MsspClusterOptions clust
     RaftNode? _node;
     RaftGrpcTransport? _transport;
     FileRaftStateStorage? _stateStorage;
+    RaftMetrics? _raftMetrics;
+    LsmStoreMetrics? _lsmMetrics;
+    CancellationTokenSource? _metricsCts;
+    Task? _metricsTask;
     bool _disposed;
 
     /// <summary>
@@ -48,6 +57,12 @@ sealed class RaftHostedService(MsspOptions msspOptions, MsspClusterOptions clust
         var dataDir = msspOptions.DataDirectory;
         var checkpointIndex = await RaftLogStateMachine.ReadCheckpointIndexAsync(dataDir, cancellationToken);
 
+        // Create metrics if meter factory is available
+        if (meterFactory is not null) {
+            _raftMetrics = new RaftMetrics(meterFactory);
+            _lsmMetrics = new LsmStoreMetrics(meterFactory, msspOptions.MemTableCapacityBytes);
+        }
+
         _raftLog = await SegmentedRaftLog.OpenAsync(dataDir, clusterOptions.RaftLogSegmentSizeBytes, cancellationToken);
         _stateMachine = new RaftLogStateMachine();
         _stateStorage = new FileRaftStateStorage(dataDir);
@@ -70,7 +85,7 @@ sealed class RaftHostedService(MsspOptions msspOptions, MsspClusterOptions clust
         var capturedRaftLog = _raftLog;
 
         _lsmStore = await LsmStore<EventKey>.OpenAsync(
-            options: new LsmStoreOptions<EventKey>(dataDir, msspOptions.MemTableCapacityBytes, OnFlushed, BaseLevelSizeBytes: -1, LevelSizeMultiplier: 10),
+            options: new LsmStoreOptions<EventKey>(dataDir, msspOptions.MemTableCapacityBytes, OnFlushed, BaseLevelSizeBytes: -1, LevelSizeMultiplier: 10, Metrics: _lsmMetrics),
             walRecords: AsyncEnumerable.Empty<ReadOnlyMemory<byte>>(),
             cancellationToken: cancellationToken);
         var subscriptionLog = SubscriptionLog.Open(
@@ -81,7 +96,8 @@ sealed class RaftHostedService(MsspOptions msspOptions, MsspClusterOptions clust
         var logDrivenStore = LogDrivenStore<EventKey>.Create(_log, pipeline, msspOptions.MemTableCapacityBytes);
         _local = new EmbeddedMsspClient(
             store: new GlobalPositionDecorator(logDrivenStore, pipeline),
-            subscriptions: pipeline);
+            subscriptions: pipeline,
+            meterFactory: meterFactory);
 
         _client = new ClusteredMsspClient(_node, _local, clusterOptions.Peers);
 
@@ -102,6 +118,13 @@ sealed class RaftHostedService(MsspOptions msspOptions, MsspClusterOptions clust
         }
 
         await _node.StartAsync(cancellationToken);
+
+        // Start background task to update Raft metrics
+        if (_raftMetrics is not null) {
+            _metricsCts = new CancellationTokenSource();
+            _metricsTask = Task.Run(() => UpdateRaftMetricsLoopAsync(_metricsCts.Token), cancellationToken);
+        }
+
         return;
 
         async ValueTask OnFlushed(CancellationToken token) {
@@ -146,5 +169,37 @@ sealed class RaftHostedService(MsspOptions msspOptions, MsspClusterOptions clust
         // _node is IAsyncDisposable; disposed in StopAsync via DisposeAsync()
         _transport?.Dispose();
         _raftLog?.Dispose();
+        _raftMetrics?.Dispose();
+        _lsmMetrics?.Dispose();
+        _metricsCts?.Cancel();
+        _metricsCts?.Dispose();
+        _metricsTask?.Wait();
+    }
+
+    async Task UpdateRaftMetricsLoopAsync(CancellationToken cancellationToken) {
+        ulong? lastTerm = null;
+        while (!cancellationToken.IsCancellationRequested) {
+            try {
+                await Task.Delay(100, cancellationToken); // Update every 100ms
+                if (_node is not null && _raftMetrics is not null) {
+                    var currentTerm = _node.CurrentTerm;
+                    // Detect term change (election occurred)
+                    if (currentTerm > lastTerm) {
+                        _raftMetrics.RecordElection();
+                    }
+                    lastTerm = currentTerm;
+
+                    _raftMetrics.Update(
+                        (long)currentTerm,
+                        _node.IsLeader,
+                        (long)_node.CommitIndex,
+                        (long)_stateMachine!.LastAppliedIndex);
+                }
+            } catch (OperationCanceledException) {
+                break;
+            } catch {
+                // Ignore errors in metrics collection
+            }
+        }
     }
 }

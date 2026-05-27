@@ -17,9 +17,12 @@ public sealed partial class LsmStore<TKey> {
 
         ReadOnlyMemory<byte> bytes = WalRecord.From(key, value);
         _memTable.ApplyRecord(bytes);
+        _metrics?.UpdateMemTableSize(_memTable.Size);
     }
 
     async ValueTask FlushAsync(CancellationToken cancellationToken) {
+        var timer = OperationTimer.Start();
+
         var sstPath = Path.Combine(
             _dataDirectory,
             $"{DateTimeOffset.UtcNow.Ticks:D19}_L1.sst");
@@ -32,8 +35,25 @@ public sealed partial class LsmStore<TKey> {
         _sstLevels[0].Add(new SstFileInfo(sstPath, 1, fileSize));
 
         await _onFlushed(cancellationToken);
+        var oldMemTable = _memTable;
         _memTable = new MemTable<TKey>(_capacityBytes);
+
+        if (_metrics is not null)
+            _metrics.RecordFlush(
+                timer.ElapsedMs,
+                memTableSize: 0,
+                BuildLevelSnapshots(_sstLevels));
 
         await CompactAsync(cancellationToken);
     }
+
+    /// <summary>
+    /// Builds snapshots of all SST levels for metrics reporting.
+    /// </summary>
+    static LsmStoreMetrics.LevelSnapshot[] BuildLevelSnapshots(List<List<SstFileInfo>> levels) =>
+        levels.Select((files, i) => new LsmStoreMetrics.LevelSnapshot(
+            LevelName: $"L{i + 1}",
+            FileCount: files.Count,
+            TotalBytes: files.Sum(f => f.SizeBytes)
+        )).ToArray();
 }

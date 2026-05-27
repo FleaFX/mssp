@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using MSSP.Embedded;
+using System.Diagnostics.Metrics;
 
 namespace MSSP.Cluster;
 
@@ -36,7 +37,10 @@ public static class MsspClusterBuilderExtensions {
         foreach (var d in toRemove)
             builder.Services.Remove(d);
 
-        builder.Services.AddSingleton<RaftHostedService>();
+        builder.Services.AddSingleton<RaftHostedService>(sp => new RaftHostedService(
+            sp.GetRequiredService<MsspOptions>(),
+            sp.GetRequiredService<MsspClusterOptions>(),
+            sp.GetService<IMeterFactory>()));
         builder.Services.AddSingleton<EmbeddedMsspClient>(sp => sp.GetRequiredService<RaftHostedService>().Local);
         builder.Services.AddSingleton<IMsspClient>(sp => sp.GetRequiredService<RaftHostedService>().Client);
         builder.Services.AddHostedService(sp => sp.GetRequiredService<RaftHostedService>());

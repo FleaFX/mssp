@@ -102,6 +102,16 @@ public sealed partial class RaftNode(
     public bool IsLeader => _role == NodeRole.Leader && _noOpCommitted;
 
     /// <summary>
+    /// Gets the current Raft term.
+    /// </summary>
+    public ulong CurrentTerm => _currentTerm;
+
+    /// <summary>
+    /// Gets the index of the last log entry known to be committed on this node.
+    /// </summary>
+    public ulong CommitIndex => _commitIndex;
+
+    /// <summary>
     /// Gets the node ID of the node this node believes to be the current leader,
     /// or <c>null</c> if the leader is unknown (e.g. during an election).
     /// </summary>

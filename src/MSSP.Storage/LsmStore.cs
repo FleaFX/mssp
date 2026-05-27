@@ -19,6 +19,7 @@ public sealed partial class LsmStore<TKey> : ILsmStore<TKey> where TKey : IKey<T
     readonly MemTableFlushedDelegate _onFlushed;
     readonly ISstAccess<TKey> _sst;
     readonly List<List<SstFileInfo>> _sstLevels;
+    readonly LsmStoreMetrics? _metrics;
     MemTable<TKey> _memTable;
 
     LsmStore(LsmStoreOptions<TKey> options, List<List<SstFileInfo>> sstLevels) {
@@ -30,6 +31,7 @@ public sealed partial class LsmStore<TKey> : ILsmStore<TKey> where TKey : IKey<T
         _sst = options.SstAccess ?? DefaultSstAccess<TKey>.Instance;
         _sstLevels = sstLevels;
         _memTable = new MemTable<TKey>(options.CapacityBytes);
+        _metrics = options.Metrics;
     }
 
     /// <summary>
@@ -73,5 +75,8 @@ public sealed partial class LsmStore<TKey> : ILsmStore<TKey> where TKey : IKey<T
     }
 
     /// <inheritdoc />
-    public void Dispose() => _memTable.Dispose();
+    public void Dispose() {
+        _memTable.Dispose();
+        _metrics?.Dispose();
+    }
 }

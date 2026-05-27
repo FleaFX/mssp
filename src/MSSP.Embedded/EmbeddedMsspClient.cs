@@ -1,3 +1,4 @@
+using System.Diagnostics.Metrics;
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
 using MSSP;
@@ -10,10 +11,12 @@ namespace MSSP.Embedded;
 /// </summary>
 public sealed class EmbeddedMsspClient(
     ILsmStore<EventKey> store,
-    ISubscriptionProvider subscriptions
+    ISubscriptionProvider subscriptions,
+    IMeterFactory? meterFactory = null
 ): IMsspClient, IDisposable {
     readonly SemaphoreSlim _writeLock = new(1, 1);
     readonly RevisionIndex _revisions = new();
+    readonly EmbeddedMetrics? _metrics = meterFactory is not null ? new EmbeddedMetrics(meterFactory) : null;
 
     /// <summary>
     /// The <see cref="GlobalPosition"/> of the most recently applied event on this node.
@@ -38,23 +41,28 @@ public sealed class EmbeddedMsspClient(
         ISstAccess<EventKey>? sst = null,
         SubscriptionLogFormat subscriptionLogFormat = SubscriptionLogFormat.FullPayload,
         long subscriptionLogSegmentSizeBytes = 64 * 1024 * 1024,
+        IMeterFactory? meterFactory = null,
         CancellationToken cancellationToken = default) {
 
         Directory.CreateDirectory(dataDirectory);
         var wal = WalManager.Open(dataDirectory);
         var log = new EmbeddedLog(wal);
-        var lsmOptions = new LsmStoreOptions<EventKey>(dataDirectory, memTableCapacityBytes, _ => ValueTask.CompletedTask, BaseLevelSizeBytes: -1, LevelSizeMultiplier: 10, SstAccess: sst);
+        var lsmMetrics = meterFactory is not null ? new LsmStoreMetrics(meterFactory, memTableCapacityBytes) : null;
+        var lsmOptions = new LsmStoreOptions<EventKey>(dataDirectory, memTableCapacityBytes, _ => ValueTask.CompletedTask, BaseLevelSizeBytes: -1, LevelSizeMultiplier: 10, SstAccess: sst, Metrics: lsmMetrics);
         var lsmStore = await LsmStore<EventKey>.OpenAsync(lsmOptions, wal.ReadAllAsync(cancellationToken), cancellationToken);
 
         var subscriptionLog = SubscriptionLog.Open(dataDirectory, subscriptionLogFormat, subscriptionLogSegmentSizeBytes);
         var pipeline = new SubscriptionPipeline(lsmStore, subscriptionLog);
         var logDriven = LogDrivenStore<EventKey>.Create(log, pipeline, memTableCapacityBytes);
 
-        return new EmbeddedMsspClient(store: new GlobalPositionDecorator(logDriven, pipeline), subscriptions: pipeline);
+        return new EmbeddedMsspClient(store: new GlobalPositionDecorator(logDriven, pipeline), subscriptions: pipeline, meterFactory: meterFactory);
     }
 
     /// <inheritdoc/>
     public async ValueTask AppendAsync(StreamId streamId, StreamRevision expectedRevision, IEnumerable<EventData> events, CancellationToken cancellationToken = default) {
+        var timer = OperationTimer.Start();
+        var eventCount = 0L;
+
         await _writeLock.WaitAsync(cancellationToken);
         try {
             if (!_revisions.Contains(streamId.Value)) {
@@ -62,8 +70,10 @@ public sealed class EmbeddedMsspClient(
                 if (exists) _revisions.Set(streamId.Value, revision);
             }
 
-            if (!_revisions.CheckConcurrency(streamId.Value, expectedRevision))
+            if (!_revisions.CheckConcurrency(streamId.Value, expectedRevision)) {
+                _metrics?.RecordConflict();
                 throw new OptimisticConcurrencyException(streamId, expectedRevision);
+            }
 
             var baseRevision = _revisions.TryGet(streamId.Value, out var current) ? current + 1 : 0UL;
             var timestamp = DateTimeOffset.UtcNow;
@@ -73,9 +83,12 @@ public sealed class EmbeddedMsspClient(
                 var key = new EventKey(streamId.Value, baseRevision + offset++);
                 await store.WriteAsync(key, EventValue.From(eventData, timestamp), cancellationToken);
                 _revisions.Set(streamId.Value, key.Revision);
+                eventCount++;
             }
         } finally {
             _writeLock.Release();
+            if (_metrics is not null && eventCount > 0)
+                _metrics.RecordAppend(eventCount, timer.ElapsedMs);
         }
     }
 
@@ -113,6 +126,7 @@ public sealed class EmbeddedMsspClient(
                  }) {
             if (count++ >= maxCount)
                 yield break;
+            _metrics?.RecordRead(1);
             yield return evt;
         }
     }
@@ -127,6 +141,7 @@ public sealed class EmbeddedMsspClient(
         IEnumerable<SubscriptionEvent> catchUpScan;
         GlobalPosition catchUpPosition;
 
+        _metrics?.SubscriptionStarted();
         await _writeLock.WaitAsync(cancellationToken);
         try {
             catchUpPosition = subscriptions.CurrentPosition;
@@ -160,6 +175,7 @@ public sealed class EmbeddedMsspClient(
                     _writeLock.Release();
                 }
             }
+            _metrics?.SubscriptionStopped();
         }
     }
 
@@ -193,5 +209,6 @@ public sealed class EmbeddedMsspClient(
     public void Dispose() {
         store.Dispose();
         _writeLock.Dispose();
+        _metrics?.Dispose();
     }
 }

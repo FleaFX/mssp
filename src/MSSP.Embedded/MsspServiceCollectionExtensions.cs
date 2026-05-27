@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using System.Diagnostics.Metrics;
 
 namespace MSSP.Embedded;
 
@@ -21,7 +22,9 @@ public static class MsspServiceCollectionExtensions {
         var options = new MsspOptions();
         configure(options);
         services.AddSingleton(options);
-        services.AddSingleton<MsspHostedService>();
+        services.AddSingleton<MsspHostedService>(sp => new MsspHostedService(
+            sp.GetRequiredService<MsspOptions>(),
+            sp.GetService<IMeterFactory>()));
         services.AddSingleton<EmbeddedMsspClient>(sp => sp.GetRequiredService<MsspHostedService>().Client);
         services.AddSingleton<IMsspClient>(sp => sp.GetRequiredService<EmbeddedMsspClient>());
         var hostedServiceDescriptor = ServiceDescriptor.Singleton<IHostedService>(

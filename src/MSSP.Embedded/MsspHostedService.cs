@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Hosting;
 using MSSP.BloomFilters;
 using MSSP.Storage;
+using System.Diagnostics.Metrics;
 
 namespace MSSP.Embedded;
 
@@ -8,7 +9,10 @@ namespace MSSP.Embedded;
 /// Manages the lifecycle of <see cref="EmbeddedMsspClient"/> as an <see cref="IHostedService"/>.
 /// Opens the store on host startup and disposes it on shutdown.
 /// </summary>
-public sealed class MsspHostedService(MsspOptions options) : IHostedService, IDisposable {
+public sealed class MsspHostedService(
+    MsspOptions options,
+    IMeterFactory? meterFactory = null
+) : IHostedService, IDisposable {
     EmbeddedMsspClient? _client;
     bool _disposed;
 
@@ -30,6 +34,7 @@ public sealed class MsspHostedService(MsspOptions options) : IHostedService, IDi
             sst,
             options.SubscriptionLogFormat,
             options.SubscriptionLogSegmentSizeBytes,
+            meterFactory,
             cancellationToken);
     }
 
