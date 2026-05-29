@@ -118,14 +118,15 @@ sealed class SkipList<TKey, TValue> : IDisposable, IEnumerable<KeyValuePair<TKey
         _lock.Dispose();
 
     /// <summary>
-    /// Returns an enumerable that yields entries in ascending key order, starting from the first key
+    /// Returns a snapshot of entries in ascending key order, starting from the first key
     /// greater than or equal to <paramref name="from"/>.
     /// </summary>
     /// <remarks>
-    /// The read lock is held for the entire duration of the enumeration. The same threading
-    /// constraints as <see cref="IEnumerable{T}.GetEnumerator"/> apply.
+    /// The read lock is held only while building the snapshot, not during iteration.
+    /// Safe to iterate across async continuations and on different threads.
     /// </remarks>
     internal IEnumerable<KeyValuePair<TKey, TValue>> Scan(TKey from) {
+        var snapshot = new List<KeyValuePair<TKey, TValue>>();
         _lock.EnterReadLock();
         try {
             var current = _head;
@@ -135,35 +136,35 @@ sealed class SkipList<TKey, TValue> : IDisposable, IEnumerable<KeyValuePair<TKey
             }
             current = current.Next[0];
             while (current != null) {
-                yield return new(current.Key!, current.Value);
+                snapshot.Add(new(current.Key!, current.Value));
                 current = current.Next[0];
             }
         } finally {
             _lock.ExitReadLock();
         }
+        return snapshot;
     }
 
     /// <summary>
-    /// Returns an enumerator that yields all entries in ascending key order.
+    /// Returns a snapshot of all entries in ascending key order.
     /// </summary>
     /// <remarks>
-    /// The read lock is held for the entire duration of the enumeration.
-    /// Calling <see cref="Write"/> or <see cref="Delete"/> on the same instance from within
-    /// the enumerating thread will deadlock. Calling <see cref="TryGet"/> will throw
-    /// <see cref="LockRecursionException"/> because this instance uses
-    /// <see cref="LockRecursionPolicy.NoRecursion"/>.
+    /// The read lock is held only while building the snapshot, not during iteration.
+    /// Safe to iterate across async continuations and on different threads.
     /// </remarks>
     IEnumerator<KeyValuePair<TKey, TValue>> IEnumerable<KeyValuePair<TKey, TValue>>.GetEnumerator() {
+        var snapshot = new List<KeyValuePair<TKey, TValue>>(_count);
         _lock.EnterReadLock();
         try {
             var current = _head.Next[0];
             while (current != null) {
-                yield return new(current.Key!, current.Value);
+                snapshot.Add(new(current.Key!, current.Value));
                 current = current.Next[0];
             }
         } finally {
             _lock.ExitReadLock();
         }
+        return snapshot.GetEnumerator();
     }
 
     /// <inheritdoc/>
