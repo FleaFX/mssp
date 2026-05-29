@@ -195,7 +195,7 @@ public sealed class EmbeddedMsspClient(
 
     /// <summary>
     /// Creates a compressed backup of the store as a ZIP archive at <paramref name="backupPath"/>.
-    /// Archives all active SST files, their bloom filter sidecars, and the WAL.
+    /// Archives all active SST files, their bloom filter sidecars, the subscription log, and the WAL.
     /// Writes that started before this call are guaranteed to be included;
     /// writes that start after may or may not be included (fuzzy backup).
     /// </summary>
@@ -223,13 +223,19 @@ public sealed class EmbeddedMsspClient(
         }
 
         // Write compressed archive. SST files are immutable after creation — safe to
-        // read concurrently. WAL is append-only; FileShare.ReadWrite allows reading
-        // while the store continues writing.
+        // read concurrently. Subscription log and WAL are append-only; FileShare.ReadWrite
+        // allows reading while the store continues writing.
         await using var zipStream = new FileStream(backupPath, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 81920, FileOptions.Asynchronous);
         await using var archive = new ZipArchive(zipStream, ZipArchiveMode.Create, leaveOpen: false);
 
         foreach (var filePath in filesToArchive)
             await AddToArchiveAsync(archive, filePath, cancellationToken);
+
+        // Subscription log must be included so GlobalPosition continuity is preserved on restore.
+        // SubscriptionPipeline initialises _globalSequence from the log's last position; without it
+        // the sequence restarts at 0 and new events collide with pre-backup positions.
+        foreach (var logFile in Directory.EnumerateFiles(_dataDirectory, "subscriptions-*.log").OrderBy(f => f))
+            await AddToArchiveAsync(archive, logFile, cancellationToken);
 
         var walPath = Path.Combine(_dataDirectory, "wal.log");
         if (File.Exists(walPath))
@@ -253,9 +259,10 @@ public sealed class EmbeddedMsspClient(
 
         Directory.CreateDirectory(targetDirectory);
 
-        // Remove existing SST, .bf, and WAL files from targetDirectory.
+        // Remove existing SST, .bf, subscription log, and WAL files from targetDirectory.
         foreach (var file in Directory.EnumerateFiles(targetDirectory, "*.sst")
-                     .Concat(Directory.EnumerateFiles(targetDirectory, "*.bf")))
+                     .Concat(Directory.EnumerateFiles(targetDirectory, "*.bf"))
+                     .Concat(Directory.EnumerateFiles(targetDirectory, "subscriptions-*.log")))
             File.Delete(file);
 
         var existingWal = Path.Combine(targetDirectory, "wal.log");

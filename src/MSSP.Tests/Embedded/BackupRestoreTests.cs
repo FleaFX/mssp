@@ -120,5 +120,27 @@ public class BackupRestoreTests : IAsyncLifetime {
 
             await act.Should().NotThrowAsync();
         }
+
+        [Fact]
+        public async Task Restore_GlobalPositionContinuesAfterBackupPosition() {
+            // Arrange: write events so GlobalPosition advances, then backup.
+            await _client.AppendAsync("stream-a", StreamRevision.NoStream, [Event("A", "1"), Event("B", "2"), Event("C", "3")], TestContext.Current.CancellationToken);
+            var positionBeforeBackup = _client.CurrentPosition;
+            await _client.CreateBackupAsync(_backupPath, TestContext.Current.CancellationToken);
+            _client.Dispose();
+            _disposed = true;
+
+            // Act: restore and open.
+            await EmbeddedMsspClient.RestoreBackupAsync(_backupPath, _restoreDir, TestContext.Current.CancellationToken);
+            using var restored = await EmbeddedMsspClient.OpenAsync(_restoreDir, cancellationToken: TestContext.Current.CancellationToken);
+
+            // Assert: CurrentPosition after restore matches position at backup time.
+            restored.CurrentPosition.Should().Be(positionBeforeBackup);
+
+            // Writing a new event must advance GlobalPosition beyond the backup position,
+            // not reset to 1 (which would collide with pre-backup events).
+            await restored.AppendAsync("stream-b", StreamRevision.NoStream, [Event("D", "4")], TestContext.Current.CancellationToken);
+            restored.CurrentPosition.Value.Should().BeGreaterThan(positionBeforeBackup.Value);
+        }
     }
 }
