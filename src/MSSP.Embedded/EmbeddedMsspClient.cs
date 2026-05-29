@@ -208,38 +208,55 @@ public sealed class EmbeddedMsspClient(
             throw new InvalidOperationException($"{nameof(CreateBackupAsync)} is only available on instances created via {nameof(OpenAsync)}.");
 
         var parentDir = Path.GetDirectoryName(backupPath);
-        if (parentDir is not null)
+        if (!string.IsNullOrEmpty(parentDir))
             Directory.CreateDirectory(parentDir);
 
-        // Acquire the write lock to guarantee all in-flight writes — including any
-        // flush or compaction they triggered — have completed. _sstLevels is stable
-        // for the duration of this lock acquisition.
-        IReadOnlyList<string> filesToArchive;
+        // Open SST file handles while holding _writeLock. Opening under the lock
+        // guarantees no file is deleted by a concurrent compaction between the
+        // snapshot and the open. FileShare.Delete allows compaction to remove the
+        // directory entry while we still hold the handle — the file data remains
+        // readable until we close it.
+        var sstHandles = new List<(string FileName, FileStream Handle)>();
         await _writeLock.WaitAsync(cancellationToken);
         try {
-            filesToArchive = _lsmStore.GetActiveFilePaths();
-        } finally {
+            foreach (var filePath in _lsmStore.GetActiveFilePaths())
+                sstHandles.Add((Path.GetFileName(filePath),
+                    new FileStream(filePath, FileMode.Open, FileAccess.Read,
+                        FileShare.ReadWrite | FileShare.Delete,
+                        bufferSize: 81920, FileOptions.Asynchronous | FileOptions.SequentialScan)));
+        } catch {
+            foreach (var (_, h) in sstHandles) h.Dispose();
             _writeLock.Release();
+            throw;
         }
+        _writeLock.Release();
 
-        // Write compressed archive. SST files are immutable after creation — safe to
-        // read concurrently. Subscription log and WAL are append-only; FileShare.ReadWrite
-        // allows reading while the store continues writing.
-        await using var zipStream = new FileStream(backupPath, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 81920, FileOptions.Asynchronous);
-        await using var archive = new ZipArchive(zipStream, ZipArchiveMode.Create, leaveOpen: false);
+        // Write compressed archive. On any failure the partial archive is deleted
+        // so callers are never left with a file that looks complete but is corrupt.
+        var backupCreated = false;
+        try {
+            await using var zipStream = new FileStream(backupPath, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 81920, FileOptions.Asynchronous);
+            await using var archive = new ZipArchive(zipStream, ZipArchiveMode.Create, leaveOpen: false);
 
-        foreach (var filePath in filesToArchive)
-            await AddToArchiveAsync(archive, filePath, cancellationToken);
+            foreach (var (fileName, handle) in sstHandles)
+                await AddStreamToArchiveAsync(archive, fileName, handle, cancellationToken);
 
-        // Subscription log must be included so GlobalPosition continuity is preserved on restore.
-        // SubscriptionPipeline initialises _globalSequence from the log's last position; without it
-        // the sequence restarts at 0 and new events collide with pre-backup positions.
-        foreach (var logFile in Directory.EnumerateFiles(_dataDirectory, "subscriptions-*.log").OrderBy(f => f))
-            await AddToArchiveAsync(archive, logFile, cancellationToken);
+            // Subscription log must be included so GlobalPosition continuity is preserved on restore.
+            // SubscriptionPipeline initialises _globalSequence from the log's last position; without it
+            // the sequence restarts at 0 and new events collide with pre-backup positions.
+            foreach (var logFile in Directory.EnumerateFiles(_dataDirectory, "subscriptions-*.log").OrderBy(f => f))
+                await AddToArchiveAsync(archive, logFile, cancellationToken);
 
-        var walPath = Path.Combine(_dataDirectory, "wal.log");
-        if (File.Exists(walPath))
-            await AddToArchiveAsync(archive, walPath, cancellationToken);
+            var walPath = Path.Combine(_dataDirectory, "wal.log");
+            if (File.Exists(walPath))
+                await AddToArchiveAsync(archive, walPath, cancellationToken);
+
+            backupCreated = true;
+        } finally {
+            foreach (var (_, h) in sstHandles) h.Dispose();
+            if (!backupCreated)
+                try { File.Delete(backupPath); } catch { /* best-effort cleanup of partial archive */ }
+        }
     }
 
     /// <summary>
@@ -270,11 +287,17 @@ public sealed class EmbeddedMsspClient(
             File.Delete(existingWal);
 
         // Extract archive entries to targetDirectory.
+        // Validate each entry's resolved path to prevent ZipSlip: an entry with a
+        // name like "../evil" or an absolute path must not escape targetDirectory.
+        var resolvedTarget = Path.GetFullPath(targetDirectory).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+
         await using var zipStream = new FileStream(backupPath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 81920, FileOptions.Asynchronous);
         await using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read, leaveOpen: false);
 
         foreach (var entry in archive.Entries) {
-            var destPath = Path.Combine(targetDirectory, entry.FullName);
+            var destPath = Path.GetFullPath(Path.Combine(targetDirectory, entry.FullName));
+            if (!destPath.StartsWith(resolvedTarget, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException($"Backup entry '{entry.Name}' resolves outside the target directory.");
             await using var entryStream = entry.Open();
             await using var destStream = new FileStream(destPath, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 81920, FileOptions.Asynchronous);
             await entryStream.CopyToAsync(destStream, cancellationToken);
@@ -308,10 +331,14 @@ public sealed class EmbeddedMsspClient(
     }
 
     static async Task AddToArchiveAsync(ZipArchive archive, string filePath, CancellationToken cancellationToken) {
-        var entry = archive.CreateEntry(Path.GetFileName(filePath), CompressionLevel.Optimal);
-        await using var entryStream = entry.Open();
         await using var fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, bufferSize: 81920, FileOptions.Asynchronous | FileOptions.SequentialScan);
-        await fileStream.CopyToAsync(entryStream, cancellationToken);
+        await AddStreamToArchiveAsync(archive, Path.GetFileName(filePath), fileStream, cancellationToken);
+    }
+
+    static async Task AddStreamToArchiveAsync(ZipArchive archive, string entryName, Stream source, CancellationToken cancellationToken) {
+        var entry = archive.CreateEntry(entryName, CompressionLevel.Optimal);
+        await using var entryStream = entry.Open();
+        await source.CopyToAsync(entryStream, cancellationToken);
     }
 
     /// <inheritdoc/>
