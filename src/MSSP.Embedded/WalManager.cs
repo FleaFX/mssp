@@ -17,7 +17,7 @@ sealed class WalManager : IDisposable {
     /// </summary>
     internal static WalManager Open(string dataDirectory) {
         var walPath = Path.Combine(dataDirectory, "wal.log");
-        var walStream = new FileStream(walPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None, bufferSize: 4096, FileOptions.WriteThrough | FileOptions.Asynchronous);
+        var walStream = new FileStream(walPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.Read, bufferSize: 4096, FileOptions.WriteThrough | FileOptions.Asynchronous);
         return new WalManager(walPath, new StreamSegment<WalRecord>(walStream));
     }
 
@@ -32,11 +32,12 @@ sealed class WalManager : IDisposable {
     /// Called after a MemTable flush so replayed records on next open don't include already-flushed data.
     /// </summary>
     internal ValueTask RotateAsync(CancellationToken cancellationToken) {
-        // FileShare.None prevents opening the new stream before closing the old one,
-        // so we dispose first. On failure to reopen, _wal is left as the disposed segment;
-        // any subsequent append will fail with ObjectDisposedException, signalling the broken state.
+        // Dispose the current stream before opening the new one; FileMode.Create
+        // truncates/recreates the file. On failure to reopen, _wal is left as the
+        // disposed segment so subsequent appends fail with ObjectDisposedException,
+        // signalling the broken state.
         _wal.Dispose();
-        var walStream = new FileStream(_walPath, FileMode.Create, FileAccess.ReadWrite, FileShare.None,
+        var walStream = new FileStream(_walPath, FileMode.Create, FileAccess.ReadWrite, FileShare.Read,
             bufferSize: 4096, FileOptions.WriteThrough | FileOptions.Asynchronous);
         _wal = new StreamSegment<WalRecord>(walStream);
         return ValueTask.CompletedTask;
