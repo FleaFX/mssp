@@ -1,4 +1,5 @@
 using System.Diagnostics.Metrics;
+using System.IO.Compression;
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
 using MSSP;
@@ -193,56 +194,60 @@ public sealed class EmbeddedMsspClient(
     }
 
     /// <summary>
-    /// Creates a consistent backup of the store to <paramref name="backupDirectory"/>. 
-    /// Copies all active SST files, their bloom filter sidecars, and the WAL.
+    /// Creates a compressed backup of the store as a ZIP archive at <paramref name="backupPath"/>.
+    /// Archives all active SST files, their bloom filter sidecars, and the WAL.
     /// Writes that started before this call are guaranteed to be included;
     /// writes that start after may or may not be included (fuzzy backup).
     /// </summary>
     /// <remarks>
-    /// Only available on instances created via <see cref="OpenAsync"/>. 
+    /// Only available on instances created via <see cref="OpenAsync"/>.
     /// The store remains fully operational during the backup.
     /// </remarks>
-    public async ValueTask CreateBackupAsync(string backupDirectory, CancellationToken cancellationToken = default) {
+    public async ValueTask CreateBackupAsync(string backupPath, CancellationToken cancellationToken = default) {
         if (_dataDirectory is null || _lsmStore is null)
             throw new InvalidOperationException($"{nameof(CreateBackupAsync)} is only available on instances created via {nameof(OpenAsync)}.");
 
-        Directory.CreateDirectory(backupDirectory);
+        var parentDir = Path.GetDirectoryName(backupPath);
+        if (parentDir is not null)
+            Directory.CreateDirectory(parentDir);
 
         // Acquire the write lock to guarantee all in-flight writes — including any
         // flush or compaction they triggered — have completed. _sstLevels is stable
         // for the duration of this lock acquisition.
-        IReadOnlyList<string> filesToCopy;
+        IReadOnlyList<string> filesToArchive;
         await _writeLock.WaitAsync(cancellationToken);
         try {
-            filesToCopy = _lsmStore.GetActiveFilePaths();
+            filesToArchive = _lsmStore.GetActiveFilePaths();
         } finally {
             _writeLock.Release();
         }
 
-        // Copy SST files and bloom filter sidecars outside the lock.
-        // SST files are immutable after creation — safe for concurrent reads.
-        var copyTasks = filesToCopy
-            .Select(src => CopyFileAsync(src, Path.Combine(backupDirectory, Path.GetFileName(src)), cancellationToken))
-            .ToList();
-        await Task.WhenAll(copyTasks);
+        // Write compressed archive. SST files are immutable after creation — safe to
+        // read concurrently. WAL is append-only; FileShare.ReadWrite allows reading
+        // while the store continues writing.
+        await using var zipStream = new FileStream(backupPath, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 81920, FileOptions.Asynchronous);
+        await using var archive = new ZipArchive(zipStream, ZipArchiveMode.Create, leaveOpen: false);
 
-        // Copy the WAL. This captures all events not yet flushed to SST at this moment.
+        foreach (var filePath in filesToArchive)
+            await AddToArchiveAsync(archive, filePath, cancellationToken);
+
         var walPath = Path.Combine(_dataDirectory, "wal.log");
         if (File.Exists(walPath))
-            await CopyFileAsync(walPath, Path.Combine(backupDirectory, "wal.log"), cancellationToken);
+            await AddToArchiveAsync(archive, walPath, cancellationToken);
     }
 
     /// <summary>
-    /// Copies the contents of <paramref name="backupDirectory"/> into <paramref name="targetDirectory"/>, 
-    /// replacing any existing SST files and WAL. After this call, open the store at 
-    /// <paramref name="targetDirectory"/> with <see cref="OpenAsync"/> to resume from the backup state.
+    /// Extracts a backup archive created by <see cref="CreateBackupAsync"/> into
+    /// <paramref name="targetDirectory"/>, replacing any existing SST files and WAL.
+    /// After this call, open the store at <paramref name="targetDirectory"/> with
+    /// <see cref="OpenAsync"/> to resume from the backup state.
     /// </summary>
     /// <remarks>
-    /// This is an offline operation. The store at <paramref name="targetDirectory"/> must not be 
+    /// This is an offline operation. The store at <paramref name="targetDirectory"/> must not be
     /// open while this method runs.
     /// </remarks>
     public static async ValueTask RestoreBackupAsync(
-        string backupDirectory,
+        string backupPath,
         string targetDirectory,
         CancellationToken cancellationToken = default) {
 
@@ -257,18 +262,16 @@ public sealed class EmbeddedMsspClient(
         if (File.Exists(existingWal))
             File.Delete(existingWal);
 
-        // Copy SST files.
-        foreach (var src in Directory.EnumerateFiles(backupDirectory, "*.sst"))
-            await CopyFileAsync(src, Path.Combine(targetDirectory, Path.GetFileName(src)), cancellationToken);
+        // Extract archive entries to targetDirectory.
+        await using var zipStream = new FileStream(backupPath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 81920, FileOptions.Asynchronous);
+        await using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read, leaveOpen: false);
 
-        // Copy bloom filter sidecars.
-        foreach (var src in Directory.EnumerateFiles(backupDirectory, "*.bf"))
-            await CopyFileAsync(src, Path.Combine(targetDirectory, Path.GetFileName(src)), cancellationToken);
-
-        // Copy WAL.
-        var walSrc = Path.Combine(backupDirectory, "wal.log");
-        if (File.Exists(walSrc))
-            await CopyFileAsync(walSrc, Path.Combine(targetDirectory, "wal.log"), cancellationToken);
+        foreach (var entry in archive.Entries) {
+            var destPath = Path.Combine(targetDirectory, entry.FullName);
+            await using var entryStream = entry.Open();
+            await using var destStream = new FileStream(destPath, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 81920, FileOptions.Asynchronous);
+            await entryStream.CopyToAsync(destStream, cancellationToken);
+        }
     }
 
     // For FullPayload format the log contains full event data; no resolver needed.
@@ -297,10 +300,11 @@ public sealed class EmbeddedMsspClient(
         return (max.HasValue, max ?? 0UL);
     }
 
-    static async Task CopyFileAsync(string source, string destination, CancellationToken cancellationToken) {
-        await using var src  = new FileStream(source,      FileMode.Open,   FileAccess.Read,  FileShare.ReadWrite, bufferSize: 81920, FileOptions.Asynchronous | FileOptions.SequentialScan);
-        await using var dest = new FileStream(destination, FileMode.Create, FileAccess.Write, FileShare.None,      bufferSize: 81920, FileOptions.Asynchronous);
-        await src.CopyToAsync(dest, cancellationToken);
+    static async Task AddToArchiveAsync(ZipArchive archive, string filePath, CancellationToken cancellationToken) {
+        var entry = archive.CreateEntry(Path.GetFileName(filePath), CompressionLevel.Optimal);
+        await using var entryStream = entry.Open();
+        await using var fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, bufferSize: 81920, FileOptions.Asynchronous | FileOptions.SequentialScan);
+        await fileStream.CopyToAsync(entryStream, cancellationToken);
     }
 
     /// <inheritdoc/>

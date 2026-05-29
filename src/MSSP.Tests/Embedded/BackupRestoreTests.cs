@@ -1,10 +1,11 @@
+using System.IO.Compression;
 using FluentAssertions;
 
 namespace MSSP.Embedded;
 
 public class BackupRestoreTests : IAsyncLifetime {
-    readonly string _dataDir   = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
-    readonly string _backupDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+    readonly string _dataDir    = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+    readonly string _backupPath = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + ".zip");
     readonly string _restoreDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
     EmbeddedMsspClient _client = null!;
     bool _disposed;
@@ -16,8 +17,9 @@ public class BackupRestoreTests : IAsyncLifetime {
             _client?.Dispose();
             _disposed = true;
         }
-        foreach (var dir in new[] { _dataDir, _backupDir, _restoreDir })
-            if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+        if (Directory.Exists(_dataDir))   Directory.Delete(_dataDir,   recursive: true);
+        if (File.Exists(_backupPath))     File.Delete(_backupPath);
+        if (Directory.Exists(_restoreDir)) Directory.Delete(_restoreDir, recursive: true);
         return ValueTask.CompletedTask;
     }
 
@@ -27,19 +29,20 @@ public class BackupRestoreTests : IAsyncLifetime {
     public class CreateBackupAsync : BackupRestoreTests {
 
         [Fact]
-        public async Task CreatesBackupDirectory() {
-            await _client.CreateBackupAsync(_backupDir, TestContext.Current.CancellationToken);
+        public async Task CreatesBackupFile() {
+            await _client.CreateBackupAsync(_backupPath, TestContext.Current.CancellationToken);
 
-            Directory.Exists(_backupDir).Should().BeTrue();
+            File.Exists(_backupPath).Should().BeTrue();
         }
 
         [Fact]
         public async Task BackupContainsWalLog() {
             await _client.AppendAsync("stream-a", StreamRevision.NoStream, [Event("Foo", "data")], TestContext.Current.CancellationToken);
 
-            await _client.CreateBackupAsync(_backupDir, TestContext.Current.CancellationToken);
+            await _client.CreateBackupAsync(_backupPath, TestContext.Current.CancellationToken);
 
-            File.Exists(Path.Combine(_backupDir, "wal.log")).Should().BeTrue();
+            using var zip = ZipFile.OpenRead(_backupPath);
+            zip.Entries.Should().Contain(e => e.Name == "wal.log");
         }
 
         [Fact]
@@ -51,9 +54,10 @@ public class BackupRestoreTests : IAsyncLifetime {
             for (var i = 0; i < 20; i++)
                 await _client.AppendAsync($"stream-{i}", StreamRevision.NoStream, [Event("Foo", $"payload-{i}")], TestContext.Current.CancellationToken);
 
-            await _client.CreateBackupAsync(_backupDir, TestContext.Current.CancellationToken);
+            await _client.CreateBackupAsync(_backupPath, TestContext.Current.CancellationToken);
 
-            Directory.EnumerateFiles(_backupDir, "*.sst").Should().NotBeEmpty();
+            using var zip = ZipFile.OpenRead(_backupPath);
+            zip.Entries.Should().Contain(e => e.Name.EndsWith(".sst"));
         }
     }
 
@@ -64,12 +68,12 @@ public class BackupRestoreTests : IAsyncLifetime {
             // Arrange: write events and create backup.
             await _client.AppendAsync("stream-a", StreamRevision.NoStream, [Event("Foo", "first"), Event("Bar", "second")], TestContext.Current.CancellationToken);
             await _client.AppendAsync("stream-b", StreamRevision.NoStream, [Event("Baz", "only")], TestContext.Current.CancellationToken);
-            await _client.CreateBackupAsync(_backupDir, TestContext.Current.CancellationToken);
+            await _client.CreateBackupAsync(_backupPath, TestContext.Current.CancellationToken);
             _client.Dispose();
             _disposed = true;
 
             // Act: restore and open.
-            await EmbeddedMsspClient.RestoreBackupAsync(_backupDir, _restoreDir, TestContext.Current.CancellationToken);
+            await EmbeddedMsspClient.RestoreBackupAsync(_backupPath, _restoreDir, TestContext.Current.CancellationToken);
             using var restored = await EmbeddedMsspClient.OpenAsync(_restoreDir, cancellationToken: TestContext.Current.CancellationToken);
 
             // Assert: all events from before backup are readable.
@@ -87,7 +91,7 @@ public class BackupRestoreTests : IAsyncLifetime {
         public async Task Restore_OverwritesExistingDataDirectory() {
             // Arrange: write events to dataDir, backup, then write different events to restoreDir.
             await _client.AppendAsync("stream-a", StreamRevision.NoStream, [Event("Original", "data")], TestContext.Current.CancellationToken);
-            await _client.CreateBackupAsync(_backupDir, TestContext.Current.CancellationToken);
+            await _client.CreateBackupAsync(_backupPath, TestContext.Current.CancellationToken);
             _client.Dispose();
             _disposed = true;
 
@@ -96,7 +100,7 @@ public class BackupRestoreTests : IAsyncLifetime {
                 await other.AppendAsync("stream-z", StreamRevision.NoStream, [Event("Other", "data")], TestContext.Current.CancellationToken);
 
             // Act: restore backup on top of restoreDir.
-            await EmbeddedMsspClient.RestoreBackupAsync(_backupDir, _restoreDir, TestContext.Current.CancellationToken);
+            await EmbeddedMsspClient.RestoreBackupAsync(_backupPath, _restoreDir, TestContext.Current.CancellationToken);
 
             // Assert: after restore, only the original events are present.
             using var restored = await EmbeddedMsspClient.OpenAsync(_restoreDir, cancellationToken: TestContext.Current.CancellationToken);
@@ -110,9 +114,9 @@ public class BackupRestoreTests : IAsyncLifetime {
         [Fact]
         public async Task Restore_OnEmptyTargetDirectory_Succeeds() {
             await _client.AppendAsync("stream-a", StreamRevision.NoStream, [Event("Foo", "data")], TestContext.Current.CancellationToken);
-            await _client.CreateBackupAsync(_backupDir, TestContext.Current.CancellationToken);
+            await _client.CreateBackupAsync(_backupPath, TestContext.Current.CancellationToken);
 
-            var act = async () => await EmbeddedMsspClient.RestoreBackupAsync(_backupDir, _restoreDir, TestContext.Current.CancellationToken);
+            var act = async () => await EmbeddedMsspClient.RestoreBackupAsync(_backupPath, _restoreDir, TestContext.Current.CancellationToken);
 
             await act.Should().NotThrowAsync();
         }
