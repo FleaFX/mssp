@@ -18,6 +18,18 @@ public sealed class EmbeddedMsspClient(
     readonly RevisionIndex _revisions = new();
     readonly EmbeddedMetrics? _metrics = meterFactory is not null ? new EmbeddedMetrics(meterFactory) : null;
 
+    string? _dataDirectory;
+    LsmStore<EventKey>? _lsmStore;
+
+    /// <summary>
+    /// Wires up the backup source. Called from <see cref="OpenAsync"/> after construction.
+    /// </summary>
+    internal EmbeddedMsspClient WithBackupSource(string dataDirectory, LsmStore<EventKey> lsmStore) {
+        _dataDirectory = dataDirectory;
+        _lsmStore = lsmStore;
+        return this;
+    }
+
     /// <summary>
     /// The <see cref="GlobalPosition"/> of the most recently applied event on this node.
     /// On a follower, this reflects entries received via Raft replication.
@@ -55,7 +67,8 @@ public sealed class EmbeddedMsspClient(
         var pipeline = new SubscriptionPipeline(lsmStore, subscriptionLog);
         var logDriven = LogDrivenStore<EventKey>.Create(log, pipeline, memTableCapacityBytes);
 
-        return new EmbeddedMsspClient(store: new GlobalPositionDecorator(logDriven, pipeline), subscriptions: pipeline, meterFactory: meterFactory);
+        return new EmbeddedMsspClient(store: new GlobalPositionDecorator(logDriven, pipeline), subscriptions: pipeline, meterFactory: meterFactory)
+            .WithBackupSource(dataDirectory, lsmStore);
     }
 
     /// <inheritdoc/>
@@ -179,6 +192,85 @@ public sealed class EmbeddedMsspClient(
         }
     }
 
+    /// <summary>
+    /// Creates a consistent backup of the store to <paramref name="backupDirectory"/>. 
+    /// Copies all active SST files, their bloom filter sidecars, and the WAL.
+    /// Writes that started before this call are guaranteed to be included;
+    /// writes that start after may or may not be included (fuzzy backup).
+    /// </summary>
+    /// <remarks>
+    /// Only available on instances created via <see cref="OpenAsync"/>. 
+    /// The store remains fully operational during the backup.
+    /// </remarks>
+    public async ValueTask CreateBackupAsync(string backupDirectory, CancellationToken cancellationToken = default) {
+        if (_dataDirectory is null || _lsmStore is null)
+            throw new InvalidOperationException($"{nameof(CreateBackupAsync)} is only available on instances created via {nameof(OpenAsync)}.");
+
+        Directory.CreateDirectory(backupDirectory);
+
+        // Acquire the write lock to guarantee all in-flight writes — including any
+        // flush or compaction they triggered — have completed. _sstLevels is stable
+        // for the duration of this lock acquisition.
+        IReadOnlyList<string> filesToCopy;
+        await _writeLock.WaitAsync(cancellationToken);
+        try {
+            filesToCopy = _lsmStore.GetActiveFilePaths();
+        } finally {
+            _writeLock.Release();
+        }
+
+        // Copy SST files and bloom filter sidecars outside the lock.
+        // SST files are immutable after creation — safe for concurrent reads.
+        var copyTasks = filesToCopy
+            .Select(src => CopyFileAsync(src, Path.Combine(backupDirectory, Path.GetFileName(src)), cancellationToken))
+            .ToList();
+        await Task.WhenAll(copyTasks);
+
+        // Copy the WAL. This captures all events not yet flushed to SST at this moment.
+        var walPath = Path.Combine(_dataDirectory, "wal.log");
+        if (File.Exists(walPath))
+            await CopyFileAsync(walPath, Path.Combine(backupDirectory, "wal.log"), cancellationToken);
+    }
+
+    /// <summary>
+    /// Copies the contents of <paramref name="backupDirectory"/> into <paramref name="targetDirectory"/>, 
+    /// replacing any existing SST files and WAL. After this call, open the store at 
+    /// <paramref name="targetDirectory"/> with <see cref="OpenAsync"/> to resume from the backup state.
+    /// </summary>
+    /// <remarks>
+    /// This is an offline operation. The store at <paramref name="targetDirectory"/> must not be 
+    /// open while this method runs.
+    /// </remarks>
+    public static async ValueTask RestoreBackupAsync(
+        string backupDirectory,
+        string targetDirectory,
+        CancellationToken cancellationToken = default) {
+
+        Directory.CreateDirectory(targetDirectory);
+
+        // Remove existing SST, .bf, and WAL files from targetDirectory.
+        foreach (var file in Directory.EnumerateFiles(targetDirectory, "*.sst")
+                     .Concat(Directory.EnumerateFiles(targetDirectory, "*.bf")))
+            File.Delete(file);
+
+        var existingWal = Path.Combine(targetDirectory, "wal.log");
+        if (File.Exists(existingWal))
+            File.Delete(existingWal);
+
+        // Copy SST files.
+        foreach (var src in Directory.EnumerateFiles(backupDirectory, "*.sst"))
+            await CopyFileAsync(src, Path.Combine(targetDirectory, Path.GetFileName(src)), cancellationToken);
+
+        // Copy bloom filter sidecars.
+        foreach (var src in Directory.EnumerateFiles(backupDirectory, "*.bf"))
+            await CopyFileAsync(src, Path.Combine(targetDirectory, Path.GetFileName(src)), cancellationToken);
+
+        // Copy WAL.
+        var walSrc = Path.Combine(backupDirectory, "wal.log");
+        if (File.Exists(walSrc))
+            await CopyFileAsync(walSrc, Path.Combine(targetDirectory, "wal.log"), cancellationToken);
+    }
+
     // For FullPayload format the log contains full event data; no resolver needed.
     // For ReferenceOnly the log stores only EventKey pointers, resolved here via SST scan.
     Func<EventKey, SubscriptionEvent>? BuildResolver() {
@@ -203,6 +295,12 @@ public sealed class EmbeddedMsspClient(
         }
 
         return (max.HasValue, max ?? 0UL);
+    }
+
+    static async Task CopyFileAsync(string source, string destination, CancellationToken cancellationToken) {
+        await using var src  = new FileStream(source,      FileMode.Open,   FileAccess.Read,  FileShare.ReadWrite, bufferSize: 81920, FileOptions.Asynchronous | FileOptions.SequentialScan);
+        await using var dest = new FileStream(destination, FileMode.Create, FileAccess.Write, FileShare.None,      bufferSize: 81920, FileOptions.Asynchronous);
+        await src.CopyToAsync(dest, cancellationToken);
     }
 
     /// <inheritdoc/>

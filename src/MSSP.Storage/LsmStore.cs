@@ -74,6 +74,21 @@ public sealed partial class LsmStore<TKey> : ILsmStore<TKey> where TKey : IKey<T
         levels[levelIndex].Add(file);
     }
 
+    /// <summary>
+    /// Returns the paths of all SST files and their bloom filter sidecars currently
+    /// tracked by this store. Safe to call while holding the caller's write lock.
+    /// </summary>
+    internal IReadOnlyList<string> GetActiveFilePaths() {
+        var paths = new List<string>();
+        foreach (var level in _sstLevels)
+            foreach (var file in level) {
+                paths.Add(file.FilePath);
+                if (File.Exists(file.BloomFilterPath))
+                    paths.Add(file.BloomFilterPath);
+            }
+        return paths;
+    }
+
     /// <inheritdoc />
     public void Dispose() {
         _memTable.Dispose();
