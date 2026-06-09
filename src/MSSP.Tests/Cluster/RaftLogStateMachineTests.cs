@@ -43,7 +43,7 @@ public class RaftLogStateMachineTests {
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
         var received = false;
         try {
-            await foreach (var _ in sm.CommittedRecords.WithCancellation(cts.Token))
+            await foreach (var _ in sm.CommittedRecords.ReadAllAsync(cts.Token))
                 received = true;
         } catch (OperationCanceledException) { /* expected — channel is empty */ }
 
@@ -61,7 +61,7 @@ public class RaftLogStateMachineTests {
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
         var received = false;
         try {
-            await foreach (var _ in sm.CommittedRecords.WithCancellation(cts.Token))
+            await foreach (var _ in sm.CommittedRecords.ReadAllAsync(cts.Token))
                 received = true;
         } catch (OperationCanceledException) { /* timeout after the one item was received */ }
 
@@ -77,7 +77,7 @@ public class RaftLogStateMachineTests {
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
         var received = false;
         try {
-            await foreach (var _ in sm.CommittedRecords.WithCancellation(cts.Token))
+            await foreach (var _ in sm.CommittedRecords.ReadAllAsync(cts.Token))
                 received = true;
         } catch (OperationCanceledException) { }
 

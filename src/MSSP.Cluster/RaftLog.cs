@@ -1,3 +1,5 @@
+using System.Runtime.CompilerServices;
+using System.Threading.Channels;
 using MSSP.Storage;
 using MSSP.Raft;
 
@@ -23,10 +25,14 @@ sealed class RaftLog(RaftNode node, RaftLogStateMachine stateMachine) : ILog<Wal
     public IAsyncEnumerator<WalRecord[]> GetAsyncEnumerator(CancellationToken cancellationToken = default) =>
         AsBatches(stateMachine.CommittedRecords, cancellationToken).GetAsyncEnumerator(cancellationToken);
 
-    static async IAsyncEnumerable<WalRecord[]> AsBatches(
-        IAsyncEnumerable<WalRecord> source,
-        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken) {
-        await foreach (var record in source.WithCancellation(cancellationToken))
-            yield return [record];
+    static async IAsyncEnumerable<WalRecord[]> AsBatches(ChannelReader<WalRecord> reader, [EnumeratorCancellation] CancellationToken cancellationToken) {
+        var batch = new List<WalRecord>();
+        while (await reader.WaitToReadAsync(cancellationToken)) {
+            batch.Clear();
+            while (reader.TryRead(out var record))
+                batch.Add(record);
+            if (batch.Count > 0)
+                yield return batch.ToArray();
+        }
     }
 }
