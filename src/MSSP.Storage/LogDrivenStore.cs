@@ -115,6 +115,11 @@ public sealed class LogDrivenStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKe
             }
         } catch (OperationCanceledException) {
             // normal shutdown
+        } catch (Exception ex) {
+            foreach (var tcs in batchTcss)
+                tcs.TrySetException(ex);
+            batchTcss.Clear();
+            throw;
         } finally {
             foreach (var tcs in batchTcss) tcs.TrySetCanceled();
             while (_pending.TryDequeue(out var tcs))

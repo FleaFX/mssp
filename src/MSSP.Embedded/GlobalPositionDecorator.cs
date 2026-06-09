@@ -45,5 +45,9 @@ public sealed class GlobalPositionDecorator(
         => inner.ScanAllFrom(from);
 
     /// <inheritdoc/>
+    public ValueTask FlushAsync(CancellationToken cancellationToken = default) =>
+        inner.FlushAsync(cancellationToken);
+
+    /// <inheritdoc/>
     public void Dispose() => inner.Dispose();
 }

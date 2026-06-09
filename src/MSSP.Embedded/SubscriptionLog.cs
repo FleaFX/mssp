@@ -283,7 +283,9 @@ public sealed partial class SubscriptionLog : IDisposable {
     /// Called once per apply-loop batch after all records in the batch have been appended.
     /// </summary>
     internal ValueTask FlushAsync(CancellationToken cancellationToken = default) =>
-        new(_activeStream?.FlushAsync(cancellationToken) ?? Task.CompletedTask);
+        _activeStream != null
+            ? new ValueTask(_activeStream.FlushAsync(cancellationToken))
+            : ValueTask.CompletedTask;
 
     static FileStream OpenForAppend(string path) => new(
         path,
