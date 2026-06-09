@@ -24,6 +24,11 @@ public sealed class RevisionIndex {
     public void Set(string streamId, ulong revision) => _revisions[streamId] = revision;
 
     /// <summary>
+    /// Removes the cached revision for <paramref name="streamId"/>, forcing a fresh lookup on the next access.
+    /// </summary>
+    public void Remove(string streamId) => _revisions.Remove(streamId);
+
+    /// <summary>
     /// Returns <see langword="true"/> if the current state satisfies the <paramref name="expected"/> revision constraint.
     /// </summary>
     public bool CheckConcurrency(string streamId, StreamRevision expected) {

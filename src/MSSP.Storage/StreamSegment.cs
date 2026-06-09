@@ -13,7 +13,6 @@ namespace MSSP.Storage;
 /// Appends log records to a stream and reads them back for recovery.
 /// </summary>
 /// <remarks>
-/// For on-disk durability, open the underlying file with <see cref="FileOptions.WriteThrough"/>.
 /// The stream must be seekable for enumeration to work.
 /// </remarks>
 public sealed class StreamSegment<TRecord> : IAsyncEnumerable<TRecord>, IDisposable where TRecord : ILogRecord<TRecord> {
@@ -29,7 +28,13 @@ public sealed class StreamSegment<TRecord> : IAsyncEnumerable<TRecord>, IDisposa
     /// Appends <paramref name="record"/> to the stream, preceded by its length and followed by a CRC32 checksum.
     /// Returns <see langword="true"/> on success; <see langword="false"/> if the write fails.
     /// </summary>
-    public async ValueTask<bool> TryAppendAsync(TRecord record, CancellationToken cancellationToken = default) {
+    /// <param name="record">The record to append.</param>
+    /// <param name="flush">
+    /// When <see langword="true"/> (default), flushes the stream to durable storage after writing.
+    /// Pass <see langword="false"/> to defer the flush and batch it via <see cref="FlushAsync"/>.
+    /// </param>
+    /// <param name="cancellationToken">Token to cancel the operation.</param>
+    public async ValueTask<bool> TryAppendAsync(TRecord record, bool flush = true, CancellationToken cancellationToken = default) {
         ReadOnlyMemory<byte> bytes = record;
         var buf = ArrayPool<byte>.Shared.Rent(4 + bytes.Length + 4);
         try {
@@ -37,7 +42,7 @@ public sealed class StreamSegment<TRecord> : IAsyncEnumerable<TRecord>, IDisposa
             bytes.Span.CopyTo(buf.AsSpan(4));
             BinaryPrimitives.WriteUInt32LittleEndian(buf.AsSpan(4 + bytes.Length), Crc32.HashToUInt32(bytes.Span));
             await _stream.WriteAsync(buf.AsMemory(0, 4 + bytes.Length + 4), cancellationToken);
-            await _stream.FlushAsync(cancellationToken);
+            if (flush) await _stream.FlushAsync(cancellationToken);
             return true;
         } catch (IOException) {
             return false;
@@ -45,6 +50,14 @@ public sealed class StreamSegment<TRecord> : IAsyncEnumerable<TRecord>, IDisposa
             ArrayPool<byte>.Shared.Return(buf);
         }
     }
+
+    /// <summary>
+    /// Flushes all buffered writes to durable storage.
+    /// Call this after one or more <see cref="TryAppendAsync"/> calls with <c>flush: false</c>
+    /// to commit the batch atomically.
+    /// </summary>
+    public ValueTask FlushAsync(CancellationToken cancellationToken = default) =>
+        new(_stream.FlushAsync(cancellationToken));
 
     /// <inheritdoc/>
     public async IAsyncEnumerator<TRecord> GetAsyncEnumerator(CancellationToken cancellationToken = default) {

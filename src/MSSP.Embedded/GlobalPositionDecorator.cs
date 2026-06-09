@@ -17,7 +17,9 @@ namespace MSSP.Embedded;
 /// <see cref="EventValue.From"/> always satisfies this contract.
 /// </para>
 /// <para>
-/// Must be called while the caller holds the write lock.
+/// Positions are assigned via an atomic counter initialised from the subscription log's last
+/// persisted position. This allows multiple writes to be in-flight concurrently without reading
+/// back from the apply loop, while still guaranteeing strict monotonicity.
 /// Scans are forwarded transparently to the inner store.
 /// </para>
 /// </remarks>
@@ -25,10 +27,11 @@ public sealed class GlobalPositionDecorator(
     ILsmStore<EventKey> inner,
     ISubscriptionProvider subscriptions
 ) : ILsmStore<EventKey> {
+    long _nextPosition = (long)subscriptions.CurrentPosition.Value;
 
     /// <inheritdoc/>
     public ValueTask WriteAsync(EventKey key, Memory<byte> value, CancellationToken cancellationToken) {
-        var pos = new GlobalPosition(subscriptions.CurrentPosition.Value + 1);
+        var pos = new GlobalPosition((ulong)Interlocked.Increment(ref _nextPosition));
         BinaryPrimitives.WriteUInt64LittleEndian(value.Span[^8..], pos.Value);
         return inner.WriteAsync(key, value, cancellationToken);
     }

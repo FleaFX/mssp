@@ -17,15 +17,22 @@ sealed class WalManager : IDisposable {
     /// </summary>
     internal static WalManager Open(string dataDirectory) {
         var walPath = Path.Combine(dataDirectory, "wal.log");
-        var walStream = new FileStream(walPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.Read, bufferSize: 4096, FileOptions.WriteThrough | FileOptions.Asynchronous);
+        var walStream = new FileStream(walPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.Read, bufferSize: 4096, FileOptions.Asynchronous);
         return new WalManager(walPath, new StreamSegment<WalRecord>(walStream));
     }
 
     /// <summary>
-    /// Appends a record to the WAL. Returns <see langword="false"/> if the append fails.
+    /// Appends a record to the WAL without flushing. Returns <see langword="false"/> if the append fails.
+    /// Call <see cref="FlushAsync"/> to commit the batch to durable storage.
     /// </summary>
     internal ValueTask<bool> AppendAsync(ReadOnlyMemory<byte> record, CancellationToken cancellationToken) =>
-        _wal.TryAppendAsync(record, cancellationToken);
+        _wal.TryAppendAsync(record, flush: false, cancellationToken);
+
+    /// <summary>
+    /// Flushes all pending WAL writes to durable storage.
+    /// </summary>
+    internal ValueTask FlushAsync(CancellationToken cancellationToken) =>
+        _wal.FlushAsync(cancellationToken);
 
     /// <summary>
     /// Truncates the WAL by replacing the current file with a new empty one.
@@ -38,7 +45,7 @@ sealed class WalManager : IDisposable {
         // signalling the broken state.
         _wal.Dispose();
         var walStream = new FileStream(_walPath, FileMode.Create, FileAccess.ReadWrite, FileShare.Read,
-            bufferSize: 4096, FileOptions.WriteThrough | FileOptions.Asynchronous);
+            bufferSize: 4096, FileOptions.Asynchronous);
         _wal = new StreamSegment<WalRecord>(walStream);
         return ValueTask.CompletedTask;
     }
