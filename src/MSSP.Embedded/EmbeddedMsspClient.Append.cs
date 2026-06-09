@@ -4,6 +4,7 @@ public sealed partial class EmbeddedMsspClient {
     /// <inheritdoc/>
     public async ValueTask AppendAsync(StreamId streamId, StreamRevision expectedRevision, IEnumerable<EventData> events, CancellationToken cancellationToken = default) {
         var timer = OperationTimer.Start();
+        var tasks = new List<ValueTask>();
         var eventCount = 0L;
 
         await _writeLock.WaitAsync(cancellationToken);
@@ -24,14 +25,17 @@ public sealed partial class EmbeddedMsspClient {
 
             foreach (var eventData in events) {
                 var key = new EventKey(streamId.Value, baseRevision + offset++);
-                await store.WriteAsync(key, EventValue.From(eventData, timestamp), cancellationToken);
+                tasks.Add(store.WriteAsync(key, EventValue.From(eventData, timestamp), cancellationToken));
                 _revisions.Set(streamId.Value, key.Revision);
                 eventCount++;
             }
         } finally {
             _writeLock.Release();
-            if (_metrics is not null && eventCount > 0)
-                _metrics.RecordAppend(eventCount, timer.ElapsedMs);
         }
+
+        foreach (var t in tasks) await t;
+
+        if (_metrics is not null && eventCount > 0)
+            _metrics.RecordAppend(eventCount, timer.ElapsedMs);
     }
 }
