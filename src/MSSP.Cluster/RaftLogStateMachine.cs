@@ -21,9 +21,11 @@ sealed class RaftLogStateMachine : IRaftStateMachine {
     public ulong LastAppliedIndex => Volatile.Read(ref _lastAppliedIndex);
 
     /// <summary>
-    /// The stream of committed WAL records, consumed by <see cref="RaftLog"/>.
+    /// The channel reader for committed WAL records, consumed by <see cref="RaftLog"/>.
+    /// Exposing the reader directly allows <see cref="RaftLog"/> to drain all buffered records
+    /// in one pass via <see cref="ChannelReader{T}.TryRead"/>, enabling group commit.
     /// </summary>
-    internal IAsyncEnumerable<WalRecord> CommittedRecords => _channel.Reader.ReadAllAsync();
+    internal ChannelReader<WalRecord> CommittedRecords => _channel.Reader;
 
     /// <inheritdoc/>
     public ValueTask<bool> ApplyAsync(RaftLogEntry entry, CancellationToken cancellationToken = default) {
