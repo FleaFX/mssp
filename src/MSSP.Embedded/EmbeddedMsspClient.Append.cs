@@ -33,7 +33,12 @@ public sealed partial class EmbeddedMsspClient {
             _writeLock.Release();
         }
 
-        foreach (var t in tasks) await t;
+        try {
+            foreach (var t in tasks) await t;
+        } catch {
+            _revisions.Remove(streamId.Value);
+            throw;
+        }
 
         if (_metrics is not null && eventCount > 0)
             _metrics.RecordAppend(eventCount, timer.ElapsedMs);

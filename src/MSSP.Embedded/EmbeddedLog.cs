@@ -40,12 +40,15 @@ sealed class EmbeddedLog : ILog<WalRecord>, IDisposable {
     /// <inheritdoc/>
     public async ValueTask<bool> TryAppendAsync(WalRecord record, CancellationToken cancellationToken = default) {
         ReadOnlyMemory<byte> bytes = record;
+
         if (!await _wal.AppendAsync(bytes, cancellationToken))
             return false;
         _pendingFlush.Enqueue(record);
+
         // Signal the flush loop only on the 0→1 transition to avoid spurious semaphore releases.
         if (Interlocked.Exchange(ref _flushPending, 1) == 0)
             _flushReady.Release();
+
         return true;
     }
 
@@ -68,7 +71,11 @@ sealed class EmbeddedLog : ILog<WalRecord>, IDisposable {
                 foreach (var r in batch)
                     _channel.Writer.TryWrite(r);
             }
-        } catch (OperationCanceledException) { }
+        } catch (OperationCanceledException) {
+            // swallow
+        } catch (Exception ex) {
+            _channel.Writer.Complete(ex);
+        }
     }
 
     /// <inheritdoc/>
