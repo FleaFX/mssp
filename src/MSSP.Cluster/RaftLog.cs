@@ -31,8 +31,7 @@ sealed class RaftLog(RaftNode node, RaftLogStateMachine stateMachine) : ILog<Wal
             batch.Clear();
             while (reader.TryRead(out var record))
                 batch.Add(record);
-            if (batch.Count > 0)
-                yield return batch.ToArray();
+            yield return batch.ToArray();
         }
     }
 }
