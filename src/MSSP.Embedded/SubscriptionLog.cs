@@ -128,7 +128,6 @@ public sealed partial class SubscriptionLog : IDisposable {
                 _activeSparseIndex.Add((position, _activeStream!.Position));
 
             await _activeStream!.WriteAsync(buf.AsMemory(0, entrySize), cancellationToken);
-            await _activeStream.FlushAsync(cancellationToken);
         } finally {
             ArrayPool<byte>.Shared.Return(buf);
         }
@@ -279,13 +278,22 @@ public sealed partial class SubscriptionLog : IDisposable {
         return ulong.Parse(name.AsSpan(FilePrefix.Length));
     }
 
+    /// <summary>
+    /// Flushes all buffered subscription log writes to durable storage.
+    /// Called once per apply-loop batch after all records in the batch have been appended.
+    /// </summary>
+    internal ValueTask FlushAsync(CancellationToken cancellationToken = default) =>
+        _activeStream != null
+            ? new ValueTask(_activeStream.FlushAsync(cancellationToken))
+            : ValueTask.CompletedTask;
+
     static FileStream OpenForAppend(string path) => new(
         path,
         FileMode.OpenOrCreate,
         FileAccess.Write,
         FileShare.Read,
         bufferSize: 4096,
-        FileOptions.Asynchronous | FileOptions.WriteThrough);
+        FileOptions.Asynchronous);
 
     /// <inheritdoc/>
     public void Dispose() => _activeStream?.Dispose();

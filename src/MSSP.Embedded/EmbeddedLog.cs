@@ -21,9 +21,9 @@ namespace MSSP.Embedded;
 /// </summary>
 sealed class EmbeddedLog : ILog<WalRecord>, IDisposable {
     readonly WalManager _wal;
-    readonly Channel<WalRecord> _channel = Channel.CreateUnbounded<WalRecord>(new UnboundedChannelOptions {
+    readonly Channel<WalRecord[]> _channel = Channel.CreateUnbounded<WalRecord[]>(new UnboundedChannelOptions {
         SingleReader = true,
-        SingleWriter = false,
+        SingleWriter = true,
         AllowSynchronousContinuations = false
     });
     readonly ConcurrentQueue<WalRecord> _pendingFlush = new();
@@ -53,6 +53,7 @@ sealed class EmbeddedLog : ILog<WalRecord>, IDisposable {
     }
 
     async Task RunFlushLoopAsync(CancellationToken cancellationToken) {
+        var batch = new List<WalRecord>();
         try {
             while (!cancellationToken.IsCancellationRequested) {
                 await _flushReady.WaitAsync(cancellationToken);
@@ -60,16 +61,14 @@ sealed class EmbeddedLog : ILog<WalRecord>, IDisposable {
                 // WaitAsync will see 0 and correctly signal again.
                 Interlocked.Exchange(ref _flushPending, 0);
 
-                var batch = new List<WalRecord>();
+                batch.Clear();
                 while (_pendingFlush.TryDequeue(out var r))
                     batch.Add(r);
 
                 if (batch.Count == 0) continue;
 
                 await _wal.FlushAsync(cancellationToken);
-
-                foreach (var r in batch)
-                    _channel.Writer.TryWrite(r);
+                _channel.Writer.TryWrite(batch.ToArray());
             }
         } catch (OperationCanceledException) {
             // swallow
@@ -79,7 +78,7 @@ sealed class EmbeddedLog : ILog<WalRecord>, IDisposable {
     }
 
     /// <inheritdoc/>
-    public IAsyncEnumerator<WalRecord> GetAsyncEnumerator(CancellationToken cancellationToken = default) =>
+    public IAsyncEnumerator<WalRecord[]> GetAsyncEnumerator(CancellationToken cancellationToken = default) =>
         _channel.Reader.ReadAllAsync(cancellationToken).GetAsyncEnumerator(cancellationToken);
 
     /// <inheritdoc/>

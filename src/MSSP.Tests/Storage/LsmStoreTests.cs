@@ -24,17 +24,17 @@ public class LsmStoreTests : IAsyncLifetime {
         new(_dataDir, capacityBytes, _ => ValueTask.CompletedTask, baseLevelSizeBytes, levelSizeMultiplier);
 
     sealed class CapturingLog(List<ReadOnlyMemory<byte>> captured) : ILog<WalRecord> {
-        readonly Channel<WalRecord> _channel = Channel.CreateUnbounded<WalRecord>(
+        readonly Channel<WalRecord[]> _channel = Channel.CreateUnbounded<WalRecord[]>(
             new UnboundedChannelOptions { SingleReader = true });
 
         public ValueTask<bool> TryAppendAsync(WalRecord record, CancellationToken cancellationToken = default) {
             ReadOnlyMemory<byte> bytes = record;
             captured.Add(bytes.ToArray());
-            _channel.Writer.TryWrite(record);
+            _channel.Writer.TryWrite([record]);
             return ValueTask.FromResult(true);
         }
 
-        public IAsyncEnumerator<WalRecord> GetAsyncEnumerator(CancellationToken cancellationToken = default) =>
+        public IAsyncEnumerator<WalRecord[]> GetAsyncEnumerator(CancellationToken cancellationToken = default) =>
             _channel.Reader.ReadAllAsync(cancellationToken).GetAsyncEnumerator(cancellationToken);
     }
 

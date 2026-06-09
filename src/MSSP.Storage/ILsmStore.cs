@@ -21,4 +21,12 @@ public interface ILsmStore<TKey> : IDisposable {
     /// written after the scan started.
     /// </summary>
     IEnumerable<KeyValuePair<TKey, ReadOnlyMemory<byte>?>> ScanAllFrom(TKey from);
+
+    /// <summary>
+    /// Flushes any buffered writes to durable storage.
+    /// Called by the apply loop after processing a batch so that all writes in the batch
+    /// become durable before their callers are notified. The default implementation is a
+    /// no-op; stores that buffer writes (e.g. the subscription pipeline) override this.
+    /// </summary>
+    ValueTask FlushAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
 }

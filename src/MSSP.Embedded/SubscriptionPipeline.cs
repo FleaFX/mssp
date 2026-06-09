@@ -93,6 +93,10 @@ public sealed class SubscriptionPipeline : ILsmStore<EventKey>, ISubscriptionPro
         => _subscriptionLog.ScanFrom(from, resolver);
 
     /// <inheritdoc/>
+    public ValueTask FlushAsync(CancellationToken cancellationToken = default) =>
+        _subscriptionLog.FlushAsync(cancellationToken);
+
+    /// <inheritdoc/>
     public void Dispose() {
         _bus.CompleteAll();
         _subscriptionLog.Dispose();

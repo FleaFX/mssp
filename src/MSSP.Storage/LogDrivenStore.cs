@@ -103,45 +103,61 @@ public sealed class LogDrivenStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKe
     }
 
     async Task RunApplyLoopAsync(CancellationToken cancellationToken) {
+        var batchTcss = new List<TaskCompletionSource<bool>>();
         try {
-            await foreach (var record in _log.WithCancellation(cancellationToken)) {
-                ReadOnlyMemory<byte> bytes = record;
-                var span = bytes.Span;
-
-                if (span.Length < 5) {
-                    if (_pending.TryDequeue(out var badTcs))
-                        badTcs.TrySetException(new InvalidDataException("Malformed WAL record: too short."));
-                    continue;
-                }
-
-                var keyLen = BinaryPrimitives.ReadInt32LittleEndian(span[1..]);
-                if (keyLen < 0 || 5 + keyLen > span.Length) {
-                    if (_pending.TryDequeue(out var badTcs))
-                        badTcs.TrySetException(new InvalidDataException("Malformed WAL record: invalid key length."));
-                    continue;
-                }
-
-                TKey key = bytes.Slice(5, keyLen);
-                // Copy value slice to a mutable Memory<byte> so inner decorators can read/write it.
-                var value = bytes[(5 + keyLen)..].ToArray();
-
-                try {
-                    await _inner.WriteAsync(key, value, cancellationToken);
-                } catch (Exception ex) when (ex is not OperationCanceledException) {
-                    if (_pending.TryDequeue(out var failedTcs))
-                        failedTcs.TrySetException(ex);
-                    throw;
-                }
-
-                if (_pending.TryDequeue(out var tcs))
+            await foreach (var batch in _log.WithCancellation(cancellationToken)) {
+                batchTcss.Clear();
+                foreach (var record in batch)
+                    await ApplyRecordAsync(record, batchTcss, cancellationToken);
+                await _inner.FlushAsync(cancellationToken);
+                foreach (var tcs in batchTcss)
                     tcs.SetResult(true);
             }
         } catch (OperationCanceledException) {
             // normal shutdown
+        } catch (Exception ex) {
+            foreach (var tcs in batchTcss)
+                tcs.TrySetException(ex);
+            batchTcss.Clear();
+            throw;
         } finally {
+            foreach (var tcs in batchTcss) tcs.TrySetCanceled();
             while (_pending.TryDequeue(out var tcs))
                 tcs.TrySetCanceled();
         }
+    }
+
+    async ValueTask ApplyRecordAsync(WalRecord record, List<TaskCompletionSource<bool>> batch, CancellationToken cancellationToken) {
+        ReadOnlyMemory<byte> bytes = record;
+        var span = bytes.Span;
+
+        if (span.Length < 5) {
+            if (_pending.TryDequeue(out var badTcs))
+                badTcs.TrySetException(new InvalidDataException("Malformed WAL record: too short."));
+            return;
+        }
+
+        var keyLen = BinaryPrimitives.ReadInt32LittleEndian(span[1..]);
+        if (keyLen < 0 || 5 + keyLen > span.Length) {
+            if (_pending.TryDequeue(out var badTcs))
+                badTcs.TrySetException(new InvalidDataException("Malformed WAL record: invalid key length."));
+            return;
+        }
+
+        TKey key = bytes.Slice(5, keyLen);
+        // Copy value slice to a mutable Memory<byte> so inner decorators can read/write it.
+        var value = bytes[(5 + keyLen)..].ToArray();
+
+        try {
+            await _inner.WriteAsync(key, value, cancellationToken);
+        } catch (Exception ex) when (ex is not OperationCanceledException) {
+            if (_pending.TryDequeue(out var failedTcs))
+                failedTcs.TrySetException(ex);
+            throw;
+        }
+
+        if (_pending.TryDequeue(out var tcs))
+            batch.Add(tcs);
     }
 
     /// <inheritdoc/>

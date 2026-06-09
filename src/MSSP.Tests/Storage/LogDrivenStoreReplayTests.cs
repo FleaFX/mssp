@@ -24,18 +24,18 @@ public class LogDrivenStoreReplayTests : IAsyncLifetime {
     /// <see cref="LogDrivenStore{TKey}.ReplayAsync"/> never calls through the log.
     /// </summary>
     sealed class CountingLog : ILog<WalRecord> {
-        readonly Channel<WalRecord> _channel = Channel.CreateUnbounded<WalRecord>(
+        readonly Channel<WalRecord[]> _channel = Channel.CreateUnbounded<WalRecord[]>(
             new UnboundedChannelOptions { SingleReader = true });
 
         public int AppendCount { get; private set; }
 
         public ValueTask<bool> TryAppendAsync(WalRecord record, CancellationToken cancellationToken = default) {
             AppendCount++;
-            _channel.Writer.TryWrite(record);
+            _channel.Writer.TryWrite([record]);
             return ValueTask.FromResult(true);
         }
 
-        public IAsyncEnumerator<WalRecord> GetAsyncEnumerator(CancellationToken cancellationToken = default) =>
+        public IAsyncEnumerator<WalRecord[]> GetAsyncEnumerator(CancellationToken cancellationToken = default) =>
             _channel.Reader.ReadAllAsync(cancellationToken).GetAsyncEnumerator(cancellationToken);
     }
 
