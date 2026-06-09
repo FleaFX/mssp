@@ -32,6 +32,18 @@
     <Compile Update="SubscriptionLog.ReferenceOnlyCodec.cs">
       <DependentUpon>SubscriptionLog.cs</DependentUpon>
     </Compile>
+    <Compile Update="EmbeddedMsspClient.Append.cs">
+      <DependentUpon>EmbeddedMsspClient.cs</DependentUpon>
+    </Compile>
+    <Compile Update="EmbeddedMsspClient.Read.cs">
+      <DependentUpon>EmbeddedMsspClient.cs</DependentUpon>
+    </Compile>
+    <Compile Update="EmbeddedMsspClient.Subscriptions.cs">
+      <DependentUpon>EmbeddedMsspClient.cs</DependentUpon>
+    </Compile>
+    <Compile Update="EmbeddedMsspClient.Backup.cs">
+      <DependentUpon>EmbeddedMsspClient.cs</DependentUpon>
+    </Compile>
   </ItemGroup>
 
   <!-- Bundle private implementation assemblies into the package lib folder. -->
