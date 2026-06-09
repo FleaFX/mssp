@@ -20,6 +20,13 @@ sealed class RaftLog(RaftNode node, RaftLogStateMachine stateMachine) : ILog<Wal
     }
 
     /// <inheritdoc/>
-    public IAsyncEnumerator<WalRecord> GetAsyncEnumerator(CancellationToken cancellationToken = default) =>
-        stateMachine.CommittedRecords.GetAsyncEnumerator(cancellationToken);
+    public IAsyncEnumerator<WalRecord[]> GetAsyncEnumerator(CancellationToken cancellationToken = default) =>
+        AsBatches(stateMachine.CommittedRecords, cancellationToken).GetAsyncEnumerator(cancellationToken);
+
+    static async IAsyncEnumerable<WalRecord[]> AsBatches(
+        IAsyncEnumerable<WalRecord> source,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken) {
+        await foreach (var record in source.WithCancellation(cancellationToken))
+            yield return [record];
+    }
 }
