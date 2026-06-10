@@ -51,21 +51,16 @@ public sealed class LogDrivenStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKe
         if (entrySize > _capacityBytes)
             throw new InvalidOperationException("Single event exceeds MemTable capacity.");
 
+        // TryAppendAsync must complete before the TCS is enqueued into _pending. For RaftLog,
+        // ProposeAsync completes only after the entry is committed by quorum — establishing its
+        // position in the apply channel. Enqueuing after ensures _pending and the apply channel
+        // share the same ordering, even under concurrent callers.
+        var appended = await _log.TryAppendAsync(WalRecord.From(key, value), cancellationToken);
+        if (!appended)
+            throw new InvalidOperationException("WAL append failed.");
+
         var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         _pending.Enqueue(tcs);
-
-        bool appended;
-        try {
-            appended = await _log.TryAppendAsync(WalRecord.From(key, value), cancellationToken);
-        } catch {
-            _pending.TryDequeue(out _);
-            throw;
-        }
-
-        if (!appended) {
-            _pending.TryDequeue(out _);
-            throw new InvalidOperationException("WAL append failed.");
-        }
 
         await tcs.Task.WaitAsync(cancellationToken);
     }
