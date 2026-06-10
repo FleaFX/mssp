@@ -1,6 +1,5 @@
 using System.Buffers.Binary;
 using System.Collections.Concurrent;
-using System.Threading;
 
 namespace MSSP.Storage;
 
@@ -19,7 +18,7 @@ public sealed class LogDrivenStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKe
     readonly ILsmStore<TKey> _inner;
     readonly int _capacityBytes;
     readonly ConcurrentQueue<TaskCompletionSource<bool>> _pending = new();
-    readonly SemaphoreSlim _enqueueGate = new(1, 1);
+    readonly Lock _enqueueGate = new();
     CancellationTokenSource? _loopCts;
     Task? _loopTask;
 
@@ -56,20 +55,14 @@ public sealed class LogDrivenStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKe
         var record = WalRecord.From(key, value);
         var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        // The gate serialises the pair (Enqueue + log channel write) so _pending and the apply
-        // channel always agree on record order across concurrent callers. It is held only for the
+        // The lock serialises the pair (Enqueue + log channel write) so _pending and the apply
+        // channel always agree on record order across concurrent callers. It covers only the
         // synchronous portion of TryAppendAsync; the async durability wait (quorum or flush)
         // happens outside it, so group commit is preserved.
-        // The linked token converts a concurrent Dispose() into OperationCanceledException at
-        // WaitAsync rather than ObjectDisposedException from a disposed semaphore.
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _loopCts!.Token);
-        await _enqueueGate.WaitAsync(linked.Token);
         ValueTask<bool> appendTask;
-        try {
+        lock (_enqueueGate) {
             _pending.Enqueue(tcs);
             appendTask = _log.TryAppendAsync(record, cancellationToken);
-        } finally {
-            _enqueueGate.Release();
         }
 
         // If the append fails the TCS is already in _pending but no record will ever reach the
@@ -189,7 +182,7 @@ public sealed class LogDrivenStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKe
         
         try { _loopTask?.GetAwaiter().GetResult(); } catch {
             // Swallow: the loop exits cleanly on cancellation; any unexpected exception was
-            // // already propagated to the caller via the TCS before the loop exited.
+            // already propagated to the caller via the TCS before the loop exited.
         }
 
         while (_pending.TryDequeue(out var tcs))
