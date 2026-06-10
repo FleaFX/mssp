@@ -23,12 +23,12 @@ public sealed class MsspClusterOptions {
     /// Gets or sets the lower bound of the randomised election timeout in milliseconds.
     /// Must be significantly greater than <see cref="HeartbeatIntervalMs"/>.
     /// </summary>
-    public int ElectionTimeoutMinMs { get; set; } = 150;
+    public int ElectionTimeoutMinMs { get; set; } = 500;
 
     /// <summary>
     /// Gets or sets the upper bound of the randomised election timeout in milliseconds.
     /// </summary>
-    public int ElectionTimeoutMaxMs { get; set; } = 300;
+    public int ElectionTimeoutMaxMs { get; set; } = 1000;
 
     /// <summary>
     /// Gets or sets how often the leader sends heartbeats in milliseconds.

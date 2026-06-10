@@ -74,6 +74,11 @@ public sealed partial class RaftNode {
             return;
         }
 
+        // Raft §3.4: reset the election timer for any valid-term vote request, even if we
+        // ultimately deny it. This prevents a bystander from triggering a new election while
+        // an in-progress one is still resolving.
+        RestartElectionTimer();
+
         // Reject if already voted for a different candidate in this term.
         if (_votedFor is not null && _votedFor != request.CandidateId) {
             reply.TrySetResult(new VoteResponse(_currentTerm, VoteGranted: false));
@@ -91,9 +96,6 @@ public sealed partial class RaftNode {
         // Grant the vote.
         _votedFor = request.CandidateId;
         await PersistStateAsync();
-
-        // Raft §5.2: reset election timer when granting a vote.
-        RestartElectionTimer();
         reply.TrySetResult(new VoteResponse(_currentTerm, VoteGranted: true));
     }
 
