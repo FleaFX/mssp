@@ -57,8 +57,11 @@ public sealed partial class EmbeddedMsspClient(
         var wal = WalManager.Open(dataDirectory);
         var log = new EmbeddedLog(wal);
         var lsmMetrics = meterFactory is not null ? new LsmStoreMetrics(meterFactory, memTableCapacityBytes) : null;
-        var lsmOptions = new LsmStoreOptions<EventKey>(dataDirectory, memTableCapacityBytes, _ => ValueTask.CompletedTask, BaseLevelSizeBytes: -1, LevelSizeMultiplier: 10, SstAccess: sst, Metrics: lsmMetrics);
-        var lsmStore = await LsmStore<EventKey>.OpenAsync(lsmOptions, wal.ReadAllAsync(cancellationToken), cancellationToken);
+        var lsmOptions = new LsmStoreOptions<EventKey>(dataDirectory, memTableCapacityBytes,
+            _ => { log.RequestRotation(); return ValueTask.CompletedTask; },
+            BaseLevelSizeBytes: -1, LevelSizeMultiplier: 10, SstAccess: sst, Metrics: lsmMetrics);
+        var lsmStore = await LsmStore<EventKey>.OpenAsync(lsmOptions, wal.ReadAllForRecoveryAsync(cancellationToken), cancellationToken);
+        wal.DeletePrevWalIfExists();
 
         var subscriptionLog = SubscriptionLog.Open(dataDirectory, subscriptionLogFormat, subscriptionLogSegmentSizeBytes);
         var pipeline = new SubscriptionPipeline(lsmStore, subscriptionLog);

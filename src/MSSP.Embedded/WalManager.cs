@@ -5,10 +5,12 @@ namespace MSSP.Embedded;
 
 sealed class WalManager : IDisposable {
     readonly string _walPath;
+    readonly string _walPrevPath;
     StreamSegment<WalRecord> _wal;
 
-    WalManager(string walPath, StreamSegment<WalRecord> wal) {
+    WalManager(string walPath, string walPrevPath, StreamSegment<WalRecord> wal) {
         _walPath = walPath;
+        _walPrevPath = walPrevPath;
         _wal = wal;
     }
 
@@ -16,9 +18,10 @@ sealed class WalManager : IDisposable {
     /// Opens or creates the WAL file in <paramref name="dataDirectory"/> and returns a ready <see cref="WalManager"/>.
     /// </summary>
     internal static WalManager Open(string dataDirectory) {
-        var walPath = Path.Combine(dataDirectory, "wal.log");
-        var walStream = new FileStream(walPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.Read, bufferSize: 4096, FileOptions.Asynchronous);
-        return new WalManager(walPath, new StreamSegment<WalRecord>(walStream));
+        var walPath     = Path.Combine(dataDirectory, "wal.log");
+        var walPrevPath = Path.Combine(dataDirectory, "wal_prev.log");
+        var walStream   = new FileStream(walPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.Read, bufferSize: 4096, FileOptions.Asynchronous);
+        return new WalManager(walPath, walPrevPath, new StreamSegment<WalRecord>(walStream));
     }
 
     /// <summary>
@@ -35,15 +38,15 @@ sealed class WalManager : IDisposable {
         _wal.FlushAsync(cancellationToken);
 
     /// <summary>
-    /// Truncates the WAL by replacing the current file with a new empty one.
-    /// Called after a MemTable flush so replayed records on next open don't include already-flushed data.
+    /// Archives the current WAL as <c>wal_prev.log</c> and opens a new empty <c>wal.log</c>.
+    /// Any existing <c>wal_prev.log</c> is deleted first — by the two-generation invariant its
+    /// records are guaranteed to be in SST at this point.
     /// </summary>
     internal ValueTask RotateAsync(CancellationToken cancellationToken) {
-        // Dispose the current stream before opening the new one; FileMode.Create
-        // truncates/recreates the file. On failure to reopen, _wal is left as the
-        // disposed segment so subsequent appends fail with ObjectDisposedException,
-        // signalling the broken state.
         _wal.Dispose();
+        if (File.Exists(_walPrevPath))
+            File.Delete(_walPrevPath);
+        File.Move(_walPath, _walPrevPath);
         var walStream = new FileStream(_walPath, FileMode.Create, FileAccess.ReadWrite, FileShare.Read,
             bufferSize: 4096, FileOptions.Asynchronous);
         _wal = new StreamSegment<WalRecord>(walStream);
@@ -51,11 +54,28 @@ sealed class WalManager : IDisposable {
     }
 
     /// <summary>
-    /// Reads all records from the WAL as raw bytes.
+    /// Reads all WAL records for startup recovery: <c>wal_prev.log</c> (if present) first,
+    /// then <c>wal.log</c>.
     /// </summary>
-    internal async IAsyncEnumerable<ReadOnlyMemory<byte>> ReadAllAsync([EnumeratorCancellation] CancellationToken cancellationToken = default) {
+    internal async IAsyncEnumerable<ReadOnlyMemory<byte>> ReadAllForRecoveryAsync([EnumeratorCancellation] CancellationToken cancellationToken = default) {
+        if (File.Exists(_walPrevPath)) {
+            using var prevSeg = new StreamSegment<WalRecord>(
+                new FileStream(_walPrevPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite,
+                    bufferSize: 4096, FileOptions.Asynchronous | FileOptions.SequentialScan));
+            await foreach (var record in prevSeg.WithCancellation(cancellationToken))
+                yield return record;
+        }
         await foreach (var record in _wal.WithCancellation(cancellationToken))
             yield return record;
+    }
+
+    /// <summary>
+    /// Removes <c>wal_prev.log</c> if it exists. Called after recovery completes so that
+    /// a subsequent startup does not re-replay records already applied to the MemTable.
+    /// </summary>
+    internal void DeletePrevWalIfExists() {
+        if (File.Exists(_walPrevPath))
+            File.Delete(_walPrevPath);
     }
 
     public void Dispose() => _wal.Dispose();
