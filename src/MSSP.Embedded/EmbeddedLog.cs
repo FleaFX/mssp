@@ -91,7 +91,22 @@ sealed class EmbeddedLog : ILog<WalRecord>, IDisposable {
                 _channel.Writer.TryWrite(batch.ToArray());
             }
         } catch (OperationCanceledException) {
-            // swallow
+            // Final drain: write any records enqueued after the last flush so they survive
+            // orderly shutdown and can be recovered from WAL on the next startup.
+            batch.Clear();
+            while (_pendingFlush.TryDequeue(out var r))
+                batch.Add(r);
+            if (batch.Count > 0) {
+                try {
+                    foreach (var record in batch) {
+                        ReadOnlyMemory<byte> bytes = record;
+                        await _wal.AppendAsync(bytes, CancellationToken.None);
+                    }
+                    await _wal.FlushAsync(CancellationToken.None);
+                } catch {
+                    // Best-effort: callers will be cancelled regardless via the apply loop's finally.
+                }
+            }
         } catch (Exception ex) {
             _channel.Writer.Complete(ex);
         }
