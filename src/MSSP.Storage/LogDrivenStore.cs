@@ -194,7 +194,6 @@ public sealed class LogDrivenStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKe
 
         while (_pending.TryDequeue(out var tcs))
             tcs.TrySetCanceled();
-        _enqueueGate.Dispose();
         _loopCts?.Dispose();
         _inner.Dispose();
         (_log as IDisposable)?.Dispose();
