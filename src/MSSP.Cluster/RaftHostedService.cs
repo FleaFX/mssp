@@ -66,10 +66,10 @@ sealed class RaftHostedService(
         _raftLog = await SegmentedRaftLog.OpenAsync(dataDir, clusterOptions.RaftLogSegmentSizeBytes, cancellationToken);
         _stateMachine = new RaftLogStateMachine();
         _stateStorage = new FileRaftStateStorage(dataDir);
-        // RPC timeout: 5× the heartbeat interval. Long enough to absorb transient latency
-        // spikes; short enough that a hanging call is detected well within the election timeout.
+        // RPC timeout: 2× the heartbeat interval. Must be well below ElectionTimeoutMinMs so
+        // a hanging call times out before any follower can start an election.
         _transport = new RaftGrpcTransport(clusterOptions.Peers,
-            TimeSpan.FromMilliseconds(clusterOptions.HeartbeatIntervalMs * 5));
+            TimeSpan.FromMilliseconds(clusterOptions.HeartbeatIntervalMs * 2));
 
         var config = new RaftNodeConfig(
             clusterOptions.NodeId,

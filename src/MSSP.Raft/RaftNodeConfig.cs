@@ -30,7 +30,7 @@ public sealed record RaftClusterMember(string NodeId, Uri Address);
 public sealed record RaftNodeConfig(
     string NodeId,
     string[] PeerIds,
-    int ElectionTimeoutMinMs = 150,
-    int ElectionTimeoutMaxMs = 300,
+    int ElectionTimeoutMinMs = 500,
+    int ElectionTimeoutMaxMs = 1000,
     int HeartbeatIntervalMs = 50,
     int SnapshotChunkSizeBytes = 1 << 20);
