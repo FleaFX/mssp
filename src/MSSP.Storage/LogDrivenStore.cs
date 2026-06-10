@@ -18,6 +18,7 @@ public sealed class LogDrivenStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKe
     readonly ILsmStore<TKey> _inner;
     readonly int _capacityBytes;
     readonly ConcurrentQueue<TaskCompletionSource<bool>> _pending = new();
+    readonly Lock _enqueueGate = new();
     CancellationTokenSource? _loopCts;
     Task? _loopTask;
 
@@ -51,20 +52,30 @@ public sealed class LogDrivenStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKe
         if (entrySize > _capacityBytes)
             throw new InvalidOperationException("Single event exceeds MemTable capacity.");
 
+        var record = WalRecord.From(key, value);
         var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _pending.Enqueue(tcs);
 
-        bool appended;
-        try {
-            appended = await _log.TryAppendAsync(WalRecord.From(key, value), cancellationToken);
-        } catch {
-            _pending.TryDequeue(out _);
-            throw;
+        // The lock serialises the pair (Enqueue + log channel write) so _pending and the apply
+        // channel always agree on record order across concurrent callers. It covers only the
+        // synchronous portion of TryAppendAsync; the async durability wait (quorum or flush)
+        // happens outside it, so group commit is preserved.
+        ValueTask<bool> appendTask;
+        lock (_enqueueGate) {
+            _pending.Enqueue(tcs);
+            appendTask = _log.TryAppendAsync(record, cancellationToken);
         }
 
-        if (!appended) {
-            _pending.TryDequeue(out _);
-            throw new InvalidOperationException("WAL append failed.");
+        // If the append fails the TCS is already in _pending but no record will ever reach the
+        // apply channel for it. Mark it as failed so the apply loop can drain the orphaned slot.
+        try {
+            if (!await appendTask)
+                throw new InvalidOperationException("WAL append failed.");
+        } catch (OperationCanceledException) {
+            tcs.TrySetCanceled(cancellationToken);
+            throw;
+        } catch (Exception ex) {
+            tcs.TrySetException(ex);
+            throw;
         }
 
         await tcs.Task.WaitAsync(cancellationToken);
@@ -128,6 +139,11 @@ public sealed class LogDrivenStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKe
     }
 
     async ValueTask ApplyRecordAsync(WalRecord record, List<TaskCompletionSource<bool>> batch, CancellationToken cancellationToken) {
+        // Drain TCS entries that WriteAsync already marked as failed. Those writes produced no
+        // record in the apply channel, so their slots must be skipped before matching this record.
+        while (_pending.TryPeek(out var slot) && slot.Task.IsCompleted)
+            _pending.TryDequeue(out _);
+
         ReadOnlyMemory<byte> bytes = record;
         var span = bytes.Span;
 
@@ -166,7 +182,7 @@ public sealed class LogDrivenStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKe
         
         try { _loopTask?.GetAwaiter().GetResult(); } catch {
             // Swallow: the loop exits cleanly on cancellation; any unexpected exception was
-            // // already propagated to the caller via the TCS before the loop exited.
+            // already propagated to the caller via the TCS before the loop exited.
         }
 
         while (_pending.TryDequeue(out var tcs))
