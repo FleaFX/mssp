@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Collections.Concurrent;
+using System.Threading;
 
 namespace MSSP.Storage;
 
@@ -18,6 +19,7 @@ public sealed class LogDrivenStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKe
     readonly ILsmStore<TKey> _inner;
     readonly int _capacityBytes;
     readonly ConcurrentQueue<TaskCompletionSource<bool>> _pending = new();
+    readonly SemaphoreSlim _enqueueGate = new(1, 1);
     CancellationTokenSource? _loopCts;
     Task? _loopTask;
 
@@ -51,16 +53,37 @@ public sealed class LogDrivenStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKe
         if (entrySize > _capacityBytes)
             throw new InvalidOperationException("Single event exceeds MemTable capacity.");
 
-        // TryAppendAsync must complete before the TCS is enqueued into _pending. For RaftLog,
-        // ProposeAsync completes only after the entry is committed by quorum — establishing its
-        // position in the apply channel. Enqueuing after ensures _pending and the apply channel
-        // share the same ordering, even under concurrent callers.
-        var appended = await _log.TryAppendAsync(WalRecord.From(key, value), cancellationToken);
-        if (!appended)
-            throw new InvalidOperationException("WAL append failed.");
-
+        var record = WalRecord.From(key, value);
         var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _pending.Enqueue(tcs);
+
+        // The gate serialises the pair (Enqueue + log channel write) so _pending and the apply
+        // channel always agree on record order across concurrent callers. It is held only for the
+        // synchronous portion of TryAppendAsync; the async durability wait (quorum or flush)
+        // happens outside it, so group commit is preserved.
+        // The linked token converts a concurrent Dispose() into OperationCanceledException at
+        // WaitAsync rather than ObjectDisposedException from a disposed semaphore.
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _loopCts!.Token);
+        await _enqueueGate.WaitAsync(linked.Token);
+        ValueTask<bool> appendTask;
+        try {
+            _pending.Enqueue(tcs);
+            appendTask = _log.TryAppendAsync(record, cancellationToken);
+        } finally {
+            _enqueueGate.Release();
+        }
+
+        // If the append fails the TCS is already in _pending but no record will ever reach the
+        // apply channel for it. Mark it as failed so the apply loop can drain the orphaned slot.
+        try {
+            if (!await appendTask)
+                throw new InvalidOperationException("WAL append failed.");
+        } catch (OperationCanceledException) {
+            tcs.TrySetCanceled(cancellationToken);
+            throw;
+        } catch (Exception ex) {
+            tcs.TrySetException(ex);
+            throw;
+        }
 
         await tcs.Task.WaitAsync(cancellationToken);
     }
@@ -123,6 +146,11 @@ public sealed class LogDrivenStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKe
     }
 
     async ValueTask ApplyRecordAsync(WalRecord record, List<TaskCompletionSource<bool>> batch, CancellationToken cancellationToken) {
+        // Drain TCS entries that WriteAsync already marked as failed. Those writes produced no
+        // record in the apply channel, so their slots must be skipped before matching this record.
+        while (_pending.TryPeek(out var slot) && slot.Task.IsCompleted)
+            _pending.TryDequeue(out _);
+
         ReadOnlyMemory<byte> bytes = record;
         var span = bytes.Span;
 
@@ -166,6 +194,7 @@ public sealed class LogDrivenStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKe
 
         while (_pending.TryDequeue(out var tcs))
             tcs.TrySetCanceled();
+        _enqueueGate.Dispose();
         _loopCts?.Dispose();
         _inner.Dispose();
         (_log as IDisposable)?.Dispose();
