@@ -1,6 +1,6 @@
 using FluentAssertions;
 
-namespace MSSP.Embedded;
+namespace MSSP.Engine;
 
 public class EmbeddedMsspClientTests : IAsyncLifetime {
     readonly string _dataDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());

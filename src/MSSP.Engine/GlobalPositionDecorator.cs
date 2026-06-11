@@ -1,7 +1,7 @@
 using System.Buffers.Binary;
 using MSSP.Storage;
 
-namespace MSSP.Embedded;
+namespace MSSP.Engine;
 
 /// <summary>
 /// <see cref="ILsmStore{TKey}"/> decorator that injects the next <see cref="GlobalPosition"/>

@@ -1,7 +1,7 @@
 using System.Diagnostics.Metrics;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace MSSP.Embedded;
+namespace MSSP.Engine;
 
 /// <summary>
 /// Extends <see cref="MsspBuilder"/> with OpenTelemetry-compatible metrics via

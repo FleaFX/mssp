@@ -1,7 +1,7 @@
 using System.Runtime.CompilerServices;
 using MSSP.Storage;
 
-namespace MSSP.Embedded;
+namespace MSSP.Engine;
 
 sealed class WalManager : IDisposable {
     readonly string _walPath;

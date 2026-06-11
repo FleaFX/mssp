@@ -1,6 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
-using MSSP.Embedded;
+using MSSP.Engine;
 
 namespace MSSP.Cluster;
 
@@ -14,7 +14,7 @@ public static class MsspClusterHealthCheckExtensions {
     /// and <c>Unhealthy</c> before the Raft node has started.
     /// </summary>
     /// <remarks>
-    /// Use this method instead of <c>AddHealthChecks()</c> from <c>MSSP.Embedded</c>.
+    /// Use this method instead of <c>AddHealthChecks()</c> from <c>MSSP.Engine</c>.
     /// The two checks are mutually exclusive: in cluster mode, <see cref="MsspHostedService"/>
     /// is not registered, so the embedded check cannot be resolved.
     /// </remarks>

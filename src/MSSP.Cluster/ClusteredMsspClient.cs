@@ -2,7 +2,7 @@ using System.Runtime.CompilerServices;
 using Google.Protobuf;
 using Grpc.Core;
 using Grpc.Net.Client;
-using MSSP.Embedded;
+using MSSP.Engine;
 using MSSP.Raft;
 using AppendRequest = MSSP.Grpc.AppendRequest;
 using GrpcEventData = MSSP.Grpc.EventData;

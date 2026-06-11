@@ -1,4 +1,4 @@
-namespace MSSP.Embedded;
+namespace MSSP.Engine;
 
 /// <summary>
 /// Controls how events are stored in the subscription log.

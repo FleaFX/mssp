@@ -1,7 +1,7 @@
 using FluentAssertions;
 using System.Text.RegularExpressions;
 
-namespace MSSP.Embedded;
+namespace MSSP.Engine;
 
 public class SubscribeAsyncTests {
     static EventData Event(string type, string payload) =>

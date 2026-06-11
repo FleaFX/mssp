@@ -1,7 +1,7 @@
 using System.IO.Compression;
 using FluentAssertions;
 
-namespace MSSP.Embedded;
+namespace MSSP.Engine;
 
 public class BackupRestoreTests : IAsyncLifetime {
     readonly string _dataDir    = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());

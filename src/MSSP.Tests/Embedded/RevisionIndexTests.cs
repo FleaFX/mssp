@@ -1,6 +1,6 @@
 using FluentAssertions;
 
-namespace MSSP.Embedded;
+namespace MSSP.Engine;
 
 public class RevisionIndexTests {
     readonly RevisionIndex _index = new();

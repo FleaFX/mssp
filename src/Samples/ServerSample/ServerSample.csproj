@@ -8,7 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\MSSP.Embedded\MSSP.Embedded.csproj" />
+    <ProjectReference Include="..\..\MSSP.Engine\MSSP.Engine.csproj" />
     <ProjectReference Include="..\..\MSSP.Server\MSSP.Server.csproj" />
   </ItemGroup>
 

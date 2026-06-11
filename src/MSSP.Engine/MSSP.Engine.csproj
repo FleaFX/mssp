@@ -5,8 +5,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <PackageId>$(AssemblyName)</PackageId>
-    <Title>MSSP.Embedded</Title>
-    <Description>Embedded single-process implementation of the MSSP event store.</Description>
+    <Title>MSSP.Engine</Title>
+    <Description>Core engine implementation of the MSSP event store, used by both embedded and cluster configurations.</Description>
     <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
   </PropertyGroup>
 
@@ -14,7 +14,6 @@
     <PackageReference Include="Microsoft.Extensions.Diagnostics" Version="10.0.8" />
     <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks" Version="10.0.8" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.8" />
-    <!-- Runtime dependency of the bundled MSSP.Storage assembly. -->
     <PackageReference Include="System.IO.Hashing" Version="10.0.8" />
   </ItemGroup>
 
@@ -23,7 +22,6 @@
     <ProjectReference Include="..\MSSP.BloomFilters\MSSP.BloomFilters.csproj" PrivateAssets="all" />
     <ProjectReference Include="..\MSSP.Storage\MSSP.Storage.csproj" PrivateAssets="all" />
   </ItemGroup>
-
 
   <ItemGroup>
     <Compile Update="SubscriptionLog.FullPayloadCodec.cs">

@@ -1,7 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 
-namespace MSSP.Embedded;
+namespace MSSP.Engine;
 
 /// <summary>
 /// Extends <see cref="MsspBuilder"/> with an ASP.NET Core health check for the embedded store.

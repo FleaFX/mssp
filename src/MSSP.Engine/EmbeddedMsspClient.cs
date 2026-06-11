@@ -1,7 +1,7 @@
 using System.Diagnostics.Metrics;
 using MSSP.Storage;
 
-namespace MSSP.Embedded;
+namespace MSSP.Engine;
 
 /// <summary>
 /// An embedded, single-process implementation of <see cref="IMsspClient"/> that stores events on the local filesystem.

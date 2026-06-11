@@ -1,6 +1,6 @@
 using FluentAssertions;
 
-namespace MSSP.Embedded;
+namespace MSSP.Engine;
 
 public class EventKeyTests {
     public class Ordering {

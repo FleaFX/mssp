@@ -2,7 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using System.Diagnostics.Metrics;
 
-namespace MSSP.Embedded;
+namespace MSSP.Engine;
 
 /// <summary>
 /// Extension methods for registering MSSP with an <see cref="IServiceCollection"/>.

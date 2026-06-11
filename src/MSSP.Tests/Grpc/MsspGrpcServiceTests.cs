@@ -6,7 +6,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using MSSP.Client;
-using MSSP.Embedded;
+using MSSP.Engine;
 using MSSP.Server;
 using MsspGrpcClient = MSSP.Grpc.Mssp.MsspClient;
 

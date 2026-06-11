@@ -2,7 +2,7 @@ using System.Buffers.Binary;
 using System.Threading.Channels;
 using MSSP.Storage;
 
-namespace MSSP.Embedded;
+namespace MSSP.Engine;
 
 /// <summary>
 /// Decorator around <see cref="ILsmStore{TKey}"/> that reads the <see cref="GlobalPosition"/>

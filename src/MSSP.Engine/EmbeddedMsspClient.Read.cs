@@ -1,6 +1,6 @@
 using System.Runtime.CompilerServices;
 
-namespace MSSP.Embedded;
+namespace MSSP.Engine;
 
 public sealed partial class EmbeddedMsspClient {
     /// <inheritdoc/>

@@ -1,6 +1,6 @@
 using System.IO.Compression;
 
-namespace MSSP.Embedded;
+namespace MSSP.Engine;
 
 public sealed partial class EmbeddedMsspClient {
     /// <summary>

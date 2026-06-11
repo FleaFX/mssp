@@ -34,7 +34,7 @@
     <ProjectReference Include="..\MSSP.BloomFilters\MSSP.BloomFilters.csproj" />
     <ProjectReference Include="..\MSSP.Client\MSSP.Client.csproj" />
     <ProjectReference Include="..\MSSP.Grpc\MSSP.Grpc.csproj" />
-    <ProjectReference Include="..\MSSP.Embedded\MSSP.Embedded.csproj" />
+    <ProjectReference Include="..\MSSP.Engine\MSSP.Engine.csproj" />
     <ProjectReference Include="..\MSSP.Storage\MSSP.Storage.csproj" />
     <ProjectReference Include="..\MSSP.Server\MSSP.Server.csproj" />
     <ProjectReference Include="..\MSSP.Raft\MSSP.Raft.csproj" />

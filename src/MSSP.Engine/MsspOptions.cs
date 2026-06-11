@@ -1,4 +1,4 @@
-namespace MSSP.Embedded;
+namespace MSSP.Engine;
 
 /// <summary>
 /// Configuration options for the embedded MSSP event store.

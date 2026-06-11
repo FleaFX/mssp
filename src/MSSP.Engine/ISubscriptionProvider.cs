@@ -1,6 +1,6 @@
 using System.Threading.Channels;
 
-namespace MSSP.Embedded;
+namespace MSSP.Engine;
 
 /// <summary>
 /// Provides access to the subscription infrastructure: live channel registration,

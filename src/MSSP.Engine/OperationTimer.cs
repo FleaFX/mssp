@@ -1,6 +1,6 @@
 using System.Diagnostics;
 
-namespace MSSP.Embedded;
+namespace MSSP.Engine;
 
 /// <summary>
 /// Lightweight allocation-free timer. Captures the start timestamp on construction

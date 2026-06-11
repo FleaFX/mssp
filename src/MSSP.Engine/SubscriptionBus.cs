@@ -1,6 +1,6 @@
 using System.Threading.Channels;
 
-namespace MSSP.Embedded;
+namespace MSSP.Engine;
 
 /// <summary>
 /// Distributes live events to active subscriptions.

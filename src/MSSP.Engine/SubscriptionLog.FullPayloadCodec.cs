@@ -1,6 +1,6 @@
 using System.Buffers.Binary;
 
-namespace MSSP.Embedded;
+namespace MSSP.Engine;
 
 partial class SubscriptionLog {
     /// <summary>

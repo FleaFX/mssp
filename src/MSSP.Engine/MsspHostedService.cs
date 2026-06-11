@@ -3,7 +3,7 @@ using MSSP.BloomFilters;
 using MSSP.Storage;
 using System.Diagnostics.Metrics;
 
-namespace MSSP.Embedded;
+namespace MSSP.Engine;
 
 /// <summary>
 /// Manages the lifecycle of <see cref="EmbeddedMsspClient"/> as an <see cref="IHostedService"/>.

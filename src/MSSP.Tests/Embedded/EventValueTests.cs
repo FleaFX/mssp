@@ -1,6 +1,6 @@
 using FluentAssertions;
 
-namespace MSSP.Embedded;
+namespace MSSP.Engine;
 
 public class EventValueTests {
     static readonly DateTimeOffset Timestamp = new(2024, 6, 15, 12, 0, 0, TimeSpan.Zero);

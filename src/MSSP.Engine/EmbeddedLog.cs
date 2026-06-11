@@ -2,7 +2,7 @@ using System.Collections.Concurrent;
 using System.Threading.Channels;
 using MSSP.Storage;
 
-namespace MSSP.Embedded;
+namespace MSSP.Engine;
 
 /// <summary>
 /// <see cref="ILog{WalRecord}"/> implementation that drives a drain-to-empty flush loop for

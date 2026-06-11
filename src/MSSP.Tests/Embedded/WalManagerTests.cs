@@ -1,7 +1,7 @@
 using System.Text;
 using FluentAssertions;
 
-namespace MSSP.Embedded;
+namespace MSSP.Engine;
 
 public class WalManagerTests : IAsyncLifetime {
     readonly string _dataDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());

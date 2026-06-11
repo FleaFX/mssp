@@ -1,4 +1,4 @@
-namespace MSSP.Embedded;
+namespace MSSP.Engine;
 
 partial class SubscriptionLog {
     /// <summary>
