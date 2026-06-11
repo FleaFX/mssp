@@ -59,6 +59,29 @@ public class BackupRestoreTests : IAsyncLifetime {
             using var zip = ZipFile.OpenRead(_backupPath);
             zip.Entries.Should().Contain(e => e.Name.EndsWith(".sst"));
         }
+
+        [Fact]
+        public async Task IncludesWalPrevLog_WhenRotationHasOccurred() {
+            // With capacity=128 each minimal event is ~60 bytes:
+            //   stream-a + stream-b = 120 bytes (fits); stream-c = 180 bytes (overflows).
+            // The third write flushes {stream-a, stream-b} to SST and lands stream-c in the new
+            // MemTable, setting _rotationRequested. The fourth write triggers the actual rotation
+            // (wal.log → wal_prev.log) before committing stream-d.
+            _client.Dispose();
+            _client = await EmbeddedMsspClient.OpenAsync(_dataDir, memTableCapacityBytes: 128, cancellationToken: TestContext.Current.CancellationToken);
+
+            await _client.AppendAsync("stream-a", StreamRevision.NoStream, [Event("Pre", "payload-a")], TestContext.Current.CancellationToken);
+            await _client.AppendAsync("stream-b", StreamRevision.NoStream, [Event("Pre", "payload-b")], TestContext.Current.CancellationToken);
+            await _client.AppendAsync("stream-c", StreamRevision.NoStream, [Event("Pre", "payload-c")], TestContext.Current.CancellationToken);
+            await _client.AppendAsync("stream-d", StreamRevision.NoStream, [Event("Pre", "payload-d")], TestContext.Current.CancellationToken);
+
+            File.Exists(Path.Combine(_dataDir, "wal_prev.log")).Should().BeTrue("the fourth write must have triggered the rotation");
+
+            await _client.CreateBackupAsync(_backupPath, TestContext.Current.CancellationToken);
+
+            using var zip = ZipFile.OpenRead(_backupPath);
+            zip.Entries.Should().Contain(e => e.Name == "wal_prev.log");
+        }
     }
 
     public class RestoreBackupAsync : BackupRestoreTests {
@@ -141,6 +164,56 @@ public class BackupRestoreTests : IAsyncLifetime {
             // not reset to 1 (which would collide with pre-backup events).
             await restored.AppendAsync("stream-b", StreamRevision.NoStream, [Event("D", "4")], TestContext.Current.CancellationToken);
             restored.CurrentPosition.Value.Should().BeGreaterThan(positionBeforeBackup.Value);
+        }
+
+        [Fact]
+        public async Task AfterRotation_AllEventsReadableAfterRestore() {
+            // Controlled rotation scenario — see capacity comment in IncludesWalPrevLog_WhenRotationHasOccurred.
+            // After the rotation: SST = {stream-a, stream-b}, wal_prev.log = {stream-a..stream-c},
+            // wal.log = {stream-d}. stream-c is the "A-record": in wal_prev.log but not yet in SST.
+            // Without the fix, stream-c would be lost on restore.
+            _client.Dispose();
+            _client = await EmbeddedMsspClient.OpenAsync(_dataDir, memTableCapacityBytes: 128, cancellationToken: TestContext.Current.CancellationToken);
+
+            await _client.AppendAsync("stream-a", StreamRevision.NoStream, [Event("Pre", "payload-a")], TestContext.Current.CancellationToken);
+            await _client.AppendAsync("stream-b", StreamRevision.NoStream, [Event("Pre", "payload-b")], TestContext.Current.CancellationToken);
+            await _client.AppendAsync("stream-c", StreamRevision.NoStream, [Event("Pre", "payload-c")], TestContext.Current.CancellationToken);
+            await _client.AppendAsync("stream-d", StreamRevision.NoStream, [Event("Pre", "payload-d")], TestContext.Current.CancellationToken);
+
+            File.Exists(Path.Combine(_dataDir, "wal_prev.log")).Should().BeTrue("the fourth write must have triggered the rotation");
+
+            await _client.CreateBackupAsync(_backupPath, TestContext.Current.CancellationToken);
+            _client.Dispose();
+            _disposed = true;
+
+            await EmbeddedMsspClient.RestoreBackupAsync(_backupPath, _restoreDir, TestContext.Current.CancellationToken);
+            using var restored = await EmbeddedMsspClient.OpenAsync(_restoreDir, cancellationToken: TestContext.Current.CancellationToken);
+
+            (await restored.ReadAsync("stream-a", cancellationToken: TestContext.Current.CancellationToken).ToListAsync(TestContext.Current.CancellationToken)).Should().ContainSingle();
+            (await restored.ReadAsync("stream-b", cancellationToken: TestContext.Current.CancellationToken).ToListAsync(TestContext.Current.CancellationToken)).Should().ContainSingle();
+            (await restored.ReadAsync("stream-c", cancellationToken: TestContext.Current.CancellationToken).ToListAsync(TestContext.Current.CancellationToken)).Should().ContainSingle();
+            (await restored.ReadAsync("stream-d", cancellationToken: TestContext.Current.CancellationToken).ToListAsync(TestContext.Current.CancellationToken)).Should().ContainSingle();
+        }
+
+        [Fact]
+        public async Task DeletesStaleWalPrevLog_BeforeExtractingArchive() {
+            // Arrange: back up the primary store, then place a stale wal_prev.log in the restore target.
+            await _client.AppendAsync("stream-a", StreamRevision.NoStream, [Event("Foo", "original")], TestContext.Current.CancellationToken);
+            await _client.CreateBackupAsync(_backupPath, TestContext.Current.CancellationToken);
+
+            Directory.CreateDirectory(_restoreDir);
+            var staleWalPrev = Path.Combine(_restoreDir, "wal_prev.log");
+            await File.WriteAllBytesAsync(staleWalPrev, [0xFF, 0xFF, 0xFF, 0xFF], TestContext.Current.CancellationToken);
+
+            // Act: restore on top of a directory that contains a stale wal_prev.log.
+            await EmbeddedMsspClient.RestoreBackupAsync(_backupPath, _restoreDir, TestContext.Current.CancellationToken);
+
+            // Assert: stale file is gone and the store opens cleanly with only the backed-up events.
+            File.Exists(staleWalPrev).Should().BeFalse();
+            using var restored = await EmbeddedMsspClient.OpenAsync(_restoreDir, cancellationToken: TestContext.Current.CancellationToken);
+            var events = await restored.ReadAsync("stream-a", cancellationToken: TestContext.Current.CancellationToken)
+                .ToListAsync(TestContext.Current.CancellationToken);
+            events.Should().ContainSingle();
         }
     }
 }
