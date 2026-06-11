@@ -37,6 +37,12 @@ public sealed class GlobalPositionDecorator(
     }
 
     /// <inheritdoc/>
+    public LsmStoreSnapshot<EventKey> TakeReadSnapshot() => inner.TakeReadSnapshot();
+
+    /// <inheritdoc/>
+    public IReadOnlyList<FileStream> OpenBackupStreams() => inner.OpenBackupStreams();
+
+    /// <inheritdoc/>
     public IEnumerable<KeyValuePair<EventKey, ReadOnlyMemory<byte>?>> ScanSnapshotFrom(EventKey from)
         => inner.ScanSnapshotFrom(from);
 

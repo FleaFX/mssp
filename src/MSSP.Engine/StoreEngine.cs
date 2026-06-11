@@ -54,6 +54,10 @@ sealed partial class StoreEngine(ILog<WalRecord> log, ILsmStore<EventKey> pipeli
                 await (message switch {
                     AppendCommand append => HandleAppendAsync(append, cancellationToken),
                     CommittedBatch batch => HandleCommittedBatchAsync(batch, cancellationToken),
+                    CaptureSnapshotCommand snap => HandleCaptureSnapshot(snap),
+                    OpenBackupStreamsCommand backup => HandleOpenBackupStreams(backup),
+                    RegisterSubscriptionCommand reg => HandleRegisterSubscription(reg),
+                    UnregisterSubscriptionCommand u => HandleUnregisterSubscription(u),
                     _ => ValueTask.CompletedTask
                 });
             }

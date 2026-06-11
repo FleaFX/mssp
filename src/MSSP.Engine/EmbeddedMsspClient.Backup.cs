@@ -21,25 +21,27 @@ public sealed partial class EmbeddedMsspClient {
         if (!string.IsNullOrEmpty(parentDir))
             Directory.CreateDirectory(parentDir);
 
-        // Open SST file handles while holding _writeLock. Opening under the lock
-        // guarantees no file is deleted by a concurrent compaction between the
-        // snapshot and the open. FileShare.Delete allows compaction to remove the
-        // directory entry while we still hold the handle — the file data remains
-        // readable until we close it.
-        var sstHandles = new List<(string FileName, FileStream Handle)>();
-        await _writeLock.WaitAsync(cancellationToken);
-        try {
-            foreach (var filePath in _lsmStore.GetActiveFilePaths())
-                sstHandles.Add((Path.GetFileName(filePath),
-                    new FileStream(filePath, FileMode.Open, FileAccess.Read,
+        // Open SST file handles on the actor thread (engine path) or under _writeLock (legacy path).
+        // Either way, FileShare.Delete allows compaction to unlink files while the handle is open.
+        IReadOnlyList<FileStream> sstStreams;
+        if (_engine is { } engine) {
+            sstStreams = await engine.OpenBackupStreamsAsync(cancellationToken);
+        } else {
+            var streams = new List<FileStream>();
+            await _writeLock.WaitAsync(cancellationToken);
+            try {
+                foreach (var filePath in _lsmStore!.GetActiveFilePaths())
+                    streams.Add(new FileStream(filePath, FileMode.Open, FileAccess.Read,
                         FileShare.ReadWrite | FileShare.Delete,
-                        bufferSize: 81920, FileOptions.Asynchronous | FileOptions.SequentialScan)));
-        } catch {
-            foreach (var (_, h) in sstHandles) h.Dispose();
+                        bufferSize: 81920, FileOptions.Asynchronous | FileOptions.SequentialScan));
+            } catch {
+                foreach (var s in streams) s.Dispose();
+                _writeLock.Release();
+                throw;
+            }
             _writeLock.Release();
-            throw;
+            sstStreams = streams;
         }
-        _writeLock.Release();
 
         // Write compressed archive. On any failure the partial archive is deleted
         // so callers are never left with a file that looks complete but is corrupt.
@@ -48,8 +50,8 @@ public sealed partial class EmbeddedMsspClient {
             await using var zipStream = new FileStream(backupPath, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 81920, FileOptions.Asynchronous);
             await using var archive = new ZipArchive(zipStream, ZipArchiveMode.Create, leaveOpen: false);
 
-            foreach (var (fileName, handle) in sstHandles)
-                await AddStreamToArchiveAsync(archive, fileName, handle, cancellationToken);
+            foreach (var stream in sstStreams)
+                await AddStreamToArchiveAsync(archive, Path.GetFileName(stream.Name), stream, cancellationToken);
 
             // Subscription log must be included so GlobalPosition continuity is preserved on restore.
             // SubscriptionPipeline initialises _globalSequence from the log's last position; without it
@@ -67,7 +69,7 @@ public sealed partial class EmbeddedMsspClient {
 
             backupCreated = true;
         } finally {
-            foreach (var (_, h) in sstHandles) h.Dispose();
+            foreach (var s in sstStreams) s.Dispose();
             if (!backupCreated)
                 try { File.Delete(backupPath); } catch { /* best-effort cleanup of partial archive */ }
         }

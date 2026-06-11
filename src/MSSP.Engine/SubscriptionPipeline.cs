@@ -64,6 +64,12 @@ public sealed class SubscriptionPipeline : ILsmStore<EventKey>, ISubscriptionPro
     }
 
     /// <inheritdoc/>
+    public LsmStoreSnapshot<EventKey> TakeReadSnapshot() => _inner.TakeReadSnapshot();
+
+    /// <inheritdoc/>
+    public IReadOnlyList<FileStream> OpenBackupStreams() => _inner.OpenBackupStreams();
+
+    /// <inheritdoc/>
     public IEnumerable<KeyValuePair<EventKey, ReadOnlyMemory<byte>?>> ScanSnapshotFrom(EventKey from)
         => _inner.ScanSnapshotFrom(from);
 

@@ -48,6 +48,12 @@
     <Compile Update="StoreEngine.Apply.cs">
       <DependentUpon>StoreEngine.cs</DependentUpon>
     </Compile>
+    <Compile Update="StoreEngine.Read.cs">
+      <DependentUpon>StoreEngine.cs</DependentUpon>
+    </Compile>
+    <Compile Update="StoreEngine.Subscribe.cs">
+      <DependentUpon>StoreEngine.cs</DependentUpon>
+    </Compile>
   </ItemGroup>
 
   <!-- Bundle private implementation assemblies into the package lib folder. -->

@@ -47,4 +47,28 @@ public sealed partial class LsmStore<TKey> {
             yield return entry;
         }
     }
+
+    /// <summary>
+    /// Creates a handle-owning snapshot of the current store state.
+    /// All SST readers are opened immediately with <c>FileShare.ReadWrite | FileShare.Delete</c>
+    /// so compaction may unlink files while the snapshot is alive.
+    /// Must be called on the engine actor thread (the sole owner of this store).
+    /// </summary>
+    /// <inheritdoc/>
+    public LsmStoreSnapshot<TKey> TakeReadSnapshot() {
+        var readers = new List<ISstReader<TKey>>();
+        try {
+            for (var i = _sstLevels.Count - 1; i >= 0; i--) {
+                foreach (var file in _sstLevels[i]) {
+                    var stream = new FileStream(file.FilePath, FileMode.Open, FileAccess.Read,
+                        FileShare.ReadWrite | FileShare.Delete, bufferSize: 4096);
+                    readers.Add(new SstReader<TKey>(stream));
+                }
+            }
+            return new LsmStoreSnapshot<TKey>(readers, _memTable);
+        } catch {
+            foreach (var r in readers) r.Dispose();
+            throw;
+        }
+    }
 }

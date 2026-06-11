@@ -82,6 +82,12 @@ public sealed class LogDrivenStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKe
     }
 
     /// <inheritdoc/>
+    public LsmStoreSnapshot<TKey> TakeReadSnapshot() => _inner.TakeReadSnapshot();
+
+    /// <inheritdoc/>
+    public IReadOnlyList<FileStream> OpenBackupStreams() => _inner.OpenBackupStreams();
+
+    /// <inheritdoc/>
     public IEnumerable<KeyValuePair<TKey, ReadOnlyMemory<byte>?>> ScanAllFrom(TKey from)
         => _inner.ScanAllFrom(from);
 

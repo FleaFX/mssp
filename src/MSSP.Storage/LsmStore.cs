@@ -89,6 +89,26 @@ public sealed partial class LsmStore<TKey> : ILsmStore<TKey> where TKey : IKey<T
         return paths;
     }
 
+    /// <summary>
+    /// Opens a raw <see cref="FileStream"/> for each active SST file and its bloom filter sidecar
+    /// with <c>FileShare.ReadWrite | FileShare.Delete</c>, suitable for streaming into a backup archive.
+    /// Must be called on the engine actor thread.
+    /// </summary>
+    /// <inheritdoc/>
+    public IReadOnlyList<FileStream> OpenBackupStreams() {
+        var streams = new List<FileStream>();
+        try {
+            foreach (var filePath in GetActiveFilePaths())
+                streams.Add(new FileStream(filePath, FileMode.Open, FileAccess.Read,
+                    FileShare.ReadWrite | FileShare.Delete,
+                    bufferSize: 81920, FileOptions.Asynchronous | FileOptions.SequentialScan));
+            return streams;
+        } catch {
+            foreach (var s in streams) s.Dispose();
+            throw;
+        }
+    }
+
     /// <inheritdoc />
     public void Dispose() {
         _memTable.Dispose();

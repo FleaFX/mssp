@@ -10,18 +10,25 @@ public sealed partial class EmbeddedMsspClient {
         GlobalPosition fromPosition = default,
         [EnumeratorCancellation] CancellationToken cancellationToken = default) {
 
-        ChannelReader<SubscriptionEvent>? liveChannel;
+        ChannelReader<SubscriptionEvent> liveChannel;
         IEnumerable<SubscriptionEvent> catchUpScan;
         GlobalPosition catchUpPosition;
 
         _metrics?.SubscriptionStarted();
-        await _writeLock.WaitAsync(cancellationToken);
-        try {
-            catchUpPosition = subscriptions.CurrentPosition;
-            liveChannel = subscriptions.Register(filter);
-            catchUpScan = subscriptions.ScanFrom(fromPosition, BuildResolver());
-        } finally {
-            _writeLock.Release();
+        if (_engine is { } engine) {
+            var reg = await engine.RegisterSubscriptionAsync(filter, fromPosition, BuildResolver(), cancellationToken);
+            liveChannel = reg.LiveChannel;
+            catchUpScan = reg.CatchUpScan;
+            catchUpPosition = reg.CatchUpPosition;
+        } else {
+            await _writeLock.WaitAsync(cancellationToken);
+            try {
+                catchUpPosition = subscriptions.CurrentPosition;
+                liveChannel = subscriptions.Register(filter);
+                catchUpScan = subscriptions.ScanFrom(fromPosition, BuildResolver());
+            } finally {
+                _writeLock.Release();
+            }
         }
 
         try {
@@ -35,12 +42,14 @@ public sealed partial class EmbeddedMsspClient {
 
             // LIVE: deliver events written after the catch-up snapshot.
             // The overlap guard skips any events already delivered in catch-up.
-            await foreach (var evt in liveChannel!.ReadAllAsync(cancellationToken)) {
+            await foreach (var evt in liveChannel.ReadAllAsync(cancellationToken)) {
                 if (evt.Position <= catchUpPosition) continue;
                 yield return evt;
             }
         } finally {
-            if (liveChannel != null) {
+            if (_engine is { } eng) {
+                eng.UnregisterSubscription(liveChannel);
+            } else {
                 await _writeLock.WaitAsync(CancellationToken.None);
                 try {
                     subscriptions.Unregister(liveChannel);
