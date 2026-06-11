@@ -27,7 +27,7 @@ sealed partial class StoreEngine {
 
     ValueTask HandleCaptureSnapshot(CaptureSnapshotCommand cmd) {
         try {
-            cmd.Reply.TrySetResult(pipeline.TakeReadSnapshot());
+            cmd.Reply.TrySetResult(store.TakeReadSnapshot());
         } catch (Exception ex) {
             cmd.Reply.TrySetException(ex);
         }
@@ -36,7 +36,7 @@ sealed partial class StoreEngine {
 
     ValueTask HandleOpenBackupStreams(OpenBackupStreamsCommand cmd) {
         try {
-            cmd.Reply.TrySetResult(pipeline.OpenBackupStreams());
+            cmd.Reply.TrySetResult(store.OpenBackupStreams());
         } catch (Exception ex) {
             cmd.Reply.TrySetException(ex);
         }

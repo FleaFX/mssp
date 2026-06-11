@@ -46,7 +46,7 @@ sealed partial class StoreEngine {
     (bool exists, ulong revision) LookupCurrentRevision(string streamId) {
         ulong? max = null;
         var startKey = new EventKey(streamId, 0UL);
-        foreach (var (key, _) in pipeline.ScanAllFrom(startKey)) {
+        foreach (var (key, _) in store.ScanAllFrom(startKey)) {
             if (key.StreamId != streamId) break;
             max = key.Revision;
         }

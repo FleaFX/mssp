@@ -21,7 +21,13 @@ sealed partial class StoreEngine {
                 ? BinaryPrimitives.ReadUInt64LittleEndian(value.Span[^8..])
                 : 0UL;
 
-            await pipeline.WriteAsync(key, value, ct);
+            await store.WriteAsync(key, value, ct);
+
+            if (pos > _currentPosition) {
+                _currentPosition = pos;
+                await subscriptionLog.AppendAsync(new GlobalPosition(pos), key, value, ct);
+                _subscriptionBus.Publish(((EventValue)value).ToSubscriptionEvent(key));
+            }
 
             if (_pending.TryPeek(out var entry) && entry.LastPosition == pos) {
                 _pending.Dequeue();
@@ -29,7 +35,7 @@ sealed partial class StoreEngine {
             }
         }
 
-        await pipeline.FlushAsync(ct);
+        await subscriptionLog.FlushAsync(ct);
 
         foreach (var tcs in toResolve)
             tcs.SetResult(true);

@@ -11,10 +11,10 @@ namespace MSSP.Engine;
 /// The actor loop processes both in order, so no external locking is required for writes.
 /// </para>
 /// </summary>
-sealed partial class StoreEngine(ILog<WalRecord> log, ILsmStore<EventKey> pipeline, long startPosition) : IAsyncDisposable {
+sealed partial class StoreEngine(ILog<WalRecord> log, LsmStore<EventKey> store, SubscriptionLog subscriptionLog, long startPosition) : IAsyncDisposable {
 
     /// <summary>
-    /// Tracks an in-flight append while its WAL records are being applied to the pipeline.
+    /// Tracks an in-flight append while its WAL records are being applied to the store.
     /// Dequeued and resolved by <c>HandleCommittedBatchAsync</c> when the committed position matches <see cref="LastPosition"/>.
     /// </summary>
     /// <param name="LastPosition">The global position of the last event in the append batch; used to match the committed WAL record.</param>
@@ -25,10 +25,17 @@ sealed partial class StoreEngine(ILog<WalRecord> log, ILsmStore<EventKey> pipeli
     readonly RevisionIndex _revisions = new();
     readonly Queue<PendingAppend> _pending = new();
     readonly CancellationTokenSource _cts = new();
+    readonly SubscriptionBus _subscriptionBus = new();
 
+    ulong _currentPosition = (ulong)startPosition;
     long _nextPosition = startPosition;
     Task? _actorTask;
     Task? _batchReaderTask;
+
+    /// <summary>
+    /// The <see cref="GlobalPosition"/> of the most recently applied event.
+    /// </summary>
+    public GlobalPosition CurrentPosition => new(_currentPosition);
 
     /// <summary>
     /// Starts the actor loop and the committed-batch reader task.
@@ -86,6 +93,7 @@ sealed partial class StoreEngine(ILog<WalRecord> log, ILsmStore<EventKey> pipeli
         try { await (_batchReaderTask ?? Task.CompletedTask); } catch { }
         while (_pending.TryDequeue(out var entry))
             entry.Reply.TrySetCanceled();
+        _subscriptionBus.CompleteAll();
         _cts.Dispose();
     }
 }

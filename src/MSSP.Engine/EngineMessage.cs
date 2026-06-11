@@ -40,7 +40,6 @@ sealed record CaptureSnapshotCommand(
 sealed record RegisterSubscriptionCommand(
     SubscriptionFilter Filter,
     GlobalPosition FromPosition,
-    Func<EventKey, SubscriptionEvent>? Resolver,
     TaskCompletionSource<SubscriptionRegistration> Reply
 ) : EngineMessage;
 
@@ -67,5 +66,6 @@ sealed record OpenBackupStreamsCommand(
 sealed record SubscriptionRegistration(
     ChannelReader<SubscriptionEvent> LiveChannel,
     IEnumerable<SubscriptionEvent> CatchUpScan,
-    GlobalPosition CatchUpPosition
+    GlobalPosition CatchUpPosition,
+    LsmStoreSnapshot<EventKey>? ResolverSnapshot
 );

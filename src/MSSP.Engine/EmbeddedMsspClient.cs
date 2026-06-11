@@ -38,7 +38,7 @@ public sealed partial class EmbeddedMsspClient(
     /// The <see cref="GlobalPosition"/> of the most recently applied event on this node.
     /// On a follower, this reflects entries received via Raft replication.
     /// </summary>
-    public GlobalPosition CurrentPosition => subscriptions.CurrentPosition;
+    public GlobalPosition CurrentPosition => _engine?.CurrentPosition ?? subscriptions.CurrentPosition;
 
     /// <summary>
     /// Opens or creates an embedded event store at the given <paramref name="dataDirectory"/>,
@@ -71,9 +71,10 @@ public sealed partial class EmbeddedMsspClient(
         wal.DeletePrevWalIfExists();
 
         var subscriptionLog = SubscriptionLog.Open(dataDirectory, subscriptionLogFormat, subscriptionLogSegmentSizeBytes);
-        var pipeline = new SubscriptionPipeline(lsmStore, subscriptionLog);
-        var engine = new StoreEngine(log, pipeline, (long)pipeline.CurrentPosition.Value);
+        var engine = new StoreEngine(log, lsmStore, subscriptionLog, (long)subscriptionLog.GetLastPosition().Value);
         engine.Start();
+
+        var pipeline = new SubscriptionPipeline(lsmStore, subscriptionLog);
 
         return new EmbeddedMsspClient(store: pipeline, subscriptions: pipeline, meterFactory: meterFactory)
             .WithBackupSource(dataDirectory, lsmStore)

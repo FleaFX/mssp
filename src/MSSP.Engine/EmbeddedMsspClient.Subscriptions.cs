@@ -13,13 +13,14 @@ public sealed partial class EmbeddedMsspClient {
         ChannelReader<SubscriptionEvent> liveChannel;
         IEnumerable<SubscriptionEvent> catchUpScan;
         GlobalPosition catchUpPosition;
+        SubscriptionRegistration? engineReg = null;
 
         _metrics?.SubscriptionStarted();
         if (_engine is { } engine) {
-            var reg = await engine.RegisterSubscriptionAsync(filter, fromPosition, BuildResolver(), cancellationToken);
-            liveChannel = reg.LiveChannel;
-            catchUpScan = reg.CatchUpScan;
-            catchUpPosition = reg.CatchUpPosition;
+            engineReg = await engine.RegisterSubscriptionAsync(filter, fromPosition, cancellationToken);
+            liveChannel = engineReg.LiveChannel;
+            catchUpScan = engineReg.CatchUpScan;
+            catchUpPosition = engineReg.CatchUpPosition;
         } else {
             await _writeLock.WaitAsync(cancellationToken);
             try {
@@ -48,6 +49,7 @@ public sealed partial class EmbeddedMsspClient {
             }
         } finally {
             if (_engine is { } eng) {
+                engineReg?.ResolverSnapshot?.Dispose();
                 eng.UnregisterSubscription(liveChannel);
             } else {
                 await _writeLock.WaitAsync(CancellationToken.None);
