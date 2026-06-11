@@ -34,7 +34,7 @@ public class WalManagerTests : IAsyncLifetime {
             var payload = Bytes("hello");
             await _wal.AppendAsync(payload, TestContext.Current.CancellationToken);
 
-            var records = await _wal.ReadAllAsync().ToListAsync();
+            var records = await _wal.ReadAllForRecoveryAsync().ToListAsync();
 
             records.Should().ContainSingle();
             records[0].ToArray().Should().Equal(payload.ToArray());
@@ -46,7 +46,7 @@ public class WalManagerTests : IAsyncLifetime {
             await _wal.AppendAsync(Bytes("second"), TestContext.Current.CancellationToken);
             await _wal.AppendAsync(Bytes("third"), TestContext.Current.CancellationToken);
 
-            var records = await _wal.ReadAllAsync().ToListAsync();
+            var records = await _wal.ReadAllForRecoveryAsync().ToListAsync();
 
             records.Should().HaveCount(3);
             Text(records[0]).Should().Be("first");
@@ -57,25 +57,53 @@ public class WalManagerTests : IAsyncLifetime {
 
     public class RotateAsync : WalManagerTests {
         [Fact]
-        public async Task AfterRotate_PreviousRecordsNotReadable() {
+        public async Task AfterRotate_OldRecordsStillAccessibleForRecovery() {
             await _wal.AppendAsync(Bytes("before"), TestContext.Current.CancellationToken);
             await _wal.RotateAsync(TestContext.Current.CancellationToken);
 
-            var records = await _wal.ReadAllAsync().ToListAsync();
+            var records = await _wal.ReadAllForRecoveryAsync().ToListAsync();
 
-            records.Should().BeEmpty();
+            records.Should().ContainSingle();
+            Text(records[0]).Should().Be("before");
         }
 
         [Fact]
-        public async Task AfterRotate_NewRecordsAreReadable() {
+        public async Task AfterRotate_NewRecordsReadableAlongsideOldOnes() {
             await _wal.AppendAsync(Bytes("before"), TestContext.Current.CancellationToken);
             await _wal.RotateAsync(TestContext.Current.CancellationToken);
             await _wal.AppendAsync(Bytes("after"), TestContext.Current.CancellationToken);
 
-            var records = await _wal.ReadAllAsync().ToListAsync();
+            var records = await _wal.ReadAllForRecoveryAsync().ToListAsync();
+
+            records.Should().HaveCount(2);
+            Text(records[0]).Should().Be("before");
+            Text(records[1]).Should().Be("after");
+        }
+
+        [Fact]
+        public async Task AfterDeletePrev_OldRecordsGone() {
+            await _wal.AppendAsync(Bytes("before"), TestContext.Current.CancellationToken);
+            await _wal.RotateAsync(TestContext.Current.CancellationToken);
+            _wal.DeletePrevWalIfExists();
+            await _wal.AppendAsync(Bytes("after"), TestContext.Current.CancellationToken);
+
+            var records = await _wal.ReadAllForRecoveryAsync().ToListAsync();
 
             records.Should().ContainSingle();
             Text(records[0]).Should().Be("after");
+        }
+
+        [Fact]
+        public async Task SecondRotate_ReplacesFirstArchive() {
+            await _wal.AppendAsync(Bytes("first"), TestContext.Current.CancellationToken);
+            await _wal.RotateAsync(TestContext.Current.CancellationToken);
+            await _wal.AppendAsync(Bytes("second"), TestContext.Current.CancellationToken);
+            await _wal.RotateAsync(TestContext.Current.CancellationToken);
+
+            var records = await _wal.ReadAllForRecoveryAsync().ToListAsync();
+
+            records.Should().ContainSingle();
+            Text(records[0]).Should().Be("second");
         }
     }
 }

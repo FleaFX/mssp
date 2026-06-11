@@ -36,7 +36,12 @@ public sealed partial class EmbeddedMsspClient {
         try {
             foreach (var t in tasks) await t;
         } catch {
-            _revisions.Remove(streamId.Value);
+            await _writeLock.WaitAsync(CancellationToken.None);
+            try {
+                _revisions.Remove(streamId.Value);
+            } finally {
+                _writeLock.Release();
+            }
             throw;
         }
 

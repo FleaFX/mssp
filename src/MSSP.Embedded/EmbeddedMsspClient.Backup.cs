@@ -57,6 +57,10 @@ public sealed partial class EmbeddedMsspClient {
             foreach (var logFile in Directory.EnumerateFiles(_dataDirectory, "subscriptions-*.log").OrderBy(f => f))
                 await AddToArchiveAsync(archive, logFile, cancellationToken);
 
+            var walPrevPath = Path.Combine(_dataDirectory, "wal_prev.log");
+            if (File.Exists(walPrevPath))
+                await AddToArchiveAsync(archive, walPrevPath, cancellationToken);
+
             var walPath = Path.Combine(_dataDirectory, "wal.log");
             if (File.Exists(walPath))
                 await AddToArchiveAsync(archive, walPath, cancellationToken);
@@ -91,6 +95,10 @@ public sealed partial class EmbeddedMsspClient {
                      .Concat(Directory.EnumerateFiles(targetDirectory, "*.bf"))
                      .Concat(Directory.EnumerateFiles(targetDirectory, "subscriptions-*.log")))
             File.Delete(file);
+
+        var existingWalPrev = Path.Combine(targetDirectory, "wal_prev.log");
+        if (File.Exists(existingWalPrev))
+            File.Delete(existingWalPrev);
 
         var existingWal = Path.Combine(targetDirectory, "wal.log");
         if (File.Exists(existingWal))
