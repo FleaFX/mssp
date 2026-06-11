@@ -2,7 +2,13 @@ namespace MSSP.Engine;
 
 public sealed partial class EmbeddedMsspClient {
     /// <inheritdoc/>
-    public async ValueTask AppendAsync(StreamId streamId, StreamRevision expectedRevision, IEnumerable<EventData> events, CancellationToken cancellationToken = default) {
+    public ValueTask AppendAsync(StreamId streamId, StreamRevision expectedRevision, IEnumerable<EventData> events, CancellationToken cancellationToken = default) {
+        if (_engine is not null)
+            return _engine.AppendAsync(streamId, expectedRevision, events, cancellationToken);
+        return LegacyAppendAsync(streamId, expectedRevision, events, cancellationToken);
+    }
+
+    async ValueTask LegacyAppendAsync(StreamId streamId, StreamRevision expectedRevision, IEnumerable<EventData> events, CancellationToken cancellationToken) {
         var timer = OperationTimer.Start();
         var tasks = new List<ValueTask>();
         var eventCount = 0L;

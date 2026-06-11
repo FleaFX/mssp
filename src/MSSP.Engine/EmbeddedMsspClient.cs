@@ -10,13 +10,14 @@ public sealed partial class EmbeddedMsspClient(
     ILsmStore<EventKey> store,
     ISubscriptionProvider subscriptions,
     IMeterFactory? meterFactory = null
-): IMsspClient, IDisposable {
+): IMsspClient, IDisposable, IAsyncDisposable {
     readonly SemaphoreSlim _writeLock = new(1, 1);
     readonly RevisionIndex _revisions = new();
     readonly EmbeddedMetrics? _metrics = meterFactory is not null ? new EmbeddedMetrics(meterFactory) : null;
-
     string? _dataDirectory;
     LsmStore<EventKey>? _lsmStore;
+    StoreEngine? _engine;
+    EmbeddedLog? _embeddedLog;
 
     /// <summary>
     /// Wires up the backup source. Called from <see cref="OpenAsync"/> after construction.
@@ -24,6 +25,12 @@ public sealed partial class EmbeddedMsspClient(
     internal EmbeddedMsspClient WithBackupSource(string dataDirectory, LsmStore<EventKey> lsmStore) {
         _dataDirectory = dataDirectory;
         _lsmStore = lsmStore;
+        return this;
+    }
+
+    internal EmbeddedMsspClient WithEngine(StoreEngine engine, EmbeddedLog log) {
+        _engine = engine;
+        _embeddedLog = log;
         return this;
     }
 
@@ -65,18 +72,25 @@ public sealed partial class EmbeddedMsspClient(
 
         var subscriptionLog = SubscriptionLog.Open(dataDirectory, subscriptionLogFormat, subscriptionLogSegmentSizeBytes);
         var pipeline = new SubscriptionPipeline(lsmStore, subscriptionLog);
-        var logDriven = LogDrivenStore<EventKey>.Create(log, pipeline, memTableCapacityBytes);
+        var engine = new StoreEngine(log, pipeline, (long)pipeline.CurrentPosition.Value);
+        engine.Start();
 
-        return new EmbeddedMsspClient(store: new GlobalPositionDecorator(logDriven, pipeline), subscriptions: pipeline, meterFactory: meterFactory)
-            .WithBackupSource(dataDirectory, lsmStore);
+        return new EmbeddedMsspClient(store: pipeline, subscriptions: pipeline, meterFactory: meterFactory)
+            .WithBackupSource(dataDirectory, lsmStore)
+            .WithEngine(engine, log);
     }
 
     /// <inheritdoc/>
-    public void Dispose() {
+    public async ValueTask DisposeAsync() {
+        if (_engine is not null) await _engine.DisposeAsync();
+        _embeddedLog?.Dispose();
         store.Dispose();
         _writeLock.Dispose();
         _metrics?.Dispose();
     }
+
+    /// <inheritdoc/>
+    public void Dispose() => DisposeAsync().AsTask().GetAwaiter().GetResult();
 
     (bool exists, ulong revision) LookupCurrentRevision(string streamId) {
         ulong? max = null;

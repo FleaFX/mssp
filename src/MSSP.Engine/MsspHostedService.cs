@@ -12,9 +12,8 @@ namespace MSSP.Engine;
 public sealed class MsspHostedService(
     MsspOptions options,
     IMeterFactory? meterFactory = null
-) : IHostedService, IDisposable {
+) : IHostedService, IAsyncDisposable, IDisposable {
     EmbeddedMsspClient? _client;
-    bool _disposed;
 
     /// <summary>
     /// Gets the <see cref="EmbeddedMsspClient"/> once the host has started.
@@ -39,16 +38,20 @@ public sealed class MsspHostedService(
     }
 
     /// <inheritdoc/>
-    public Task StopAsync(CancellationToken cancellationToken) {
-        Dispose();
-        return Task.CompletedTask;
+    public async Task StopAsync(CancellationToken cancellationToken) {
+        if (_client is not {} client) return;
+        await client.DisposeAsync();
+        _client = null;
     }
 
     /// <inheritdoc/>
+    public async ValueTask DisposeAsync() =>
+        await StopAsync(CancellationToken.None);
+
+    /// <inheritdoc/>
     public void Dispose() {
-        if (_disposed) return;
-        _disposed = true;
-        _client?.Dispose();
+        if (_client is not { } client) return;
+        client.Dispose();
         _client = null;
     }
 }

@@ -42,6 +42,12 @@
     <Compile Update="EmbeddedMsspClient.Backup.cs">
       <DependentUpon>EmbeddedMsspClient.cs</DependentUpon>
     </Compile>
+    <Compile Update="StoreEngine.Append.cs">
+      <DependentUpon>StoreEngine.cs</DependentUpon>
+    </Compile>
+    <Compile Update="StoreEngine.Apply.cs">
+      <DependentUpon>StoreEngine.cs</DependentUpon>
+    </Compile>
   </ItemGroup>
 
   <!-- Bundle private implementation assemblies into the package lib folder. -->
