@@ -1,6 +1,7 @@
 using FluentAssertions;
+using MSSP.Storage;
 
-namespace MSSP.Storage;
+namespace MSSP.Engine.Storage;
 
 public class SkipListTests : IDisposable {
     readonly SkipList<string, string> _skipList = new();

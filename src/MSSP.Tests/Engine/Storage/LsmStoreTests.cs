@@ -2,8 +2,9 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading.Channels;
 using FluentAssertions;
+using MSSP.Storage;
 
-namespace MSSP.Storage;
+namespace MSSP.Engine.Storage;
 
 public class LsmStoreTests : IAsyncLifetime {
     readonly string _dataDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());

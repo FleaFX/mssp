@@ -1,4 +1,6 @@
-namespace MSSP.Storage;
+using MSSP.Storage;
+
+namespace MSSP.Engine.Storage;
 
 class TestLogRecord(byte[] payload) : ILogRecord<TestLogRecord> {
     readonly byte[] _payload = payload;

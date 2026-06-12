@@ -1,3 +1,5 @@
+using MSSP.Engine;
+
 namespace MSSP.Storage;
 
 public sealed partial class LsmStore<TKey> {

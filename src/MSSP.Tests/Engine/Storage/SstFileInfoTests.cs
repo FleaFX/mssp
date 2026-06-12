@@ -1,7 +1,8 @@
 using System.Text.RegularExpressions;
 using FluentAssertions;
+using MSSP.Storage;
 
-namespace MSSP.Storage;
+namespace MSSP.Engine.Storage;
 
 public class SstFileInfoTests {
     [Fact]

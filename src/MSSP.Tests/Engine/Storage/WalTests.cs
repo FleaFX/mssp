@@ -1,7 +1,8 @@
 using System.Text;
 using FluentAssertions;
+using MSSP.Storage;
 
-namespace MSSP.Storage;
+namespace MSSP.Engine.Storage;
 
 public class WalRecoveryTests {
     static ReadOnlyMemory<byte> Bytes(string s) => Encoding.UTF8.GetBytes(s);

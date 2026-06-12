@@ -1,7 +1,8 @@
 using System.Text;
 using FluentAssertions;
+using MSSP.Storage;
 
-namespace MSSP.Storage;
+namespace MSSP.Engine.Storage;
 
 public class SstTests {
     static KeyValuePair<StringKey, ReadOnlyMemory<byte>?> Entry(string key, string value) =>

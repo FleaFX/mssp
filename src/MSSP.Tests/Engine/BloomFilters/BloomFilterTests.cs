@@ -1,7 +1,8 @@
 using System.Text;
 using FluentAssertions;
+using MSSP.BloomFilters;
 
-namespace MSSP.BloomFilters;
+namespace MSSP.Engine.BloomFilters;
 
 public class BloomFilterTests {
     public class MayContain {

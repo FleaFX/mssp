@@ -1,8 +1,10 @@
 using System.Text;
 using FluentAssertions;
+using MSSP.BloomFilters;
+using MSSP.Engine.Storage;
 using MSSP.Storage;
 
-namespace MSSP.BloomFilters;
+namespace MSSP.Engine.BloomFilters;
 
 public class BloomFilteredSstAccessTests : IDisposable {
     readonly string _dir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());

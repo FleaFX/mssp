@@ -1,7 +1,8 @@
 using FluentAssertions;
 using MSSP.Extensions;
+using MSSP.Storage;
 
-namespace MSSP.Storage;
+namespace MSSP.Engine.Storage;
 
 public class StreamSegmentTests {
     public class TryAppendAsync : StreamSegmentTests {

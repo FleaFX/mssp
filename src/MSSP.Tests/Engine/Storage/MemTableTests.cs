@@ -1,7 +1,8 @@
 using System.Text;
 using FluentAssertions;
+using MSSP.Storage;
 
-namespace MSSP.Storage;
+namespace MSSP.Engine.Storage;
 
 public class MemTableTests : IDisposable {
     readonly MemTable<StringKey> _memTable = new(1024);

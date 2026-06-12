@@ -1,6 +1,6 @@
 using System.Text;
 
-namespace MSSP.Storage;
+namespace MSSP.Engine.Storage;
 
 sealed record StringKey(string Value) : IKey<StringKey> {
     public int CompareTo(StringKey? other) =>
