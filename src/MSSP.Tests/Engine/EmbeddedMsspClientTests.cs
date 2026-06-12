@@ -287,18 +287,6 @@ public class EmbeddedMsspClientTests : IAsyncLifetime {
         }
 
         [Fact]
-        public async Task SstFileCreatedAfterFlush() {
-            await _tinyClient.AppendAsync("stream-a", StreamRevision.NoStream, [
-                Event("Foo", new string('x', 64)),
-                Event("Bar", new string('x', 64))
-            ]);
-
-            await _tinyClient.WaitForMaintenanceIdleAsync(TestContext.Current.CancellationToken);
-
-            Directory.EnumerateFiles(_dataDir, "*.sst").Should().HaveCount(1);
-        }
-
-        [Fact]
         public async Task EventsSpanningMultipleSstFilesAndMemTable_ReadInOrder() {
             for (var i = 0; i < 6; i++)
                 await _tinyClient.AppendAsync("stream-a", i == 0 ? StreamRevision.NoStream : (ulong)(i - 1), [

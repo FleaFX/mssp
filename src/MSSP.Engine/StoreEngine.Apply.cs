@@ -22,7 +22,6 @@ sealed partial class StoreEngine {
                 : 0UL;
 
             if (await store.TryBeginFlushAsync(keyLen + value.Length, cancellationToken) is { } flushJob) {
-                Interlocked.Increment(ref _maintenanceInFlight);
                 _flush!.Enqueue(flushJob);
             }
             await store.WriteAsync(key, value, cancellationToken);
@@ -46,10 +45,9 @@ sealed partial class StoreEngine {
     }
 
     async ValueTask HandleFlushCompletedAsync(FlushCompleted msg, CancellationToken cancellationToken) {
-        if (msg.Error is OperationCanceledException) { Interlocked.Decrement(ref _maintenanceInFlight); return; }
-        if (msg.Error is not null) { Interlocked.Decrement(ref _maintenanceInFlight); throw msg.Error; }
+        if (msg.Error is OperationCanceledException) return;
+        if (msg.Error is not null) throw msg.Error;
         await msg.Job.CompleteAsync(cancellationToken);
-        MaybeStartCompaction();
-        Interlocked.Decrement(ref _maintenanceInFlight);
+        TryFulfillPendingPlanRequest();
     }
 }

@@ -87,6 +87,13 @@ sealed record CompactionCompleted(
 ) : EngineMessage;
 
 /// <summary>
+/// Sent by <see cref="CompactionWorker"/> to request a new compaction plan.
+/// The actor responds immediately if work is available, otherwise holds the request until the
+/// next flush or compaction completes and calls <c>TryFulfillPendingPlanRequest</c>.
+/// </summary>
+sealed record CompactionPlanRequest : EngineMessage;
+
+/// <summary>
 /// Returned by <see cref="RegisterSubscriptionCommand"/>. Contains everything the subscriber
 /// needs to perform catch-up and then switch to the live channel.
 /// </summary>

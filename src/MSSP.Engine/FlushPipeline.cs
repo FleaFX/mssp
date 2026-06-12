@@ -1,4 +1,5 @@
 using System.Threading.Channels;
+using MSSP.Engine.Storage;
 
 namespace MSSP.Engine;
 
@@ -53,6 +54,63 @@ sealed class JobPipeline<TJob>(Action<TJob, Exception?> onCompleted, Cancellatio
     /// <inheritdoc/>
     public async ValueTask DisposeAsync() {
         _channel.Writer.TryComplete();
+        try {
+            await (_loop ?? Task.CompletedTask);
+        } catch {
+            // swallow
+        }
+    }
+}
+
+/// <summary>
+/// Runs compaction jobs off the actor thread using a pull model.
+/// <para>
+/// The worker keeps one <see cref="CompactionPlanRequest"/> outstanding in the actor mailbox at all times.
+/// The actor holds the request until work becomes available, then calls <see cref="Respond"/> with a ready job.
+/// Because plans are always made after the previous <c>CompleteAsync</c> has updated <c>_sstLevels</c>,
+/// stale-plan races are structurally impossible.
+/// </para>
+/// </summary>
+sealed class CompactionWorker(ChannelWriter<EngineMessage> actorMailbox, CancellationToken cancellationToken) : IAsyncDisposable {
+    readonly Channel<LsmStore<EventKey>.CompactionJob> _response =
+        Channel.CreateBounded<LsmStore<EventKey>.CompactionJob>(new BoundedChannelOptions(1) { SingleReader = true, SingleWriter = true });
+
+    Task? _loop;
+
+    /// <summary>
+    /// Starts the worker loop. Must be called once before any use.
+    /// </summary>
+    public CompactionWorker Start() {
+        _loop = RunAsync();
+        return this;
+    }
+
+    /// <summary>
+    /// Delivers a ready compaction job to the waiting worker loop.
+    /// Called on the actor thread from <c>TryFulfillPendingPlanRequest</c>.
+    /// </summary>
+    public void Respond(LsmStore<EventKey>.CompactionJob job) => _response.Writer.TryWrite(job);
+
+    async Task RunAsync() {
+        try {
+            while (true) {
+                actorMailbox.TryWrite(new CompactionPlanRequest());
+                var job = await _response.Reader.ReadAsync(cancellationToken);
+                Exception? error = null;
+                try {
+                    await job.RunAsync(cancellationToken);
+                } catch (Exception ex) {
+                    error = ex;
+                }
+                actorMailbox.TryWrite(new CompactionCompleted(job, error));
+            }
+        } catch (OperationCanceledException) {
+            // normal shutdown
+        }
+    }
+
+    /// <inheritdoc/>
+    public async ValueTask DisposeAsync() {
         try {
             await (_loop ?? Task.CompletedTask);
         } catch {
