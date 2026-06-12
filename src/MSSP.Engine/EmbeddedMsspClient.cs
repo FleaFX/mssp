@@ -7,11 +7,11 @@ namespace MSSP.Engine;
 /// An embedded, single-process implementation of <see cref="IMsspClient"/> that stores events on the local filesystem.
 /// </summary>
 /// <param name="log">Write-ahead log; owned and disposed by this instance if it implements <see cref="IDisposable"/>.</param>
-/// <param name="store">The key-value store; owned and disposed via <see cref="ILsmStore{TKey}"/>.</param>
+/// <param name="store">The key-value store; owned and disposed by this instance.</param>
 /// <param name="subscriptionLog">Subscription position log; owned by the engine.</param>
 /// <param name="dataDirectory">Root directory used for backups. <see langword="null"/> disables backup support.</param>
 /// <param name="meterFactory">Optional meter factory for diagnostics.</param>
-public sealed partial class EmbeddedMsspClient(ILog<WalRecord> log, ILsmStore<EventKey> store, SubscriptionLog subscriptionLog, string? dataDirectory = null, IMeterFactory? meterFactory = null) : IMsspClient, IAsyncDisposable {
+public sealed partial class EmbeddedMsspClient(ILog<WalRecord> log, LsmStore<EventKey> store, SubscriptionLog subscriptionLog, string? dataDirectory = null, IMeterFactory? meterFactory = null) : IMsspClient, IAsyncDisposable {
 
     readonly IDisposable? _logOwner = log as IDisposable;
     readonly EmbeddedMetrics? _metrics = meterFactory is not null ? new EmbeddedMetrics(meterFactory) : null;

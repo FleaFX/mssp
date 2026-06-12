@@ -64,21 +64,23 @@ public class LsmSnapshotTests {
                 Directory.CreateDirectory(storeDir);
                 Directory.CreateDirectory(sourceDir);
 
-                // store under test: write a, b → fills 4-byte MemTable → flush to SST;
-                // c stays in MemTable (unflushed)
+                // store under test: write a, b → flush to SST; c stays in MemTable (unflushed)
                 using var store = await LsmStore<StringKey>.OpenAsync(Opts(storeDir), NoWal(), TestContext.Current.CancellationToken);
                 await store.WriteAsync(new StringKey("a"), Bytes("1"), TestContext.Current.CancellationToken);
                 await store.WriteAsync(new StringKey("b"), Bytes("2"), TestContext.Current.CancellationToken);
+                { var job = store.BeginFlush(); await job.RunAsync(TestContext.Current.CancellationToken); await job.CompleteAsync(TestContext.Current.CancellationToken); }
                 await store.WriteAsync(new StringKey("c"), Bytes("3"), TestContext.Current.CancellationToken);
 
                 store.ScanAllFrom(new StringKey(""))
                      .Select(e => e.Key.Value)
                      .Should().Contain("a", "setup: old data must be visible before reload");
 
-                // source store: write x, y → flush to SST in sourceDir
+                // source store: write x, y → each flushed to SST in sourceDir; z stays in MemTable
                 using var source = await LsmStore<StringKey>.OpenAsync(Opts(sourceDir), NoWal(), TestContext.Current.CancellationToken);
                 await source.WriteAsync(new StringKey("x"), Bytes("10"), TestContext.Current.CancellationToken);
+                { var job = source.BeginFlush(); await job.RunAsync(TestContext.Current.CancellationToken); await job.CompleteAsync(TestContext.Current.CancellationToken); }
                 await source.WriteAsync(new StringKey("y"), Bytes("20"), TestContext.Current.CancellationToken);
+                { var job = source.BeginFlush(); await job.RunAsync(TestContext.Current.CancellationToken); await job.CompleteAsync(TestContext.Current.CancellationToken); }
                 await source.WriteAsync(new StringKey("z"), Bytes("30"), TestContext.Current.CancellationToken);
                 source.Dispose();
 

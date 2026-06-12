@@ -11,7 +11,7 @@ namespace MSSP.Engine.Storage;
 /// This class is not thread-safe. Callers are responsible for ensuring that writes, reads,
 /// flushes, and compactions are not executed concurrently.
 /// </remarks>
-public sealed partial class LsmStore<TKey> : ILsmStore<TKey> where TKey : IKey<TKey> {
+public sealed partial class LsmStore<TKey> : IDisposable where TKey : IKey<TKey> {
     readonly string _dataDirectory;
     readonly int _capacityBytes;
     readonly long _baseLevelSizeBytes;
@@ -19,6 +19,7 @@ public sealed partial class LsmStore<TKey> : ILsmStore<TKey> where TKey : IKey<T
     readonly MemTableFlushedDelegate _onFlushed;
     readonly ISstAccess<TKey> _sst;
     readonly List<List<SstFileInfo>> _sstLevels;
+    readonly List<MemTable<TKey>> _flushing = [];
     readonly LsmStoreMetrics? _metrics;
     MemTable<TKey> _memTable;
 
@@ -112,6 +113,8 @@ public sealed partial class LsmStore<TKey> : ILsmStore<TKey> where TKey : IKey<T
     /// <inheritdoc />
     public void Dispose() {
         _memTable.Dispose();
+        foreach (var sealedMemTable in _flushing)
+            sealedMemTable.Dispose();
         _metrics?.Dispose();
     }
 }

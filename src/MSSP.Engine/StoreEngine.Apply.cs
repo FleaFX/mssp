@@ -21,6 +21,10 @@ sealed partial class StoreEngine {
                 ? BinaryPrimitives.ReadUInt64LittleEndian(value.Span[^8..])
                 : 0UL;
 
+            if (store.TryBeginFlush(keyLen + value.Length) is { } flushJob) {
+                await flushJob.RunAsync(ct);
+                await flushJob.CompleteAsync(ct);
+            }
             await store.WriteAsync(key, value, ct);
 
             if (pos > _currentPosition) {

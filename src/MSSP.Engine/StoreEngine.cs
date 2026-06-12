@@ -11,7 +11,7 @@ namespace MSSP.Engine;
 /// The actor loop processes both in order, so no external locking is required for writes.
 /// </para>
 /// </summary>
-sealed partial class StoreEngine(ILog<WalRecord> log, ILsmStore<EventKey> store, SubscriptionLog subscriptionLog, long startPosition) : IAsyncDisposable {
+sealed partial class StoreEngine(ILog<WalRecord> log, LsmStore<EventKey> store, SubscriptionLog subscriptionLog, long startPosition) : IAsyncDisposable {
 
     /// <summary>
     /// Tracks an in-flight append while its WAL records are being applied to the store.
