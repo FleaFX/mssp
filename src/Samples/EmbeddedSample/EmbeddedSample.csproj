@@ -9,7 +9,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\MSSP.Engine\MSSP.Engine.csproj" />
+    <PackageReference Include="MSSP.Engine" Version="0.8.0" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.8" />
   </ItemGroup>
 
