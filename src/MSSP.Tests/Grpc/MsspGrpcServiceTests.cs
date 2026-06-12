@@ -44,7 +44,7 @@ public class MsspGrpcServiceTests : IAsyncLifetime {
     public async ValueTask DisposeAsync() {
         _channel?.Dispose();
         if (_app is not null) await _app.DisposeAsync();
-        _embedded?.Dispose();
+        if (_embedded is not null) await _embedded.DisposeAsync();
         if (Directory.Exists(_dataDir))
             Directory.Delete(_dataDir, recursive: true);
     }

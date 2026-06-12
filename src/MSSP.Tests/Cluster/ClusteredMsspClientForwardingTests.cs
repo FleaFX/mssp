@@ -48,15 +48,13 @@ public class ClusteredMsspClientForwardingTests : IAsyncLifetime {
         var followerLsmOptions = new LsmStoreOptions<EventKey>(_followerDataDir, 1024, _ => ValueTask.CompletedTask, BaseLevelSizeBytes: -1, LevelSizeMultiplier: 10);
         var followerStore = await LsmStore<EventKey>.OpenAsync(followerLsmOptions, AsyncEnumerable.Empty<ReadOnlyMemory<byte>>(), TestContext.Current.CancellationToken);
         var followerSubLog = SubscriptionLog.Open(_followerDataDir, SubscriptionLogFormat.FullPayload, 64 * 1024 * 1024);
-        var followerPipeline = new SubscriptionPipeline(followerStore, followerSubLog);
-        var followerLogDriven = LogDrivenStore<EventKey>.Create(followerRaftLog, followerPipeline, 1024);
-        _followerLocal = new EmbeddedMsspClient(store: new GlobalPositionDecorator(followerLogDriven, followerPipeline), subscriptions: followerPipeline);
+        _followerLocal = new EmbeddedMsspClient(followerRaftLog, followerStore, followerSubLog, _followerDataDir);
         _followerClient = new ClusteredMsspClient(follower.Node, _followerLocal, peers);
     }
 
     public async ValueTask DisposeAsync() {
         _followerClient?.Dispose();
-        _followerLocal?.Dispose();
+        if (_followerLocal is not null) await _followerLocal.DisposeAsync();
         if (_leaderServer is not null) await _leaderServer.DisposeAsync();
         await _cluster.DisposeAsync();
         if (_followerDataDir is not null && Directory.Exists(_followerDataDir))

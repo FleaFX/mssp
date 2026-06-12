@@ -11,7 +11,7 @@ namespace MSSP.Engine;
 /// The actor loop processes both in order, so no external locking is required for writes.
 /// </para>
 /// </summary>
-sealed partial class StoreEngine(ILog<WalRecord> log, LsmStore<EventKey> store, SubscriptionLog subscriptionLog, long startPosition) : IAsyncDisposable {
+sealed partial class StoreEngine(ILog<WalRecord> log, ILsmStore<EventKey> store, SubscriptionLog subscriptionLog, long startPosition) : IAsyncDisposable {
 
     /// <summary>
     /// Tracks an in-flight append while its WAL records are being applied to the store.
@@ -41,8 +41,10 @@ sealed partial class StoreEngine(ILog<WalRecord> log, LsmStore<EventKey> store, 
     /// Starts the actor loop and the committed-batch reader task.
     /// Must be called once after construction and before any <see cref="AppendAsync"/> calls.
     /// </summary>
-    public void Start() =>
+    public StoreEngine Start() {
         (_actorTask, _batchReaderTask) = (RunActorAsync(_cts.Token), RunCommittedBatchReaderAsync(_cts.Token));
+        return this;
+    }
 
     /// <summary>
     /// Posts an append command to the actor mailbox and returns a task that completes
@@ -63,6 +65,7 @@ sealed partial class StoreEngine(ILog<WalRecord> log, LsmStore<EventKey> store, 
                     CommittedBatch batch => HandleCommittedBatchAsync(batch, cancellationToken),
                     CaptureSnapshotCommand snap => HandleCaptureSnapshot(snap),
                     OpenBackupStreamsCommand backup => HandleOpenBackupStreams(backup),
+                    ReloadSnapshotCommand reload => HandleReloadSnapshot(reload, cancellationToken),
                     RegisterSubscriptionCommand reg => HandleRegisterSubscription(reg),
                     UnregisterSubscriptionCommand u => HandleUnregisterSubscription(u),
                     _ => ValueTask.CompletedTask
@@ -94,6 +97,8 @@ sealed partial class StoreEngine(ILog<WalRecord> log, LsmStore<EventKey> store, 
         while (_pending.TryDequeue(out var entry))
             entry.Reply.TrySetCanceled();
         _subscriptionBus.CompleteAll();
+        subscriptionLog.Dispose();
+        store.Dispose();
         _cts.Dispose();
     }
 }

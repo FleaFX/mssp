@@ -60,6 +60,15 @@ sealed record OpenBackupStreamsCommand(
 ) : EngineMessage;
 
 /// <summary>
+/// Replaces the store's SST files with a snapshot from <see cref="StagingDirectory"/>
+/// and resets in-memory state. Called after a Raft snapshot install.
+/// </summary>
+sealed record ReloadSnapshotCommand(
+    string StagingDirectory,
+    TaskCompletionSource<bool> Reply
+) : EngineMessage;
+
+/// <summary>
 /// Returned by <see cref="RegisterSubscriptionCommand"/>. Contains everything the subscriber
 /// needs to perform catch-up and then switch to the live channel.
 /// </summary>

@@ -45,7 +45,7 @@ public class SubscribeAsyncTests {
             events.Should().HaveCount(3);
             events.Select(e => e.EventType).Should().Equal("A", "B", "C");
         } finally {
-            client.Dispose();
+            await client.DisposeAsync();
             Directory.Delete(dir, recursive: true);
         }
     }
@@ -68,7 +68,7 @@ public class SubscribeAsyncTests {
             events.Should().HaveCount(3);
             events.Select(e => e.EventType).Should().Equal("C", "D", "E");
         } finally {
-            client.Dispose();
+            await client.DisposeAsync();
             Directory.Delete(dir, recursive: true);
         }
     }
@@ -90,7 +90,7 @@ public class SubscribeAsyncTests {
             events.Select(e => e.EventType).Should().Equal("InA", "InA2");
             events.All(e => e.StreamId.Value == "stream-a").Should().BeTrue();
         } finally {
-            client.Dispose();
+            await client.DisposeAsync();
             Directory.Delete(dir, recursive: true);
         }
     }
@@ -111,7 +111,7 @@ public class SubscribeAsyncTests {
             events.Should().HaveCount(2);
             events.All(e => e.StreamId.Value.StartsWith("order-")).Should().BeTrue();
         } finally {
-            client.Dispose();
+            await client.DisposeAsync();
             Directory.Delete(dir, recursive: true);
         }
     }
@@ -130,7 +130,7 @@ public class SubscribeAsyncTests {
             events.Should().HaveCount(2);
             events.Select(e => e.EventType).Should().Equal("OrderPlaced", "OrderShipped");
         } finally {
-            client.Dispose();
+            await client.DisposeAsync();
             Directory.Delete(dir, recursive: true);
         }
     }
@@ -152,7 +152,7 @@ public class SubscribeAsyncTests {
             events[0].EventType.Should().Be("OrderPlaced");
             events[0].StreamId.Value.Should().Be("order-1");
         } finally {
-            client.Dispose();
+            await client.DisposeAsync();
             Directory.Delete(dir, recursive: true);
         }
     }
@@ -177,7 +177,7 @@ public class SubscribeAsyncTests {
             events[0].EventType.Should().Be("Historical");
             events[1].EventType.Should().Be("Live");
         } finally {
-            client.Dispose();
+            await client.DisposeAsync();
             Directory.Delete(dir, recursive: true);
         }
     }
@@ -201,7 +201,7 @@ public class SubscribeAsyncTests {
             events.Select(e => e.Position.Value).Should().BeInAscendingOrder();
             events.Select(e => e.EventType).Should().OnlyHaveUniqueItems();
         } finally {
-            client.Dispose();
+            await client.DisposeAsync();
             Directory.Delete(dir, recursive: true);
         }
     }
@@ -224,7 +224,7 @@ public class SubscribeAsyncTests {
             events1[0].EventType.Should().Be("Broadcast");
             events2[0].EventType.Should().Be("Broadcast");
         } finally {
-            client.Dispose();
+            await client.DisposeAsync();
             Directory.Delete(dir, recursive: true);
         }
     }
@@ -244,7 +244,7 @@ public class SubscribeAsyncTests {
         for (int i = 1; i < positions.Count; i++)
             positions[i].Should().BeGreaterThan(positions[i - 1]);
         } finally {
-            client.Dispose();
+            await client.DisposeAsync();
             Directory.Delete(dir, recursive: true);
         }
     }
@@ -263,7 +263,7 @@ public class SubscribeAsyncTests {
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             var events = await CollectAsync(client.SubscribeAsync(SubscriptionFilter.All, cancellationToken: cts.Token), 3);
             lastPos = events.Last().Position.Value;
-            client.Dispose();
+            await client.DisposeAsync();
         }
 
         // Reopen and write more events — positions must be higher than before
@@ -278,7 +278,7 @@ public class SubscribeAsyncTests {
 
             events.Should().HaveCount(1);
             events[0].Position.Value.Should().BeGreaterThan(lastPos);
-            client.Dispose();
+            await client.DisposeAsync();
         }
 
         Directory.Delete(dir, recursive: true);
@@ -302,7 +302,7 @@ public class SubscribeAsyncTests {
             await Task.Delay(50);
 
             // Dispose should complete all active channels
-            client.Dispose();
+            await client.DisposeAsync();
 
             // The drain task should complete without hanging
             var completedInTime = await Task.WhenAny(drainTask, Task.Delay(2000)) == drainTask;
@@ -322,7 +322,7 @@ public class SubscribeAsyncTests {
             {
                 var client = await EmbeddedMsspClient.OpenAsync(dir, cancellationToken: TestContext.Current.CancellationToken);
                 await client.AppendAsync("s", StreamRevision.NoStream, [Event("A", "x"), Event("B", "x")]);
-                client.Dispose();
+                await client.DisposeAsync();
             }
 
             // Reopen — catch-up should replay events from the subscription log
@@ -334,7 +334,7 @@ public class SubscribeAsyncTests {
 
                 events.Should().HaveCount(2);
                 events.Select(e => e.EventType).Should().Equal("A", "B");
-                client.Dispose();
+                await client.DisposeAsync();
             }
         } finally {
             Directory.Delete(dir, recursive: true);

@@ -8,10 +8,9 @@ public class EmbeddedMsspClientTests : IAsyncLifetime {
 
     public async ValueTask InitializeAsync() => _client = await EmbeddedMsspClient.OpenAsync(_dataDir);
 
-    public ValueTask DisposeAsync() {
-        _client.Dispose();
+    public async ValueTask DisposeAsync() {
+        await _client.DisposeAsync();
         Directory.Delete(_dataDir, recursive: true);
-        return ValueTask.CompletedTask;
     }
 
     static EventData Event(string type, string payload) =>
@@ -255,10 +254,9 @@ public class EmbeddedMsspClientTests : IAsyncLifetime {
 
         public async ValueTask InitializeAsync() => _tinyClient = await EmbeddedMsspClient.OpenAsync(_dataDir, memTableCapacityBytes: 128);
 
-        public ValueTask DisposeAsync() {
-            _tinyClient.Dispose();
+        public async ValueTask DisposeAsync() {
+            await _tinyClient.DisposeAsync();
             Directory.Delete(_dataDir, recursive: true);
-            return ValueTask.CompletedTask;
         }
 
         static EventData Event(string type, string payload) =>
@@ -313,11 +311,11 @@ public class EmbeddedMsspClientTests : IAsyncLifetime {
             try {
                 var client1 = await EmbeddedMsspClient.OpenAsync(dataDir);
                 await client1.AppendAsync("stream-a", StreamRevision.NoStream, [Event("Foo", "first"), Event("Bar", "second")]);
-                client1.Dispose();
+                await client1.DisposeAsync();
 
                 var client2 = await EmbeddedMsspClient.OpenAsync(dataDir);
                 var events = await client2.ReadAsync("stream-a").ToListAsync();
-                client2.Dispose();
+                await client2.DisposeAsync();
 
                 events.Should().HaveCount(2);
                 events[0].EventType.Should().Be("Foo");
@@ -333,12 +331,12 @@ public class EmbeddedMsspClientTests : IAsyncLifetime {
             try {
                 var client1 = await EmbeddedMsspClient.OpenAsync(dataDir);
                 await client1.AppendAsync("stream-a", StreamRevision.NoStream, [Event("Foo", "data")]);
-                client1.Dispose();
+                await client1.DisposeAsync();
 
                 var client2 = await EmbeddedMsspClient.OpenAsync(dataDir);
                 var act = async () => await client2.AppendAsync("stream-a", StreamRevision.NoStream, [Event("Bar", "data")]);
                 await act.Should().ThrowAsync<OptimisticConcurrencyException>();
-                client2.Dispose();
+                await client2.DisposeAsync();
             } finally {
                 Directory.Delete(dataDir, recursive: true);
             }
@@ -353,11 +351,11 @@ public class EmbeddedMsspClientTests : IAsyncLifetime {
                     Event("Foo", new string('x', 64)),
                     Event("Bar", new string('x', 64))
                 ]);
-                client1.Dispose();
+                await client1.DisposeAsync();
 
                 var client2 = await EmbeddedMsspClient.OpenAsync(dataDir, memTableCapacityBytes: 128);
                 var events = await client2.ReadAsync("stream-a").ToListAsync();
-                client2.Dispose();
+                await client2.DisposeAsync();
 
                 events.Should().HaveCount(2);
                 events[0].EventType.Should().Be("Foo");

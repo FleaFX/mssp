@@ -1,5 +1,4 @@
 using System.Runtime.CompilerServices;
-using System.Threading.Channels;
 
 namespace MSSP.Engine;
 
@@ -10,70 +9,24 @@ public sealed partial class EmbeddedMsspClient {
         GlobalPosition fromPosition = default,
         [EnumeratorCancellation] CancellationToken cancellationToken = default) {
 
-        ChannelReader<SubscriptionEvent> liveChannel;
-        IEnumerable<SubscriptionEvent> catchUpScan;
-        GlobalPosition catchUpPosition;
-        SubscriptionRegistration? engineReg = null;
-
         _metrics?.SubscriptionStarted();
-        if (_engine is { } engine) {
-            engineReg = await engine.RegisterSubscriptionAsync(filter, fromPosition, cancellationToken);
-            liveChannel = engineReg.LiveChannel;
-            catchUpScan = engineReg.CatchUpScan;
-            catchUpPosition = engineReg.CatchUpPosition;
-        } else {
-            await _writeLock.WaitAsync(cancellationToken);
-            try {
-                catchUpPosition = subscriptions.CurrentPosition;
-                liveChannel = subscriptions.Register(filter);
-                catchUpScan = subscriptions.ScanFrom(fromPosition, BuildResolver());
-            } finally {
-                _writeLock.Release();
-            }
-        }
+        var reg = await _engine!.RegisterSubscriptionAsync(filter, fromPosition, cancellationToken);
 
         try {
-            // CATCH-UP: replay historical events from the subscription log.
-            // The log is ordered by GlobalPosition, so we can break on first entry past the snapshot.
-            foreach (var evt in catchUpScan) {
+            foreach (var evt in reg.CatchUpScan) {
                 if (cancellationToken.IsCancellationRequested) yield break;
-                if (evt.Position > catchUpPosition) break;
+                if (evt.Position > reg.CatchUpPosition) break;
                 if (filter.Matches(evt)) yield return evt;
             }
 
-            // LIVE: deliver events written after the catch-up snapshot.
-            // The overlap guard skips any events already delivered in catch-up.
-            await foreach (var evt in liveChannel.ReadAllAsync(cancellationToken)) {
-                if (evt.Position <= catchUpPosition) continue;
+            await foreach (var evt in reg.LiveChannel.ReadAllAsync(cancellationToken)) {
+                if (evt.Position <= reg.CatchUpPosition) continue;
                 yield return evt;
             }
         } finally {
-            if (_engine is { } eng) {
-                engineReg?.ResolverSnapshot?.Dispose();
-                eng.UnregisterSubscription(liveChannel);
-            } else {
-                await _writeLock.WaitAsync(CancellationToken.None);
-                try {
-                    subscriptions.Unregister(liveChannel);
-                } finally {
-                    _writeLock.Release();
-                }
-            }
+            reg.ResolverSnapshot?.Dispose();
+            _engine.UnregisterSubscription(reg.LiveChannel);
             _metrics?.SubscriptionStopped();
         }
-    }
-
-    // For FullPayload format the log contains full event data; no resolver needed.
-    // For ReferenceOnly the log stores only EventKey pointers, resolved here via SST scan.
-    Func<EventKey, SubscriptionEvent>? BuildResolver() {
-        if (subscriptions.LogFormat == SubscriptionLogFormat.FullPayload) return null;
-        return key => {
-            foreach (var (k, v) in store.ScanSnapshotFrom(key)) {
-                if (!k.Equals(key)) break;
-                if (v is null) break;
-                return ((EventValue)v.Value).ToSubscriptionEvent(k);
-            }
-            throw new InvalidOperationException($"Event {key.StreamId}@{key.Revision} not found in store.");
-        };
     }
 }

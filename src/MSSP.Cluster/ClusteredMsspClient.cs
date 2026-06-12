@@ -17,11 +17,7 @@ namespace MSSP.Cluster;
 /// Reads and subscriptions are always served from the local node — the follower's LSM store contains
 /// only committed entries, so data is always durable, and the local copy avoids adding read load to the leader.
 /// </summary>
-sealed class ClusteredMsspClient(
-    RaftNode node,
-    EmbeddedMsspClient local,
-    RaftClusterMember[] peers
-) : IMsspClient, IDisposable {
+sealed class ClusteredMsspClient(RaftNode node, EmbeddedMsspClient local, RaftClusterMember[] peers) : IMsspClient, IDisposable {
 
     readonly Lock _leaderClientLock = new();
     GrpcChannel? _leaderChannel;

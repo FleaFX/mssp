@@ -14,34 +14,15 @@ public sealed partial class EmbeddedMsspClient {
     /// The store remains fully operational during the backup.
     /// </remarks>
     public async ValueTask CreateBackupAsync(string backupPath, CancellationToken cancellationToken = default) {
-        if (_dataDirectory is null || _lsmStore is null)
+        if (dataDirectory is null)
             throw new InvalidOperationException($"{nameof(CreateBackupAsync)} is only available on instances created via {nameof(OpenAsync)}.");
 
         var parentDir = Path.GetDirectoryName(backupPath);
         if (!string.IsNullOrEmpty(parentDir))
             Directory.CreateDirectory(parentDir);
 
-        // Open SST file handles on the actor thread (engine path) or under _writeLock (legacy path).
-        // Either way, FileShare.Delete allows compaction to unlink files while the handle is open.
-        IReadOnlyList<FileStream> sstStreams;
-        if (_engine is { } engine) {
-            sstStreams = await engine.OpenBackupStreamsAsync(cancellationToken);
-        } else {
-            var streams = new List<FileStream>();
-            await _writeLock.WaitAsync(cancellationToken);
-            try {
-                foreach (var filePath in _lsmStore!.GetActiveFilePaths())
-                    streams.Add(new FileStream(filePath, FileMode.Open, FileAccess.Read,
-                        FileShare.ReadWrite | FileShare.Delete,
-                        bufferSize: 81920, FileOptions.Asynchronous | FileOptions.SequentialScan));
-            } catch {
-                foreach (var s in streams) s.Dispose();
-                _writeLock.Release();
-                throw;
-            }
-            _writeLock.Release();
-            sstStreams = streams;
-        }
+        // FileShare.Delete allows compaction to unlink files while the handle is open.
+        var sstStreams = await _engine!.OpenBackupStreamsAsync(cancellationToken);
 
         // Write compressed archive. On any failure the partial archive is deleted
         // so callers are never left with a file that looks complete but is corrupt.
@@ -54,16 +35,14 @@ public sealed partial class EmbeddedMsspClient {
                 await AddStreamToArchiveAsync(archive, Path.GetFileName(stream.Name), stream, cancellationToken);
 
             // Subscription log must be included so GlobalPosition continuity is preserved on restore.
-            // SubscriptionPipeline initialises _globalSequence from the log's last position; without it
-            // the sequence restarts at 0 and new events collide with pre-backup positions.
-            foreach (var logFile in Directory.EnumerateFiles(_dataDirectory, "subscriptions-*.log").OrderBy(f => f))
+            foreach (var logFile in Directory.EnumerateFiles(dataDirectory, "subscriptions-*.log").OrderBy(f => f))
                 await AddToArchiveAsync(archive, logFile, cancellationToken);
 
-            var walPrevPath = Path.Combine(_dataDirectory, "wal_prev.log");
+            var walPrevPath = Path.Combine(dataDirectory, "wal_prev.log");
             if (File.Exists(walPrevPath))
                 await AddToArchiveAsync(archive, walPrevPath, cancellationToken);
 
-            var walPath = Path.Combine(_dataDirectory, "wal.log");
+            var walPath = Path.Combine(dataDirectory, "wal.log");
             if (File.Exists(walPath))
                 await AddToArchiveAsync(archive, walPath, cancellationToken);
 

@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using FluentAssertions;
 using MSSP.Engine;
 using MSSP.Storage;
@@ -127,9 +128,7 @@ public class ClusteredMsspClientTests : IAsyncLifetime {
             var store = await LsmStore<EventKey>.OpenAsync(lsmOptions, AsyncEnumerable.Empty<ReadOnlyMemory<byte>>(), TestContext.Current.CancellationToken);
             await node.StartAsync();
             var subLog = SubscriptionLog.Open(dataDir, SubscriptionLogFormat.FullPayload, 64 * 1024 * 1024);
-            var pipeline = new SubscriptionPipeline(store, subLog);
-            var logDriven = LogDrivenStore<EventKey>.Create(raftLog, pipeline, 1024 * 1024);
-            var local = new EmbeddedMsspClient(store: new GlobalPositionDecorator(logDriven, pipeline), subscriptions: pipeline);
+            var local = new EmbeddedMsspClient(raftLog, store, subLog, dataDir);
             var client = new ClusteredMsspClient(node, local, []);
             try {
                 var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(3);
@@ -141,35 +140,35 @@ public class ClusteredMsspClientTests : IAsyncLifetime {
             } finally {
                 await node.StopAsync();
                 client.Dispose();
-                local.Dispose();
+                await local.DisposeAsync();
                 fileRaftLog.Dispose();
             }
         }
 
-        // Second run: reopen SegmentedRaftLog and replay entries from checkpoint+1
+        // Second run: reopen SegmentedRaftLog and replay entries directly into a fresh LsmStore
         {
             var checkpointIndex = await RaftLogStateMachine.ReadCheckpointIndexAsync(dataDir);
             var fileRaftLog2 = await SegmentedRaftLog.OpenAsync(dataDir, 64 * 1024 * 1024);
-            var stateMachine2 = new RaftLogStateMachine();
-            var node2 = new RaftNode(new RaftNodeConfig("n1", [], 50, 100, 20), fileRaftLog2, new InMemoryRaftTransport(), stateMachine2, new InMemoryRaftStateStorage());
-            var raftLog2 = new RaftLog(node2, stateMachine2);
             var lsmOptions2 = new LsmStoreOptions<EventKey>(dataDir, 1024 * 1024, _ => ValueTask.CompletedTask, BaseLevelSizeBytes: -1, LevelSizeMultiplier: 10);
             var store2 = await LsmStore<EventKey>.OpenAsync(lsmOptions2, AsyncEnumerable.Empty<ReadOnlyMemory<byte>>(), TestContext.Current.CancellationToken);
-            var logDriven2 = LogDrivenStore<EventKey>.Create(raftLog2, store2, 1024 * 1024);
             try {
                 for (var i = checkpointIndex + 1; i <= fileRaftLog2.LastIndex; i++) {
                     var entry = await fileRaftLog2.GetEntryAsync(i);
-                    await stateMachine2.ApplyAsync(entry);
+                    if (entry.Type != RaftLogEntryType.Command) continue;
+                    var span = entry.Payload.Span;
+                    if (span.Length < 5) continue;
+                    var keyLen = BinaryPrimitives.ReadInt32LittleEndian(span[1..]);
+                    if (keyLen < 0 || 5 + keyLen > span.Length) continue;
+                    EventKey key = entry.Payload.Slice(5, keyLen);
+                    Memory<byte> value = entry.Payload[(5 + keyLen)..].ToArray();
+                    await store2.WriteAsync(key, value, TestContext.Current.CancellationToken);
                 }
-
-                // wait for apply loop to process the replayed records
-                await Task.Delay(100);
 
                 var scan = store2.ScanSnapshotFrom(new EventKey("stream-a", 0));
                 var events = scan.Where(kvp => kvp.Key.StreamId == "stream-a").ToList();
                 events.Should().HaveCount(1);
             } finally {
-                logDriven2.Dispose();
+                store2.Dispose();
                 fileRaftLog2.Dispose();
                 if (Directory.Exists(dataDir)) Directory.Delete(dataDir, recursive: true);
             }

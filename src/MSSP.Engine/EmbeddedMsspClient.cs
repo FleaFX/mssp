@@ -6,39 +6,25 @@ namespace MSSP.Engine;
 /// <summary>
 /// An embedded, single-process implementation of <see cref="IMsspClient"/> that stores events on the local filesystem.
 /// </summary>
-public sealed partial class EmbeddedMsspClient(
-    ILsmStore<EventKey> store,
-    ISubscriptionProvider subscriptions,
-    IMeterFactory? meterFactory = null
-): IMsspClient, IDisposable, IAsyncDisposable {
-    readonly SemaphoreSlim _writeLock = new(1, 1);
-    readonly RevisionIndex _revisions = new();
+/// <param name="log">Write-ahead log; owned and disposed by this instance if it implements <see cref="IDisposable"/>.</param>
+/// <param name="store">The key-value store; owned and disposed via <see cref="ILsmStore{TKey}"/>.</param>
+/// <param name="subscriptionLog">Subscription position log; owned by the engine.</param>
+/// <param name="dataDirectory">Root directory used for backups. <see langword="null"/> disables backup support.</param>
+/// <param name="meterFactory">Optional meter factory for diagnostics.</param>
+public sealed partial class EmbeddedMsspClient(ILog<WalRecord> log, ILsmStore<EventKey> store, SubscriptionLog subscriptionLog, string? dataDirectory = null, IMeterFactory? meterFactory = null) : IMsspClient, IAsyncDisposable {
+
+    readonly IDisposable? _logOwner = log as IDisposable;
     readonly EmbeddedMetrics? _metrics = meterFactory is not null ? new EmbeddedMetrics(meterFactory) : null;
-    string? _dataDirectory;
-    LsmStore<EventKey>? _lsmStore;
-    StoreEngine? _engine;
-    EmbeddedLog? _embeddedLog;
+    readonly StoreEngine _engine = new StoreEngine(log, store, subscriptionLog, (long)subscriptionLog.GetLastPosition().Value).Start();
 
-    /// <summary>
-    /// Wires up the backup source. Called from <see cref="OpenAsync"/> after construction.
-    /// </summary>
-    internal EmbeddedMsspClient WithBackupSource(string dataDirectory, LsmStore<EventKey> lsmStore) {
-        _dataDirectory = dataDirectory;
-        _lsmStore = lsmStore;
-        return this;
-    }
-
-    internal EmbeddedMsspClient WithEngine(StoreEngine engine, EmbeddedLog log) {
-        _engine = engine;
-        _embeddedLog = log;
-        return this;
-    }
+    internal ValueTask ReloadSnapshotAsync(string stagingDirectory, CancellationToken cancellationToken) =>
+        _engine.ReloadSnapshotAsync(stagingDirectory, cancellationToken);
 
     /// <summary>
     /// The <see cref="GlobalPosition"/> of the most recently applied event on this node.
     /// On a follower, this reflects entries received via Raft replication.
     /// </summary>
-    public GlobalPosition CurrentPosition => _engine?.CurrentPosition ?? subscriptions.CurrentPosition;
+    public GlobalPosition CurrentPosition => _engine.CurrentPosition;
 
     /// <summary>
     /// Opens or creates an embedded event store at the given <paramref name="dataDirectory"/>,
@@ -49,6 +35,7 @@ public sealed partial class EmbeddedMsspClient(
     /// <param name="sst">Optional SST access decorator (e.g. bloom filter layer).</param>
     /// <param name="subscriptionLogFormat">The format of the subscription log entries.</param>
     /// <param name="subscriptionLogSegmentSizeBytes">Maximum size of a single subscription log segment.</param>
+    /// <param name="meterFactory">Optional meter factory for diagnostics.</param>
     /// <param name="cancellationToken">Token to cancel the open operation.</param>
     /// <returns>An <see cref="EmbeddedMsspClient"/> ready for use.</returns>
     public static async ValueTask<EmbeddedMsspClient> OpenAsync(
@@ -71,37 +58,13 @@ public sealed partial class EmbeddedMsspClient(
         wal.DeletePrevWalIfExists();
 
         var subscriptionLog = SubscriptionLog.Open(dataDirectory, subscriptionLogFormat, subscriptionLogSegmentSizeBytes);
-        var engine = new StoreEngine(log, lsmStore, subscriptionLog, (long)subscriptionLog.GetLastPosition().Value);
-        engine.Start();
-
-        var pipeline = new SubscriptionPipeline(lsmStore, subscriptionLog);
-
-        return new EmbeddedMsspClient(store: pipeline, subscriptions: pipeline, meterFactory: meterFactory)
-            .WithBackupSource(dataDirectory, lsmStore)
-            .WithEngine(engine, log);
+        return new EmbeddedMsspClient(log, lsmStore, subscriptionLog, dataDirectory, meterFactory);
     }
 
     /// <inheritdoc/>
     public async ValueTask DisposeAsync() {
-        if (_engine is not null) await _engine.DisposeAsync();
-        _embeddedLog?.Dispose();
-        store.Dispose();
-        _writeLock.Dispose();
+        await _engine.DisposeAsync();
+        _logOwner?.Dispose();
         _metrics?.Dispose();
-    }
-
-    /// <inheritdoc/>
-    public void Dispose() => DisposeAsync().AsTask().GetAwaiter().GetResult();
-
-    (bool exists, ulong revision) LookupCurrentRevision(string streamId) {
-        ulong? max = null;
-        var startKey = new EventKey(streamId, 0UL);
-
-        foreach (var (key, _) in store.ScanAllFrom(startKey)) {
-            if (key.StreamId != streamId) break;
-            max = key.Revision;
-        }
-
-        return (max.HasValue, max ?? 0UL);
     }
 }

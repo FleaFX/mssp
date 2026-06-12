@@ -1,6 +1,5 @@
 using System.Runtime.CompilerServices;
 using System.Text;
-using System.Threading.Channels;
 using FluentAssertions;
 using MSSP.Storage;
 
@@ -24,21 +23,6 @@ public class LsmStoreTests : IAsyncLifetime {
     LsmStoreOptions<StringKey> LsmOptions(int capacityBytes = 4096, long baseLevelSizeBytes = -1, int levelSizeMultiplier = 10) =>
         new(_dataDir, capacityBytes, _ => ValueTask.CompletedTask, baseLevelSizeBytes, levelSizeMultiplier);
 
-    sealed class CapturingLog(List<ReadOnlyMemory<byte>> captured) : ILog<WalRecord> {
-        readonly Channel<WalRecord[]> _channel = Channel.CreateUnbounded<WalRecord[]>(
-            new UnboundedChannelOptions { SingleReader = true });
-
-        public ValueTask<bool> TryAppendAsync(WalRecord record, CancellationToken cancellationToken = default) {
-            ReadOnlyMemory<byte> bytes = record;
-            captured.Add(bytes.ToArray());
-            _channel.Writer.TryWrite([record]);
-            return ValueTask.FromResult(true);
-        }
-
-        public IAsyncEnumerator<WalRecord[]> GetAsyncEnumerator(CancellationToken cancellationToken = default) =>
-            _channel.Reader.ReadAllAsync(cancellationToken).GetAsyncEnumerator(cancellationToken);
-    }
-
     static async IAsyncEnumerable<ReadOnlyMemory<byte>> Empty([EnumeratorCancellation] CancellationToken cancellationToken = default) {
         await Task.Yield();
         yield break;
@@ -50,14 +34,10 @@ public class LsmStoreTests : IAsyncLifetime {
             yield return record;
     }
 
-    async Task<(LsmStore<StringKey> lsm, LogDrivenStore<StringKey> driven)> OpenLogDrivenAsync(
-            List<ReadOnlyMemory<byte>> captured, int capacityBytes = 4096) {
-        var lsm = await LsmStore<StringKey>.OpenAsync(LsmOptions(capacityBytes), Empty(), TestContext.Current.CancellationToken);
-        var driven = LogDrivenStore<StringKey>.Create(new CapturingLog(captured), lsm, capacityBytes);
-        return (lsm, driven);
-    }
-
     static Memory<byte> Bytes(string s) => Encoding.UTF8.GetBytes(s);
+
+    static void CaptureWalRecord(List<ReadOnlyMemory<byte>> captured, StringKey key, Memory<byte> value) =>
+        captured.Add(((ReadOnlyMemory<byte>)WalRecord.From(key, value)).ToArray());
 
     public class OpenAsync : LsmStoreTests {
         [Fact]
@@ -67,10 +47,11 @@ public class LsmStoreTests : IAsyncLifetime {
         [Fact]
         public async Task WithWalRecords_ReplaysMissingEntries() {
             var captured = new List<ReadOnlyMemory<byte>>();
-            var (_, driven) = await OpenLogDrivenAsync(captured);
-            await driven.WriteAsync(new StringKey("a"), Bytes("1"), TestContext.Current.CancellationToken);
-            await driven.WriteAsync(new StringKey("b"), Bytes("2"), TestContext.Current.CancellationToken);
-            driven.Dispose();
+            using var lsm = await LsmStore<StringKey>.OpenAsync(LsmOptions(), Empty(), TestContext.Current.CancellationToken);
+            CaptureWalRecord(captured, new StringKey("a"), Bytes("1"));
+            await lsm.WriteAsync(new StringKey("a"), Bytes("1"), TestContext.Current.CancellationToken);
+            CaptureWalRecord(captured, new StringKey("b"), Bytes("2"));
+            await lsm.WriteAsync(new StringKey("b"), Bytes("2"), TestContext.Current.CancellationToken);
 
             using var recovered = await LsmStore<StringKey>.OpenAsync(LsmOptions(), Replay(captured), TestContext.Current.CancellationToken);
 
@@ -83,11 +64,13 @@ public class LsmStoreTests : IAsyncLifetime {
         public async Task Recovery_SkipsWalRecordsAlreadyInSst() {
             // capacity 4: a(1b key)+1b value = 2; b = 2 → Size=4; c triggers flush → a,b in SST, c in MemTable
             var captured = new List<ReadOnlyMemory<byte>>();
-            var (_, driven) = await OpenLogDrivenAsync(captured, capacityBytes: 4);
-            await driven.WriteAsync(new StringKey("a"), Bytes("1"), TestContext.Current.CancellationToken);
-            await driven.WriteAsync(new StringKey("b"), Bytes("2"), TestContext.Current.CancellationToken);
-            await driven.WriteAsync(new StringKey("c"), Bytes("3"), TestContext.Current.CancellationToken);
-            driven.Dispose();
+            using var lsm = await LsmStore<StringKey>.OpenAsync(LsmOptions(4), Empty(), TestContext.Current.CancellationToken);
+            CaptureWalRecord(captured, new StringKey("a"), Bytes("1"));
+            await lsm.WriteAsync(new StringKey("a"), Bytes("1"), TestContext.Current.CancellationToken);
+            CaptureWalRecord(captured, new StringKey("b"), Bytes("2"));
+            await lsm.WriteAsync(new StringKey("b"), Bytes("2"), TestContext.Current.CancellationToken);
+            CaptureWalRecord(captured, new StringKey("c"), Bytes("3"));
+            await lsm.WriteAsync(new StringKey("c"), Bytes("3"), TestContext.Current.CancellationToken);
 
             // WAL has a,b,c; SST has a,b → RecoverAsync must apply only c, not duplicate a or b
             using var recovered = await LsmStore<StringKey>.OpenAsync(LsmOptions(4), Replay(captured), TestContext.Current.CancellationToken);

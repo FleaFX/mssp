@@ -1,5 +1,4 @@
 using System.Runtime.CompilerServices;
-using MSSP.Storage;
 
 namespace MSSP.Engine;
 
@@ -10,31 +9,11 @@ public sealed partial class EmbeddedMsspClient {
         // seeks directly to the right block instead of scanning from revision 0.
         var startKey = new EventKey(streamId.Value, direction == ReadDirection.Forwards ? (ulong)from : 0UL);
 
-        if (_engine is { } engine) {
-            using var snapshot = await engine.CaptureSnapshotAsync(cancellationToken);
-            var events = direction == ReadDirection.Forwards
-                ? ReadForwards(snapshot.ScanFrom(startKey), streamId.Value, maxCount, cancellationToken)
-                : ReadBackwards(snapshot.ScanFrom(startKey), streamId.Value, from, maxCount, cancellationToken);
-            foreach (var evt in events) {
-                _metrics?.RecordRead(1);
-                yield return evt;
-            }
-            yield break;
-        }
-
-        IEnumerable<KeyValuePair<EventKey, ReadOnlyMemory<byte>?>> scan;
-        await _writeLock.WaitAsync(cancellationToken);
-        try {
-            scan = store.ScanSnapshotFrom(startKey);
-        } finally {
-            _writeLock.Release();
-        }
-
-        var legacyEvents = direction == ReadDirection.Forwards
-            ? ReadForwards(scan, streamId.Value, maxCount, cancellationToken)
-            : ReadBackwards(scan, streamId.Value, from, maxCount, cancellationToken);
-
-        foreach (var evt in legacyEvents) {
+        using var snapshot = await _engine!.CaptureSnapshotAsync(cancellationToken);
+        var events = direction == ReadDirection.Forwards
+            ? ReadForwards(snapshot.ScanFrom(startKey), streamId.Value, maxCount, cancellationToken)
+            : ReadBackwards(snapshot.ScanFrom(startKey), streamId.Value, from, maxCount, cancellationToken);
+        foreach (var evt in events) {
             _metrics?.RecordRead(1);
             yield return evt;
         }
