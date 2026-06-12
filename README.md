@@ -8,7 +8,7 @@ MSSP (pronounced *Mississippi*) is a purpose-built event store for .NET 10. It s
 
 | Mode | Packages | Description |
 |------|---------|-------------|
-| Embedded | `MSSP.Embedded` | Runs in-process; no network required |
+| Embedded | `MSSP.Engine` | Runs in-process; no network required |
 | Client-Server | `MSSP.Server` + `MSSP.Client` | Standalone server over gRPC |
 | HA Cluster | `MSSP.Cluster` | Multi-node Raft consensus cluster |
 
