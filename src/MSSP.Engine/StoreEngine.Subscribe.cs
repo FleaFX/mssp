@@ -25,11 +25,11 @@ sealed partial class StoreEngine {
         _mailbox.Writer.TryWrite(new UnregisterSubscriptionCommand(channel));
 
     ValueTask HandleRegisterSubscription(RegisterSubscriptionCommand cmd) {
+        LsmStoreSnapshot<EventKey>? resolverSnapshot = null;
         try {
             var catchUpPosition = CurrentPosition;
             var liveChannel = _subscriptionBus.Register(cmd.Filter);
 
-            LsmStoreSnapshot<EventKey>? resolverSnapshot = null;
             Func<EventKey, SubscriptionEvent>? resolver = null;
             if (subscriptionLog.Format != SubscriptionLogFormat.FullPayload) {
                 resolverSnapshot = store.TakeReadSnapshot();
@@ -39,6 +39,7 @@ sealed partial class StoreEngine {
             var catchUpScan = subscriptionLog.ScanFrom(cmd.FromPosition, resolver);
             cmd.Reply.TrySetResult(new SubscriptionRegistration(liveChannel, catchUpScan, catchUpPosition, resolverSnapshot));
         } catch (Exception ex) {
+            resolverSnapshot?.Dispose();
             cmd.Reply.TrySetException(ex);
         }
         return ValueTask.CompletedTask;

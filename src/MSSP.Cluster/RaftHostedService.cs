@@ -167,12 +167,8 @@ sealed class RaftHostedService(
 
     /// <inheritdoc/>
     public async Task StopAsync(CancellationToken cancellationToken) {
-        if (_node is not null) {
-            // Pass the host's shutdown token so the drain wait respects the shutdown deadline.
-            // DisposeAsync is called afterwards to release _cts and _snapshotBuffer regardless.
+        if (_node is not null)
             await _node.StopAsync(cancellationToken);
-            await _node.DisposeAsync();
-        }
         await DisposeAsync();
     }
 
@@ -180,16 +176,16 @@ sealed class RaftHostedService(
     public async ValueTask DisposeAsync() {
         if (_disposed) return;
         _disposed = true;
+        _metricsCts?.Cancel();
+        if (_metricsTask is not null) await _metricsTask;
         _client?.Dispose();
         if (_local is not null) await _local.DisposeAsync();
-        // _node is IAsyncDisposable; disposed in StopAsync via DisposeAsync()
+        if (_node is not null) await _node.DisposeAsync();
         _transport?.Dispose();
         _raftLog?.Dispose();
         _raftMetrics?.Dispose();
         _lsmMetrics?.Dispose();
-        _metricsCts?.Cancel();
         _metricsCts?.Dispose();
-        if (_metricsTask is not null) await _metricsTask;
     }
 
     async Task UpdateRaftMetricsLoopAsync(CancellationToken cancellationToken) {
@@ -199,8 +195,7 @@ sealed class RaftHostedService(
                 await Task.Delay(100, cancellationToken); // Update every 100ms
                 if (_node is not null && _raftMetrics is not null) {
                     var currentTerm = _node.CurrentTerm;
-                    // Detect term change (election occurred)
-                    if (currentTerm > lastTerm) {
+                    if (lastTerm is null || currentTerm > lastTerm) {
                         _raftMetrics.RecordElection();
                     }
                     lastTerm = currentTerm;
