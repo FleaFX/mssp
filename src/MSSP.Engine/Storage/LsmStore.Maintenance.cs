@@ -6,20 +6,20 @@ public sealed partial class LsmStore<TKey> {
     /// Created by <see cref="LsmStore{TKey}.TryBeginFlushAsync"/> or <see cref="LsmStore{TKey}.BeginFlushAsync"/>; driven by
     /// <see cref="FlushJob.RunAsync"/> (I/O phase) and <see cref="FlushJob.CompleteAsync"/> (commit phase).
     /// </summary>
-    internal sealed class FlushJob(LsmStore<TKey> store, MemTable<TKey> sealedMemTable, string path, OperationTimer timer) {
+    internal sealed class FlushJob(LsmStore<TKey> store, MemTable<TKey> sealedMemTable, string path, OperationTimer timer) : IMaintenanceJob {
         SstFileInfo _file;
 
         /// <summary>
         /// Writes the sealed MemTable to disk. Safe to run off the actor thread; touches no shared state.
         /// </summary>
-        internal async ValueTask RunAsync(CancellationToken cancellationToken) {
+        public async ValueTask RunAsync(CancellationToken cancellationToken) {
             await store._sst.WriteAsync(sealedMemTable, path, cancellationToken);
             var fileSize = new FileInfo(path).Length;
             _file = new SstFileInfo(path, 1, fileSize);
         }
 
         /// <summary>
-        /// Registers the new SST file, removes the sealed MemTable from the flushing list, and triggers compaction.
+        /// Registers the new SST file and removes the sealed MemTable from the flushing list.
         /// Must be called on the actor thread.
         /// </summary>
         /// <remarks>
@@ -27,12 +27,14 @@ public sealed partial class LsmStore<TKey> {
         /// completion may still reference it and iterate it off-thread. Disposing would tear down the
         /// SkipList's lock underneath that reader. The MemTable holds only managed state, so it is left
         /// for the GC to reclaim once both <see cref="_flushing"/> and any snapshots release it.
+        /// Compaction is not triggered here — the engine calls <c>MaybeStartCompaction</c> after
+        /// receiving <c>FlushCompleted</c>.
         /// </remarks>
-        internal async ValueTask CompleteAsync(CancellationToken cancellationToken) {
+        internal ValueTask CompleteAsync(CancellationToken cancellationToken) {
             store._sstLevels[0].Add(_file);
             store._flushing.Remove(sealedMemTable);
             store._metrics?.RecordFlush(timer.ElapsedMs, memTableSize: 0, BuildLevelSnapshots(store._sstLevels));
-            await store.CompactAsync(cancellationToken);
+            return ValueTask.CompletedTask;
         }
     }
 

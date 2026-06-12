@@ -2,74 +2,80 @@ namespace MSSP.Engine.Storage;
 
 public sealed partial class LsmStore<TKey> {
     /// <summary>
-    /// Triggers compaction starting at L1, cascading upwards until no level exceeds its size target.
+    /// Captures the state of a single compaction operation across its three phases.
+    /// Created by <see cref="PlanCompaction"/>; driven by
+    /// <see cref="CompactionJob.RunAsync"/> (I/O phase) and <see cref="CompactionJob.CompleteAsync"/> (commit phase).
     /// </summary>
-    /// <remarks>
-    /// <see cref="LsmStore{TKey}"/> is not thread-safe. The caller is responsible for ensuring
-    /// no concurrent writes, flushes, or compactions are in progress.
-    /// </remarks>
-    internal async ValueTask CompactAsync(CancellationToken cancellationToken) {
-        if (_sstLevels.Count > 0 && EstimateLevelSize(0) >= GetLevelTarget(0))
-            await CompactLevelAsync(0, cancellationToken);
-    }
+    internal sealed class CompactionJob(LsmStore<TKey> store, int levelIndex, List<SstFileInfo> sourceFiles, string outputPath, OperationTimer timer) : IMaintenanceJob {
+        SstFileInfo _merged;
 
-    async ValueTask CompactLevelAsync(int levelIndex, CancellationToken cancellationToken) {
-        var timer = OperationTimer.Start();
-        var levelName = $"L{levelIndex + 1}";
-        var readers = new List<ISstReader<TKey>>();
-        try {
-            // 1. Open readers for all files in this level.
-            foreach (var file in _sstLevels[levelIndex])
-                readers.Add(_sst.OpenReader(file.FilePath));
-
-            // 2. Merge into a single file in the next level.
-            var nextLevelName = levelIndex + 2; // L1 (index 0) → L2, L2 (index 1) → L3, …
-            var compactedPath = Path.Combine(
-                _dataDirectory,
-                $"{DateTimeOffset.UtcNow.Ticks:D19}_L{nextLevelName}.sst");
-
-            await _sst.WriteAsync(
-                MergeAll(readers.Select(r => r.Scan())),
-                compactedPath,
-                cancellationToken);
-
-            var newFileSize = new FileInfo(compactedPath).Length;
-
-            // 3. Dispose readers BEFORE deleting — on Windows a file cannot be deleted
-            // while an open FileStream holds a handle to it.
-            foreach (var reader in readers) reader.Dispose();
-            readers.Clear();
-
-            // 4. Register the compacted file in the next level (grows the list if needed).
-            var nextLevelIndex = levelIndex + 1;
-            AddFileToLevel(_sstLevels, new SstFileInfo(compactedPath, nextLevelName, newFileSize));
-
-            // 5. Delete source files (handles are already closed in step 3).
-            foreach (var file in _sstLevels[levelIndex])
-                _sst.Delete(file.FilePath);
-            _sstLevels[levelIndex].Clear();
-
-            // Record metrics after compaction
-            if (_metrics is not null)
-                _metrics.RecordCompaction(levelName, timer.ElapsedMs, BuildLevelSnapshots(_sstLevels));
-
-            // 6. Cascade: check if the next level now exceeds its target.
-            for (var nextIndex = nextLevelIndex; nextIndex < _sstLevels.Count; nextIndex++) {
-                if (EstimateLevelSize(nextIndex) >= GetLevelTarget(nextIndex))
-                    await CompactLevelAsync(nextIndex, cancellationToken);
+        /// <summary>
+        /// Merges all source SST files into a single output file. Safe to run off the actor thread;
+        /// reads only the immutable source file snapshot, touches no shared state.
+        /// </summary>
+        public async ValueTask RunAsync(CancellationToken cancellationToken) {
+            var readers = new List<ISstReader<TKey>>();
+            try {
+                readers.AddRange(sourceFiles.Select(file => store._sst.OpenReader(file.FilePath)));
+                await store._sst.WriteAsync(
+                    MergeAll(readers.Select(r => r.Scan())),
+                    outputPath,
+                    cancellationToken
+                );
+            } finally {
+                foreach (var reader in readers)
+                    reader.Dispose();
             }
-        } finally {
-            // Safety net: readers.Clear() in step 3 makes this a no-op in the happy path.
-            foreach (var reader in readers) reader.Dispose();
+
+            var nextLevel = levelIndex + 2; // levelIndex 0 = L1 → nextLevel 2 = L2
+            _merged = new SstFileInfo(outputPath, nextLevel, new FileInfo(outputPath).Length);
+        }
+
+        /// <summary>
+        /// Registers the compacted file, removes exactly the source files from the level, and deletes
+        /// them from disk. Must be called on the actor thread.
+        /// </summary>
+        /// <remarks>
+        /// Only the files captured at plan time are removed — not the entire level. A flush that added
+        /// a new file to this level while the compaction ran must not be discarded (fixes P5).
+        /// </remarks>
+        internal ValueTask CompleteAsync(CancellationToken cancellationToken) {
+            AddFileToLevel(store._sstLevels, _merged);
+            
+            foreach (var source in sourceFiles)
+                store._sstLevels[levelIndex].Remove(source);
+
+            foreach (var source in sourceFiles)
+                store._sst.Delete(source.FilePath);
+
+            store._metrics?.RecordCompaction($"L{levelIndex + 1}", timer.ElapsedMs, BuildLevelSnapshots(store._sstLevels));
+
+            return ValueTask.CompletedTask;
         }
     }
 
     /// <summary>
-    /// Calculates the size target for a given level.
-    /// Target = <c>BaseLevelSizeBytes × LevelSizeMultiplier^levelIndex</c>.
-    /// Uses integer exponentiation to avoid the precision loss of <see cref="Math.Pow"/>.
-    /// Returns <see cref="long.MaxValue"/> on overflow so the level is never considered full.
+    /// Finds the first SST level that exceeds its size target and returns a <see cref="CompactionJob"/>
+    /// for it, or <see langword="null"/> if all levels are within their targets.
     /// </summary>
+    /// <remarks>
+    /// Captures the source file list as an immutable snapshot on the actor thread so that
+    /// <see cref="CompactionJob.RunAsync"/> can run off-thread without racing with concurrent
+    /// flushes that may add new files to the same level.
+    /// </remarks>
+    internal CompactionJob? PlanCompaction() {
+        for (var i = 0; i < _sstLevels.Count; i++) {
+            if (_sstLevels[i].Count == 0) continue;
+            if (EstimateLevelSize(i) < GetLevelTarget(i)) continue;
+
+            var timer = OperationTimer.Start();
+            var nextLevel = i + 2;
+            var outputPath = Path.Combine(_dataDirectory, $"{DateTimeOffset.UtcNow.Ticks:D19}_L{nextLevel}.sst");
+            return new CompactionJob(this, i, _sstLevels[i].ToList(), outputPath, timer);
+        }
+        return null;
+    }
+
     long GetLevelTarget(int levelIndex) {
         try {
             checked {
@@ -85,10 +91,6 @@ public sealed partial class LsmStore<TKey> {
 
     long EstimateLevelSize(int levelIndex) => _sstLevels[levelIndex].Sum(f => f.SizeBytes);
 
-    /// <summary>
-    /// k-way merge of multiple sorted SST streams via a min-heap.
-    /// Each stream must already be sorted in ascending key order.
-    /// </summary>
     static IEnumerable<KeyValuePair<TKey, ReadOnlyMemory<byte>?>> MergeAll(
         IEnumerable<IEnumerable<KeyValuePair<TKey, ReadOnlyMemory<byte>?>>> sources) {
         var pq = new PriorityQueue<(

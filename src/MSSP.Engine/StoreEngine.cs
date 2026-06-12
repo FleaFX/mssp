@@ -27,7 +27,13 @@ sealed partial class StoreEngine(ILog<WalRecord> log, LsmStore<EventKey> store, 
     readonly CancellationTokenSource _cts = new();
     readonly SubscriptionBus _subscriptionBus = new();
 
-    FlushPipeline? _flush;
+    JobPipeline<LsmStore<EventKey>.FlushJob>? _flush;
+    JobPipeline<LsmStore<EventKey>.CompactionJob>? _compaction;
+    // Incremented before a job is enqueued, decremented after its actor-thread completion
+    // (HandleFlushCompletedAsync / HandleCompactionCompletedAsync) finishes — including any
+    // cascade it triggers. Written only on the actor thread via Interlocked; Volatile.Read
+    // in IsMaintenanceIdle ensures cross-thread visibility without a volatile declaration.
+    int _maintenanceInFlight;
     ulong _currentPosition = (ulong)startPosition;
     long _nextPosition = startPosition;
     Task? _actorTask;
@@ -39,11 +45,20 @@ sealed partial class StoreEngine(ILog<WalRecord> log, LsmStore<EventKey> store, 
     public GlobalPosition CurrentPosition => new(_currentPosition);
 
     /// <summary>
+    /// <see langword="true"/> when no flush or compaction job is pending or being processed.
+    /// Becomes <see langword="false"/> when a job is enqueued and only returns to
+    /// <see langword="true"/> once the actor has finished its completion phase (including any
+    /// cascade). Intended for test polling; not a synchronisation primitive.
+    /// </summary>
+    internal bool IsMaintenanceIdle => Volatile.Read(ref _maintenanceInFlight) == 0;
+
+    /// <summary>
     /// Starts the actor loop and the committed-batch reader task.
     /// Must be called once after construction and before any <see cref="AppendAsync"/> calls.
     /// </summary>
     public StoreEngine Start() {
-        _flush = new FlushPipeline((job, error) => _mailbox.Writer.TryWrite(new FlushCompleted(job, error)), _cts.Token).Start();
+        _flush = new JobPipeline<LsmStore<EventKey>.FlushJob>((job, error) => _mailbox.Writer.TryWrite(new FlushCompleted(job, error)), _cts.Token).Start();
+        _compaction = new JobPipeline<LsmStore<EventKey>.CompactionJob>((job, error) => _mailbox.Writer.TryWrite(new CompactionCompleted(job, error)), _cts.Token).Start();
         (_actorTask, _batchReaderTask) = (RunActorAsync(_cts.Token), RunCommittedBatchReaderAsync(_cts.Token));
         return this;
     }
@@ -66,6 +81,7 @@ sealed partial class StoreEngine(ILog<WalRecord> log, LsmStore<EventKey> store, 
                     AppendCommand append => HandleAppendAsync(append, cancellationToken),
                     CommittedBatch batch => HandleCommittedBatchAsync(batch, cancellationToken),
                     FlushCompleted fc => HandleFlushCompletedAsync(fc, cancellationToken),
+                    CompactionCompleted cc => HandleCompactionCompletedAsync(cc, cancellationToken),
                     CaptureSnapshotCommand snap => HandleCaptureSnapshot(snap),
                     OpenBackupStreamsCommand backup => HandleOpenBackupStreams(backup),
                     ReloadSnapshotCommand reload => HandleReloadSnapshot(reload, cancellationToken),
@@ -101,6 +117,7 @@ sealed partial class StoreEngine(ILog<WalRecord> log, LsmStore<EventKey> store, 
             entry.Reply.TrySetCanceled();
         _subscriptionBus.CompleteAll();
         if (_flush is not null) await _flush.DisposeAsync();
+        if (_compaction is not null) await _compaction.DisposeAsync();
         subscriptionLog.Dispose();
         store.Dispose();
         _cts.Dispose();

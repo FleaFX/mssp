@@ -293,8 +293,7 @@ public class EmbeddedMsspClientTests : IAsyncLifetime {
                 Event("Bar", new string('x', 64))
             ]);
 
-            // Flush I/O runs in the background after the append commits, so the SST appears asynchronously.
-            await WaitForConditionAsync(() => Directory.EnumerateFiles(_dataDir, "*.sst").Any());
+            await _tinyClient.WaitForMaintenanceIdleAsync(TestContext.Current.CancellationToken);
 
             Directory.EnumerateFiles(_dataDir, "*.sst").Should().HaveCount(1);
         }

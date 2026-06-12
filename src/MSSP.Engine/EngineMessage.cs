@@ -78,6 +78,15 @@ sealed record FlushCompleted(
 ) : EngineMessage;
 
 /// <summary>
+/// Posted by the background compaction task when <see cref="Storage.LsmStore{TKey}.CompactionJob.RunAsync"/> finishes.
+/// The actor loop calls <see cref="Storage.LsmStore{TKey}.CompactionJob.CompleteAsync"/> on receipt.
+/// </summary>
+sealed record CompactionCompleted(
+    LsmStore<EventKey>.CompactionJob Job,
+    Exception? Error = null
+) : EngineMessage;
+
+/// <summary>
 /// Returned by <see cref="RegisterSubscriptionCommand"/>. Contains everything the subscriber
 /// needs to perform catch-up and then switch to the live channel.
 /// </summary>

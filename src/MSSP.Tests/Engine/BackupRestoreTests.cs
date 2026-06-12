@@ -53,6 +53,7 @@ public class BackupRestoreTests : IAsyncLifetime {
             for (var i = 0; i < 20; i++)
                 await _client.AppendAsync($"stream-{i}", StreamRevision.NoStream, [Event("Foo", $"payload-{i}")], TestContext.Current.CancellationToken);
 
+            await _client.WaitForMaintenanceIdleAsync(TestContext.Current.CancellationToken);
             await _client.CreateBackupAsync(_backupPath, TestContext.Current.CancellationToken);
 
             using var zip = ZipFile.OpenRead(_backupPath);

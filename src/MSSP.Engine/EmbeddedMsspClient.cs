@@ -21,6 +21,11 @@ public sealed partial class EmbeddedMsspClient(ILog<WalRecord> log, LsmStore<Eve
         _engine.ReloadSnapshotAsync(stagingDirectory, cancellationToken);
 
     /// <summary>
+    /// <see langword="true"/> when no flush or compaction job is pending or in-flight.
+    /// </summary>
+    internal bool IsMaintenanceIdle => _engine.IsMaintenanceIdle;
+
+    /// <summary>
     /// The <see cref="GlobalPosition"/> of the most recently applied event on this node.
     /// On a follower, this reflects entries received via Raft replication.
     /// </summary>

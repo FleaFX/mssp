@@ -39,17 +39,28 @@ public class LsmStoreTests : IAsyncLifetime {
         captured.Add(((ReadOnlyMemory<byte>)WalRecord.From(key, value)).ToArray());
 
     /// <summary>
-    /// Replicates the pre-refactor behaviour of WriteAsync: flushes first if the MemTable would
-    /// overflow, then applies the entry. Tests that test LsmStore directly (without the engine
-    /// layer) use this helper so they don't need to manage the three-phase flush themselves.
+    /// Replicates the engine behaviour of WriteAsync: flushes if the MemTable would overflow,
+    /// then runs any pending compaction cycles, then applies the entry.
     /// </summary>
     static async ValueTask WriteFlushingIfNeeded(LsmStore<StringKey> store, StringKey key, Memory<byte> value, CancellationToken ct) {
         ReadOnlyMemory<byte> keyBytes = key;
-        if (await store.TryBeginFlushAsync(keyBytes.Length + value.Length, ct) is { } job) {
-            await job.RunAsync(ct);
-            await job.CompleteAsync(ct);
+        if (await store.TryBeginFlushAsync(keyBytes.Length + value.Length, ct) is { } flushJob) {
+            await flushJob.RunAsync(ct);
+            await flushJob.CompleteAsync(ct);
+            await CompactCycleAsync(store, ct);
         }
         await store.WriteAsync(key, value, ct);
+    }
+
+    /// <summary>
+    /// Runs compaction levels until no level exceeds its target, mirroring the engine's
+    /// <c>MaybeStartCompaction</c> cascade triggered after each flush or compaction.
+    /// </summary>
+    static async ValueTask CompactCycleAsync(LsmStore<StringKey> store, CancellationToken ct) {
+        while (store.PlanCompaction() is { } plan) {
+            await plan.RunAsync(ct);
+            await plan.CompleteAsync(ct);
+        }
     }
 
     public class OpenAsync : LsmStoreTests {
@@ -173,7 +184,7 @@ public class LsmStoreTests : IAsyncLifetime {
             // With large baseLevelSizeBytes, compaction won't be triggered
             await _store.WriteAsync(new StringKey("a"), Bytes("1"), TestContext.Current.CancellationToken);
 
-            await _store.CompactAsync(TestContext.Current.CancellationToken);
+            await CompactCycleAsync(_store, TestContext.Current.CancellationToken);
 
             Directory.EnumerateFiles(_dataDir, "*.sst").Should().BeEmpty();
             _store.ScanAllFrom(new StringKey("")).Select(e => e.Key.Value).Should().Equal("a");
@@ -209,7 +220,7 @@ public class LsmStoreTests : IAsyncLifetime {
                 await WriteFlushingIfNeeded(store, new StringKey($"k{i}"), Bytes("v"), TestContext.Current.CancellationToken);
             }
 
-            await store.CompactAsync(TestContext.Current.CancellationToken);
+            await CompactCycleAsync(store, TestContext.Current.CancellationToken);
 
             store.ScanAllFrom(new StringKey(""))
                  .Select(e => e.Key.Value)
