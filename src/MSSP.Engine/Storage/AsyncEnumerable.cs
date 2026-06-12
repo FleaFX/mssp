@@ -1,6 +1,6 @@
 using System.Runtime.CompilerServices;
 
-namespace MSSP.Storage;
+namespace MSSP.Engine.Storage;
 
 static class StorageAsyncEnumerable {
     /// <summary>

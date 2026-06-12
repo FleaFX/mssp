@@ -1,4 +1,4 @@
-namespace MSSP.Storage;
+namespace MSSP.Engine.Storage;
 
 /// <summary>
 /// Abstraction over a key-value store that supports append writes and forward scans.

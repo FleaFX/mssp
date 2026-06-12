@@ -1,4 +1,4 @@
-namespace MSSP.Storage;
+namespace MSSP.Engine.Storage;
 
 /// <summary>
 /// Default <see cref="ISstAccess{TKey}"/> that reads and writes SST files directly on the local filesystem.

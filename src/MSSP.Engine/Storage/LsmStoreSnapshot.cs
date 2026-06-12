@@ -1,4 +1,4 @@
-namespace MSSP.Storage;
+namespace MSSP.Engine.Storage;
 
 /// <summary>
 /// A read-only snapshot of a <see cref="LsmStore{TKey}"/> at a point in time.

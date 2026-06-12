@@ -1,6 +1,6 @@
 using System.Buffers;
 
-namespace MSSP.Storage;
+namespace MSSP.Engine.Storage;
 
 class LogIndex : IDisposable, IAsyncEnumerable<Index> {
     readonly Index[] _table;

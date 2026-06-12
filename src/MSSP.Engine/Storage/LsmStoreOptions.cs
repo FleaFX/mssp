@@ -1,4 +1,4 @@
-namespace MSSP.Storage;
+namespace MSSP.Engine.Storage;
 
 /// <summary>
 /// Invoked after each MemTable flush, e.g. to rotate the WAL so flushed records are no longer replayed on recovery.

@@ -1,6 +1,6 @@
 using System.Text.RegularExpressions;
 
-namespace MSSP.Storage;
+namespace MSSP.Engine.Storage;
 
 /// <summary>Represents an SST file with its level and size.</summary>
 /// <param name="FilePath">The full path to the SST file.</param>

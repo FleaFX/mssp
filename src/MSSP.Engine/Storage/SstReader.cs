@@ -1,6 +1,6 @@
 using System.Buffers.Binary;
 
-namespace MSSP.Storage;
+namespace MSSP.Engine.Storage;
 
 /// <summary>
 /// Reads entries from a stream in the SST file format.

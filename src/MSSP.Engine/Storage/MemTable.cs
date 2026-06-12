@@ -1,7 +1,7 @@
 using System.Buffers.Binary;
 using System.Collections;
 
-namespace MSSP.Storage;
+namespace MSSP.Engine.Storage;
 
 /// <summary>
 /// The Level 0 component of the LSM tree. Buffers writes in an ordered in-memory

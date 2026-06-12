@@ -1,4 +1,4 @@
-namespace MSSP.Storage;
+namespace MSSP.Engine.Storage;
 
 static class ExtensionsForRange {
     /// <summary>

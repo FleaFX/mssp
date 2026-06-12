@@ -1,6 +1,6 @@
 using System.Buffers.Binary;
 
-namespace MSSP.Storage;
+namespace MSSP.Engine.Storage;
 
 public sealed partial class LsmStore<TKey> {
     /// <summary>

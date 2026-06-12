@@ -301,6 +301,72 @@ public class EmbeddedMsspClientTests : IAsyncLifetime {
         }
     }
 
+    public class Concurrency : EmbeddedMsspClientTests {
+        [Fact]
+        public async Task ConcurrentNoStreamAppends_ToSameStream_ExactlyOneSucceeds() {
+            const int concurrency = 10;
+            var exceptions = new Exception?[concurrency];
+
+            await Task.WhenAll(Enumerable.Range(0, concurrency).Select(async i => {
+                try {
+                    await _client.AppendAsync("stream-a", StreamRevision.NoStream, [Event("Foo", "x")]);
+                } catch (Exception ex) {
+                    exceptions[i] = ex;
+                }
+            }));
+
+            exceptions.Count(e => e is null).Should().Be(1, "exactly one concurrent NoStream append must succeed");
+            exceptions.Count(e => e is OptimisticConcurrencyException).Should().Be(concurrency - 1);
+        }
+    }
+
+    public class AfterDispose {
+        static EventData Event(string type, string payload) =>
+            new(type, System.Text.Encoding.UTF8.GetBytes(payload));
+
+        [Fact]
+        public async Task AppendAsync_ThrowsObjectDisposedException() {
+            var dir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+            var client = await EmbeddedMsspClient.OpenAsync(dir);
+            await client.DisposeAsync();
+            try { Directory.Delete(dir, recursive: true); } catch { }
+
+            var act = async () => await client.AppendAsync("stream-a", StreamRevision.NoStream, [Event("Foo", "x")]);
+
+            await act.Should().ThrowAsync<ObjectDisposedException>();
+        }
+    }
+
+    public class ReloadSnapshot : EmbeddedMsspClientTests {
+        [Fact]
+        public async Task AfterReload_PositionAdvancesBeyondSnapshotPoint() {
+            await _client.AppendAsync("stream-a", StreamRevision.NoStream, [Event("A", "1"), Event("B", "2")]);
+            var positionBeforeReload = _client.CurrentPosition;
+
+            var stagingDir = Path.Combine(_dataDir, "snapshot-staging");
+            Directory.CreateDirectory(stagingDir);
+            await _client.ReloadSnapshotAsync(stagingDir, TestContext.Current.CancellationToken);
+
+            await _client.AppendAsync("stream-b", StreamRevision.NoStream, [Event("C", "3")]);
+
+            _client.CurrentPosition.Value.Should().BeGreaterThan(positionBeforeReload.Value);
+        }
+
+        [Fact]
+        public async Task AfterReload_RevisionCacheIsCleared() {
+            await _client.AppendAsync("stream-a", StreamRevision.NoStream, [Event("A", "1")]);
+
+            var stagingDir = Path.Combine(_dataDir, "snapshot-staging");
+            Directory.CreateDirectory(stagingDir);
+            await _client.ReloadSnapshotAsync(stagingDir, TestContext.Current.CancellationToken);
+
+            // After reload from empty snapshot the store has no data and the revision cache is cleared.
+            // A NoStream append to stream-a must succeed (not OCC).
+            var act = async () => await _client.AppendAsync("stream-a", StreamRevision.NoStream, [Event("B", "2")]);
+            await act.Should().NotThrowAsync();
+        }
+    }
+
     public class Recovery {
         static EventData Event(string type, string payload) =>
             new(type, System.Text.Encoding.UTF8.GetBytes(payload));

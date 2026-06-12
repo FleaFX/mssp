@@ -1,4 +1,4 @@
-namespace MSSP.Storage;
+namespace MSSP.Engine.Storage;
 
 // SST binary format:
 //   Data section   — sequential entries, each: marker(1) + keyLen(4) + keyBytes + [valueLen(4) + valueBytes]

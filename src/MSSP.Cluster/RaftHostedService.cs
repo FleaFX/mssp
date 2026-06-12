@@ -2,8 +2,8 @@ using System.Buffers.Binary;
 using System.Diagnostics.Metrics;
 using Microsoft.Extensions.Hosting;
 using MSSP.Engine;
+using MSSP.Engine.Storage;
 using MSSP.Raft;
-using MSSP.Storage;
 
 namespace MSSP.Cluster;
 

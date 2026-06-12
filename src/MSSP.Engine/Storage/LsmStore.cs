@@ -1,4 +1,4 @@
-namespace MSSP.Storage;
+namespace MSSP.Engine.Storage;
 
 /// <summary>
 /// Log-Structured Merge-tree store. Provides keyed storage backed by an in-memory

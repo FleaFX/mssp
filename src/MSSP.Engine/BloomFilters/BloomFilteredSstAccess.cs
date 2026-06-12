@@ -1,6 +1,6 @@
-using MSSP.Storage;
+using MSSP.Engine.Storage;
 
-namespace MSSP.BloomFilters;
+namespace MSSP.Engine.BloomFilters;
 
 /// <summary>
 /// Decorator over <see cref="ISstAccess{TKey}"/> that maintains a bloom filter sidecar

@@ -1,6 +1,6 @@
 using System.Diagnostics.Metrics;
 
-namespace MSSP.Storage;
+namespace MSSP.Engine.Storage;
 
 /// <summary>
 /// Metrics for the LSM store component. Tracks MemTable size, flush operations,

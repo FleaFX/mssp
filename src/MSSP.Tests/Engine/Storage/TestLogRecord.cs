@@ -1,5 +1,3 @@
-using MSSP.Storage;
-
 namespace MSSP.Engine.Storage;
 
 class TestLogRecord(byte[] payload) : ILogRecord<TestLogRecord> {

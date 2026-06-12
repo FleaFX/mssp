@@ -2,7 +2,7 @@ using System.Buffers;
 using System.Buffers.Binary;
 using System.IO.Hashing;
 
-namespace MSSP.Storage;
+namespace MSSP.Engine.Storage;
 
 // On-disk format: sequential length-prefixed records.
 // Each record: dataLen(4, little-endian) + data(dataLen bytes) + crc32(4, little-endian)

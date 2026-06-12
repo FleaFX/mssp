@@ -1,6 +1,6 @@
-using MSSP.Storage;
+using MSSP.Engine.Storage;
 
-namespace MSSP.BloomFilters;
+namespace MSSP.Engine.BloomFilters;
 
 /// <summary>
 /// Decorator over <see cref="ISstReader{TKey}"/> that skips disk I/O for point lookups

@@ -1,6 +1,6 @@
 using System.Buffers.Binary;
 
-namespace MSSP.Storage;
+namespace MSSP.Engine.Storage;
 
 /// <summary>
 /// A single record in the write-ahead log; wraps an opaque byte payload.

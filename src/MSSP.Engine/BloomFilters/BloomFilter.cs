@@ -1,6 +1,6 @@
 using System.Buffers.Binary;
 
-namespace MSSP.BloomFilters;
+namespace MSSP.Engine.BloomFilters;
 
 /// <summary>
 /// A space-efficient probabilistic data structure that tests set membership.

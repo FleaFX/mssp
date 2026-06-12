@@ -1,7 +1,7 @@
 using System.Buffers.Binary;
 using FluentAssertions;
 using MSSP.Engine;
-using MSSP.Storage;
+using MSSP.Engine.Storage;
 using MSSP.Raft;
 
 namespace MSSP.Cluster;

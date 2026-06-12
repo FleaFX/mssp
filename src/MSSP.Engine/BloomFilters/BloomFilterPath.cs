@@ -1,4 +1,4 @@
-namespace MSSP.BloomFilters;
+namespace MSSP.Engine.BloomFilters;
 
 /// <summary>
 /// The path to the bloom filter sidecar file (<c>.bf</c>) that corresponds to a given SST file.

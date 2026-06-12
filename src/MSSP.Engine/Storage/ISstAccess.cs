@@ -1,4 +1,4 @@
-namespace MSSP.Storage;
+namespace MSSP.Engine.Storage;
 
 /// <summary>
 /// Abstraction over SST file I/O. Implement and decorate to add cross-cutting behaviour

@@ -1,6 +1,6 @@
 using System.Numerics;
 
-namespace MSSP.Storage;
+namespace MSSP.Engine.Storage;
 
 /// <summary>
 /// Represents a log record's offset within the log.
