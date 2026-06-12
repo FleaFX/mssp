@@ -1,7 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using MSSP;
-using MSSP.Embedded;
+using MSSP.Engine;
 
 // Start a generic .NET host with the embedded MSSP store.
 var builder = Host.CreateApplicationBuilder(args);

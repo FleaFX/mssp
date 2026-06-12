@@ -6,7 +6,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using MSSP.Client;
-using MSSP.Embedded;
+using MSSP.Engine;
 using MSSP.Server;
 using MsspGrpcClient = MSSP.Grpc.Mssp.MsspClient;
 
@@ -42,7 +42,7 @@ public class RemoteMsspClientTests : IAsyncLifetime {
     public async ValueTask DisposeAsync() {
         _channel?.Dispose();
         if (_app is not null) await _app.DisposeAsync();
-        _embedded?.Dispose();
+        if (_embedded is not null) await _embedded.DisposeAsync();
         if (Directory.Exists(_dataDir))
             Directory.Delete(_dataDir, recursive: true);
     }

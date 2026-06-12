@@ -1,6 +1,6 @@
 using System.Text.Json;
 using System.Threading.Channels;
-using MSSP.Storage;
+using MSSP.Engine.Storage;
 using MSSP.Raft;
 
 namespace MSSP.Cluster;
@@ -38,8 +38,7 @@ sealed class RaftLogStateMachine : IRaftStateMachine {
     /// <summary>
     /// Advances <see cref="LastAppliedIndex"/> to <paramref name="index"/> without writing
     /// a WAL record to the committed-records channel. Used during startup replay, where WAL
-    /// records are applied directly to the store via <see cref="LogDrivenStore{TKey}.ReplayAsync"/>
-    /// instead of going through the channel.
+    /// records are applied directly to the store during startup replay.
     /// </summary>
     internal void MarkApplied(ulong index) =>
         Volatile.Write(ref _lastAppliedIndex, index);

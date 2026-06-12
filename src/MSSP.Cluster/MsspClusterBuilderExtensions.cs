@@ -1,5 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
-using MSSP.Embedded;
+using MSSP.Engine;
 using System.Diagnostics.Metrics;
 
 namespace MSSP.Cluster;

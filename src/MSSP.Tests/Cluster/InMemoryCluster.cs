@@ -1,6 +1,6 @@
-using MSSP.Embedded;
+using MSSP.Engine;
+using MSSP.Engine.Storage;
 using MSSP.Raft;
-using MSSP.Storage;
 
 namespace MSSP.Cluster;
 
@@ -36,9 +36,7 @@ sealed class InMemoryCluster : IAsyncDisposable {
             var store = await LsmStore<EventKey>.OpenAsync(lsmOptions, AsyncEnumerable.Empty<ReadOnlyMemory<byte>>(), cancellationToken);
 
             var subLog = SubscriptionLog.Open(dataDir, SubscriptionLogFormat.FullPayload, 64 * 1024 * 1024);
-            var pipeline = new SubscriptionPipeline(store, subLog);
-            var logDriven = LogDrivenStore<EventKey>.Create(raftLog, pipeline, memTableCapacityBytes);
-            var local = new EmbeddedMsspClient(store: new GlobalPositionDecorator(logDriven, pipeline), subscriptions: pipeline);
+            var local = new EmbeddedMsspClient(raftLog, store, subLog, dataDir);
             var client = new ClusteredMsspClient(node, local, []);
             cluster._nodes.Add(new NodeHandle(node, client, local, dataDir));
         }
@@ -64,7 +62,7 @@ sealed class InMemoryCluster : IAsyncDisposable {
             await h.Node.DisposeAsync();
         foreach (var h in _nodes) {
             h.Client.Dispose();
-            h.Local.Dispose();
+            await h.Local.DisposeAsync();
             if (Directory.Exists(h.DataDir))
                 Directory.Delete(h.DataDir, recursive: true);
         }

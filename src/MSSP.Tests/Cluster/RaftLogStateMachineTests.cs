@@ -1,6 +1,5 @@
 using FluentAssertions;
 using MSSP.Raft;
-using MSSP.Storage;
 
 namespace MSSP.Cluster;
 

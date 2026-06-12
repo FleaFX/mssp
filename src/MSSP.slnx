@@ -6,11 +6,11 @@
     </Project>
     <Project Path="Samples/ClusterSample/ClusterSample.csproj">
       <BuildDependency Project="MSSP.Cluster/MSSP.Cluster.csproj" />
-      <BuildDependency Project="MSSP.Embedded/MSSP.Embedded.csproj" />
+      <BuildDependency Project="MSSP.Engine/MSSP.Engine.csproj" />
       <BuildDependency Project="MSSP.Server/MSSP.Server.csproj" />
     </Project>
     <Project Path="Samples/EmbeddedSample/EmbeddedSample.csproj">
-      <BuildDependency Project="MSSP.Embedded/MSSP.Embedded.csproj" />
+      <BuildDependency Project="MSSP.Engine/MSSP.Engine.csproj" />
     </Project>
     <Project Path="Samples/ServerSample/ServerSample.csproj" />
   </Folder>
@@ -20,12 +20,8 @@
     <File Path="../.github/workflows/publish.yml" />
     <File Path="Directory.Build.props" />
   </Folder>
-  <Folder Name="/Storage/">
-    <Project Path="MSSP.BloomFilters/MSSP.BloomFilters.csproj" />
-    <Project Path="MSSP.Storage/MSSP.Storage.csproj" />
-  </Folder>
-  <Folder Name="/Embedded/">
-    <Project Path="MSSP.Embedded/MSSP.Embedded.csproj" />
+  <Folder Name="/Engine/">
+    <Project Path="MSSP.Engine/MSSP.Engine.csproj" />
   </Folder>
   <Folder Name="/Network/">
     <Project Path="MSSP.Client/MSSP.Client.csproj" />

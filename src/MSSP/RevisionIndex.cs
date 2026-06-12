@@ -29,6 +29,11 @@ public sealed class RevisionIndex {
     public void Remove(string streamId) => _revisions.Remove(streamId);
 
     /// <summary>
+    /// Removes all cached revisions. Called after a snapshot install resets the store.
+    /// </summary>
+    public void Clear() => _revisions.Clear();
+
+    /// <summary>
     /// Returns <see langword="true"/> if the current state satisfies the <paramref name="expected"/> revision constraint.
     /// </summary>
     public bool CheckConcurrency(string streamId, StreamRevision expected) {

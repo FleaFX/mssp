@@ -1,8 +1,9 @@
-using Microsoft.Extensions.Hosting;
-using MSSP.Embedded;
-using MSSP.Storage;
-using MSSP.Raft;
+using System.Buffers.Binary;
 using System.Diagnostics.Metrics;
+using Microsoft.Extensions.Hosting;
+using MSSP.Engine;
+using MSSP.Engine.Storage;
+using MSSP.Raft;
 
 namespace MSSP.Cluster;
 
@@ -15,11 +16,10 @@ sealed class RaftHostedService(
     MsspOptions msspOptions,
     MsspClusterOptions clusterOptions,
     IMeterFactory? meterFactory = null
-) : IHostedService, IDisposable {
+) : IHostedService, IAsyncDisposable {
     SegmentedRaftLog? _raftLog;
     RaftLog? _log;
     RaftLogStateMachine? _stateMachine;
-    LsmStore<EventKey>? _lsmStore;
     EmbeddedMsspClient? _local;
     ClusteredMsspClient? _client;
     RaftNode? _node;
@@ -57,7 +57,6 @@ sealed class RaftHostedService(
         var dataDir = msspOptions.DataDirectory;
         var checkpointIndex = await RaftLogStateMachine.ReadCheckpointIndexAsync(dataDir, cancellationToken);
 
-        // Create metrics if meter factory is available
         if (meterFactory is not null) {
             _raftMetrics = new RaftMetrics(meterFactory);
             _lsmMetrics = new LsmStoreMetrics(meterFactory, msspOptions.MemTableCapacityBytes);
@@ -84,42 +83,35 @@ sealed class RaftHostedService(
         var capturedStateMachine = _stateMachine;
         var capturedRaftLog = _raftLog;
 
-        _lsmStore = await LsmStore<EventKey>.OpenAsync(
+        var lsmStore = await LsmStore<EventKey>.OpenAsync(
             options: new LsmStoreOptions<EventKey>(dataDir, msspOptions.MemTableCapacityBytes, OnFlushed, BaseLevelSizeBytes: -1, LevelSizeMultiplier: 10, Metrics: _lsmMetrics),
             walRecords: AsyncEnumerable.Empty<ReadOnlyMemory<byte>>(),
             cancellationToken: cancellationToken);
+
         var subscriptionLog = SubscriptionLog.Open(
             dataDir,
             msspOptions.SubscriptionLogFormat,
             msspOptions.SubscriptionLogSegmentSizeBytes);
-        var pipeline = new SubscriptionPipeline(_lsmStore, subscriptionLog);
-        var logDrivenStore = LogDrivenStore<EventKey>.Create(_log, pipeline, msspOptions.MemTableCapacityBytes);
-        _local = new EmbeddedMsspClient(
-            store: new GlobalPositionDecorator(logDrivenStore, pipeline),
-            subscriptions: pipeline,
-            meterFactory: meterFactory);
+        var currentPosition = subscriptionLog.GetLastPosition().Value;
 
-        _client = new ClusteredMsspClient(_node, _local, clusterOptions.Peers);
-
-        // wire snapshot callbacks: leader serialises SST files; follower reloads them
-        var capturedLsmStore = _lsmStore;
-        _stateMachine.SnapshotProvider  = ct => ValueTask.FromResult(LsmSnapshot.Serialize(dataDir));
-        _stateMachine.SnapshotInstaller = InstallSnapshotAsync;
-
-        // Replay committed Raft log entries that were not yet reflected in the SST files.
-        // Entries are applied directly via LogDrivenStore.ReplayAsync (bypassing the channel)
-        // so that replay entries can never prematurely dequeue a pending TCS belonging to a
-        // concurrent real-write that arrives just as the Raft node starts.
+        // Replay committed Raft log entries not yet reflected in the SST files.
         for (var i = checkpointIndex + 1; i <= _raftLog.LastIndex; i++) {
             var entry = await _raftLog.GetEntryAsync(i, cancellationToken);
             if (entry.Type == RaftLogEntryType.Command)
-                await logDrivenStore.ReplayAsync(entry.Payload, cancellationToken);
+                currentPosition = await ApplyRaftEntryAsync(lsmStore, subscriptionLog, currentPosition, entry.Payload, cancellationToken);
             _stateMachine.MarkApplied(entry.Index);
         }
+        await subscriptionLog.FlushAsync(cancellationToken);
+
+        _local = new EmbeddedMsspClient(_log!, lsmStore, subscriptionLog, dataDir, meterFactory);
+        _client = new ClusteredMsspClient(_node!, _local, clusterOptions.Peers);
+
+        // wire snapshot callbacks: leader serialises SST files; follower reloads them via engine
+        _stateMachine.SnapshotProvider  = ct => ValueTask.FromResult(LsmSnapshot.Serialize(dataDir));
+        _stateMachine.SnapshotInstaller = InstallSnapshotAsync;
 
         await _node.StartAsync(cancellationToken);
 
-        // Start background task to update Raft metrics
         if (_raftMetrics is not null) {
             _metricsCts = new CancellationTokenSource();
             _metricsTask = Task.Run(() => UpdateRaftMetricsLoopAsync(_metricsCts.Token), cancellationToken);
@@ -140,40 +132,60 @@ sealed class RaftHostedService(
             var stagingDir = Path.Combine(dataDir, "snapshot-staging");
             try {
                 LsmSnapshot.Deserialize(data, stagingDir);
-                await capturedLsmStore.ReloadAsync(stagingDir, token);
+                await _local!.ReloadSnapshotAsync(stagingDir, token);
+                await RaftLogStateMachine.WriteCheckpointAsync(dataDir, lastIncludedIndex, token);
             } finally {
                 if (Directory.Exists(stagingDir))
                     Directory.Delete(stagingDir, recursive: true);
             }
-            await RaftLogStateMachine.WriteCheckpointAsync(dataDir, lastIncludedIndex, token);
         }
+    }
+
+    static async ValueTask<ulong> ApplyRaftEntryAsync(
+        LsmStore<EventKey> store,
+        SubscriptionLog subscriptionLog,
+        ulong currentPosition,
+        ReadOnlyMemory<byte> payload,
+        CancellationToken ct) {
+
+        var span = payload.Span;
+        if (span.Length < 5) return currentPosition;
+        var keyLen = BinaryPrimitives.ReadInt32LittleEndian(span[1..]);
+        if (keyLen < 0 || 5 + keyLen > span.Length) return currentPosition;
+
+        EventKey key = payload.Slice(5, keyLen);
+        Memory<byte> value = payload[(5 + keyLen)..].ToArray();
+        var pos = value.Length >= 8 ? BinaryPrimitives.ReadUInt64LittleEndian(value.Span[^8..]) : 0UL;
+
+        await store.WriteAsync(key, value, ct);
+        if (pos > currentPosition) {
+            currentPosition = pos;
+            await subscriptionLog.AppendAsync(new GlobalPosition(pos), key, value, ct);
+        }
+        return currentPosition;
     }
 
     /// <inheritdoc/>
     public async Task StopAsync(CancellationToken cancellationToken) {
-        if (_node is not null) {
-            // Pass the host's shutdown token so the drain wait respects the shutdown deadline.
-            // DisposeAsync is called afterwards to release _cts and _snapshotBuffer regardless.
+        if (_node is not null)
             await _node.StopAsync(cancellationToken);
-            await _node.DisposeAsync();
-        }
-        Dispose();
+        await DisposeAsync();
     }
 
     /// <inheritdoc/>
-    public void Dispose() {
+    public async ValueTask DisposeAsync() {
         if (_disposed) return;
         _disposed = true;
+        _metricsCts?.Cancel();
+        if (_metricsTask is not null) await _metricsTask;
         _client?.Dispose();
-        _local?.Dispose();
-        // _node is IAsyncDisposable; disposed in StopAsync via DisposeAsync()
+        if (_local is not null) await _local.DisposeAsync();
+        if (_node is not null) await _node.DisposeAsync();
         _transport?.Dispose();
         _raftLog?.Dispose();
         _raftMetrics?.Dispose();
         _lsmMetrics?.Dispose();
-        _metricsCts?.Cancel();
         _metricsCts?.Dispose();
-        _metricsTask?.Wait();
     }
 
     async Task UpdateRaftMetricsLoopAsync(CancellationToken cancellationToken) {
@@ -183,8 +195,7 @@ sealed class RaftHostedService(
                 await Task.Delay(100, cancellationToken); // Update every 100ms
                 if (_node is not null && _raftMetrics is not null) {
                     var currentTerm = _node.CurrentTerm;
-                    // Detect term change (election occurred)
-                    if (currentTerm > lastTerm) {
+                    if (lastTerm is null || currentTerm > lastTerm) {
                         _raftMetrics.RecordElection();
                     }
                     lastTerm = currentTerm;
