@@ -27,6 +27,7 @@ sealed partial class StoreEngine(ILog<WalRecord> log, LsmStore<EventKey> store, 
     readonly CancellationTokenSource _cts = new();
     readonly SubscriptionBus _subscriptionBus = new();
 
+    FlushPipeline? _flush;
     ulong _currentPosition = (ulong)startPosition;
     long _nextPosition = startPosition;
     Task? _actorTask;
@@ -42,6 +43,7 @@ sealed partial class StoreEngine(ILog<WalRecord> log, LsmStore<EventKey> store, 
     /// Must be called once after construction and before any <see cref="AppendAsync"/> calls.
     /// </summary>
     public StoreEngine Start() {
+        _flush = new FlushPipeline((job, error) => _mailbox.Writer.TryWrite(new FlushCompleted(job, error)), _cts.Token).Start();
         (_actorTask, _batchReaderTask) = (RunActorAsync(_cts.Token), RunCommittedBatchReaderAsync(_cts.Token));
         return this;
     }
@@ -63,6 +65,7 @@ sealed partial class StoreEngine(ILog<WalRecord> log, LsmStore<EventKey> store, 
                 await (message switch {
                     AppendCommand append => HandleAppendAsync(append, cancellationToken),
                     CommittedBatch batch => HandleCommittedBatchAsync(batch, cancellationToken),
+                    FlushCompleted fc => HandleFlushCompletedAsync(fc, cancellationToken),
                     CaptureSnapshotCommand snap => HandleCaptureSnapshot(snap),
                     OpenBackupStreamsCommand backup => HandleOpenBackupStreams(backup),
                     ReloadSnapshotCommand reload => HandleReloadSnapshot(reload, cancellationToken),
@@ -97,6 +100,7 @@ sealed partial class StoreEngine(ILog<WalRecord> log, LsmStore<EventKey> store, 
         while (_pending.TryDequeue(out var entry))
             entry.Reply.TrySetCanceled();
         _subscriptionBus.CompleteAll();
+        if (_flush is not null) await _flush.DisposeAsync();
         subscriptionLog.Dispose();
         store.Dispose();
         _cts.Dispose();

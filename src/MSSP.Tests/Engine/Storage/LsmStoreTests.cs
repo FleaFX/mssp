@@ -45,7 +45,7 @@ public class LsmStoreTests : IAsyncLifetime {
     /// </summary>
     static async ValueTask WriteFlushingIfNeeded(LsmStore<StringKey> store, StringKey key, Memory<byte> value, CancellationToken ct) {
         ReadOnlyMemory<byte> keyBytes = key;
-        if (store.TryBeginFlush(keyBytes.Length + value.Length) is { } job) {
+        if (await store.TryBeginFlushAsync(keyBytes.Length + value.Length, ct) is { } job) {
             await job.RunAsync(ct);
             await job.CompleteAsync(ct);
         }
@@ -276,7 +276,7 @@ public class LsmStoreTests : IAsyncLifetime {
             var snapshot = tinyStore.ScanSnapshotFrom(new StringKey("")).ToList();
 
             // Explicitly flush a,b → SST, then write c to the fresh MemTable
-            var job = tinyStore.BeginFlush();
+            var job = await tinyStore.BeginFlushAsync(TestContext.Current.CancellationToken);
             await job.RunAsync(TestContext.Current.CancellationToken);
             await job.CompleteAsync(TestContext.Current.CancellationToken);
             await tinyStore.WriteAsync(new StringKey("c"), Bytes("3"), TestContext.Current.CancellationToken);

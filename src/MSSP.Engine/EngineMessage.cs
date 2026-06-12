@@ -69,6 +69,15 @@ sealed record ReloadSnapshotCommand(
 ) : EngineMessage;
 
 /// <summary>
+/// Posted by the background flush task when <see cref="Storage.LsmStore{TKey}.FlushJob.RunAsync"/> finishes.
+/// The actor loop calls <see cref="Storage.LsmStore{TKey}.FlushJob.CompleteAsync"/> on receipt.
+/// </summary>
+sealed record FlushCompleted(
+    LsmStore<EventKey>.FlushJob Job,
+    Exception? Error = null
+) : EngineMessage;
+
+/// <summary>
 /// Returned by <see cref="RegisterSubscriptionCommand"/>. Contains everything the subscriber
 /// needs to perform catch-up and then switch to the live channel.
 /// </summary>

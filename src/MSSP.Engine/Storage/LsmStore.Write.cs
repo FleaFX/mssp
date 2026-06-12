@@ -3,7 +3,7 @@ namespace MSSP.Engine.Storage;
 public sealed partial class LsmStore<TKey> {
     /// <summary>
     /// Applies <paramref name="key"/> and <paramref name="value"/> directly to the live MemTable.
-    /// The caller is responsible for calling <see cref="TryBeginFlush"/> and completing the flush first if needed.
+    /// The caller is responsible for calling <see cref="TryBeginFlushAsync"/> and completing the flush first if needed.
     /// </summary>
     public ValueTask WriteAsync(TKey key, Memory<byte> value, CancellationToken cancellationToken) {
         ReadOnlyMemory<byte> keyBytes = key;
