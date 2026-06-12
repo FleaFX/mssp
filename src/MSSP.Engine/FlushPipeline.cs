@@ -106,11 +106,14 @@ sealed class CompactionWorker(ChannelWriter<EngineMessage> actorMailbox, Cancell
             }
         } catch (OperationCanceledException) {
             // normal shutdown
+        } catch (ChannelClosedException) {
+            // normal shutdown — _response completed during disposal
         }
     }
 
     /// <inheritdoc/>
     public async ValueTask DisposeAsync() {
+        _response.Writer.TryComplete();
         try {
             await (_loop ?? Task.CompletedTask);
         } catch {

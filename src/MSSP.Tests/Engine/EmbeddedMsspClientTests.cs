@@ -369,7 +369,7 @@ public class EmbeddedMsspClientTests : IAsyncLifetime {
                 lock (_gate)
                     _releases.Add(release);
                 Interlocked.Increment(ref _started);
-                await release.Task;
+                await release.Task.WaitAsync(cancellationToken);
                 await _inner.WriteAsync(entries, sstPath, cancellationToken);
             }
 

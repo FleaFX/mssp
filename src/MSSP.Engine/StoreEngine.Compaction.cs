@@ -1,3 +1,5 @@
+using System.Runtime.ExceptionServices;
+
 namespace MSSP.Engine;
 
 sealed partial class StoreEngine {
@@ -20,7 +22,7 @@ sealed partial class StoreEngine {
 
     async ValueTask HandleCompactionCompletedAsync(CompactionCompleted msg, CancellationToken cancellationToken) {
         if (msg.Error is OperationCanceledException) return;
-        if (msg.Error is not null) throw msg.Error;
+        if (msg.Error is not null) ExceptionDispatchInfo.Capture(msg.Error).Throw();
         await msg.Job.CompleteAsync(cancellationToken);
         TryFulfillPendingPlanRequest();
     }
