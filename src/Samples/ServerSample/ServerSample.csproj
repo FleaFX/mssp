@@ -8,8 +8,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\MSSP.Engine\MSSP.Engine.csproj" />
-    <ProjectReference Include="..\..\MSSP.Server\MSSP.Server.csproj" />
+    <PackageReference Include="MSSP.Engine" Version="0.8.0" />
+    <PackageReference Include="MSSP.Server" Version="0.8.0" />
   </ItemGroup>
 
 </Project>

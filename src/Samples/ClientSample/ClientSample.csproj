@@ -9,8 +9,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Temporarily use local project reference for debugging -->
-    <ProjectReference Include="..\..\MSSP.Client\MSSP.Client.csproj" />
+    <PackageReference Include="MSSP.Client" Version="0.8.0" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.8" />
   </ItemGroup>
 

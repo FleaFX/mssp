@@ -8,8 +8,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="MSSP.Cluster" Version="0.4.1" />
-    <PackageReference Include="MSSP.Server" Version="0.4.1" />
+    <PackageReference Include="MSSP.Cluster" Version="0.8.0" />
+    <PackageReference Include="MSSP.Server" Version="0.8.0" />
   </ItemGroup>
 
 </Project>
