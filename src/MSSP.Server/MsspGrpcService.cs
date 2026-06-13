@@ -62,9 +62,9 @@ public sealed class MsspGrpcService(IMsspClient client) : MsspBase {
                 StreamId = e.StreamId.Value,
                 Revision = e.Revision,
                 EventType = e.EventType,
-                Data = ByteString.CopyFrom(e.Data.Span),
+                Data = UnsafeByteOperations.UnsafeWrap(e.Data),
                 TimestampNs = (e.Timestamp.UtcTicks - DateTimeOffset.UnixEpoch.Ticks) * 100L,
-                Metadata = ByteString.CopyFrom(e.Metadata.Span)
+                Metadata = UnsafeByteOperations.UnsafeWrap(e.Metadata)
             });
         }
     }
@@ -82,10 +82,10 @@ public sealed class MsspGrpcService(IMsspClient client) : MsspBase {
                 StreamId    = e.StreamId.Value,
                 Revision    = e.Revision,
                 EventType   = e.EventType,
-                Data        = ByteString.CopyFrom(e.Data.Span),
+                Data        = UnsafeByteOperations.UnsafeWrap(e.Data),
                 TimestampNs = (e.Timestamp.UtcTicks - DateTimeOffset.UnixEpoch.Ticks) * 100L,
                 Position    = e.Position.Value,
-                Metadata    = ByteString.CopyFrom(e.Metadata.Span)
+                Metadata    = UnsafeByteOperations.UnsafeWrap(e.Metadata)
             });
         }
     }
