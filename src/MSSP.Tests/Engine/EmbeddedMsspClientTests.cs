@@ -299,6 +299,18 @@ public class EmbeddedMsspClientTests : IAsyncLifetime {
             for (var i = 0; i < 6; i++)
                 events[i].EventType.Should().Be($"Event{i}");
         }
+
+        [Fact]
+        public async Task BurstWrites_AllEventsReadable() {
+            for (var i = 0; i < 50; i++)
+                await _tinyClient.AppendAsync("stream-burst", i == 0 ? StreamRevision.NoStream : (ulong)(i - 1), [
+                    Event("E", new string('x', 64))
+                ], TestContext.Current.CancellationToken);
+
+            var events = await _tinyClient.ReadAsync("stream-burst", cancellationToken: TestContext.Current.CancellationToken).ToListAsync(TestContext.Current.CancellationToken);
+
+            events.Should().HaveCount(50);
+        }
     }
 
     public class FlushSerialization {
@@ -445,6 +457,22 @@ public class EmbeddedMsspClientTests : IAsyncLifetime {
             // A NoStream append to stream-a must succeed (not OCC).
             var act = async () => await _client.AppendAsync("stream-a", StreamRevision.NoStream, [Event("B", "2")]);
             await act.Should().NotThrowAsync();
+        }
+
+        [Fact]
+        public async Task Reload_ReplacesAllData() {
+            await _client.AppendAsync("stream-a", StreamRevision.NoStream, [Event("Foo", "x")], TestContext.Current.CancellationToken);
+
+            var stagingDir = Path.Combine(_dataDir, "snapshot-staging");
+            Directory.CreateDirectory(stagingDir);
+            await _client.ReloadSnapshotAsync(stagingDir, TestContext.Current.CancellationToken);
+
+            var before = await _client.ReadAsync("stream-a", cancellationToken: TestContext.Current.CancellationToken).ToListAsync(TestContext.Current.CancellationToken);
+            before.Should().BeEmpty();
+
+            await _client.AppendAsync("stream-b", StreamRevision.NoStream, [Event("Bar", "y")], TestContext.Current.CancellationToken);
+            var after = await _client.ReadAsync("stream-b", cancellationToken: TestContext.Current.CancellationToken).ToListAsync(TestContext.Current.CancellationToken);
+            after.Should().ContainSingle(e => e.EventType == "Bar");
         }
     }
 

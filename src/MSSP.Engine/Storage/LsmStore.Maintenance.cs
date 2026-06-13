@@ -36,6 +36,12 @@ public sealed partial class LsmStore<TKey> {
             store._metrics?.RecordFlush(timer.ElapsedMs, memTableSize: 0, BuildLevelSnapshots(store._sstLevels));
             return ValueTask.CompletedTask;
         }
+
+        /// <summary>
+        /// Deletes the output SST file written by <see cref="RunAsync"/>.
+        /// Called when the flush is discarded after a reload (epoch mismatch).
+        /// </summary>
+        internal void Abandon() => store._sst.Delete(path);
     }
 
     /// <summary>

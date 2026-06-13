@@ -37,6 +37,8 @@ public sealed partial class LsmStore<TKey> {
 
     /// <inheritdoc/>
     public async ValueTask ReloadAsync(string sourceDirectory, CancellationToken cancellationToken = default) {
+        _flushing.Clear();
+
         // Remove all current SST files (ISstAccess.Delete also removes .bf sidecars).
         foreach (var level in _sstLevels) {
             foreach (var file in level)

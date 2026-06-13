@@ -41,7 +41,7 @@ public sealed partial class LsmStore<TKey> {
         /// </remarks>
         internal ValueTask CompleteAsync(CancellationToken cancellationToken) {
             AddFileToLevel(store._sstLevels, _merged);
-            
+
             foreach (var source in sourceFiles)
                 store._sstLevels[levelIndex].Remove(source);
 
@@ -52,6 +52,12 @@ public sealed partial class LsmStore<TKey> {
 
             return ValueTask.CompletedTask;
         }
+
+        /// <summary>
+        /// Deletes the merged output file written by <see cref="RunAsync"/>.
+        /// Source files are left intact. Called when the compaction is discarded after a reload (epoch mismatch).
+        /// </summary>
+        internal void Abandon() => store._sst.Delete(outputPath);
     }
 
     /// <summary>

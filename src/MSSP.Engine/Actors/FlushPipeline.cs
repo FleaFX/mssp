@@ -14,37 +14,38 @@ namespace MSSP.Engine;
 /// </summary>
 /// <param name="onCompleted">
 /// Invoked off-thread once a job's <see cref="IMaintenanceJob.RunAsync"/> completes, with the
-/// faulting exception or <see langword="null"/> on success. Must not block.
+/// per-job tag, and the faulting exception or <see langword="null"/> on success. Must not block.
 /// </param>
 /// <param name="cancellationToken">Cancels the consumer loop and any in-flight job on shutdown.</param>
-sealed class JobPipeline<TJob>(Action<TJob, Exception?> onCompleted, CancellationToken cancellationToken) : IAsyncDisposable where TJob : IMaintenanceJob {
-    readonly Channel<TJob> _channel = Channel.CreateUnbounded<TJob>(new UnboundedChannelOptions { SingleReader = true });
+sealed class JobPipeline<TJob, TTag>(Action<TJob, TTag, Exception?> onCompleted, CancellationToken cancellationToken) : IAsyncDisposable where TJob : IMaintenanceJob {
+    readonly Channel<(TJob Job, TTag Tag)> _channel = Channel.CreateUnbounded<(TJob, TTag)>(new UnboundedChannelOptions { SingleReader = true });
 
     Task? _loop;
 
     /// <summary>
     /// Starts the consumer loop. Must be called once before any <see cref="Enqueue"/>.
     /// </summary>
-    public JobPipeline<TJob> Start() {
+    public JobPipeline<TJob, TTag> Start() {
         _loop = RunAsync();
         return this;
     }
 
     /// <summary>
-    /// Queues a job for serialised off-thread execution.
+    /// Queues a job for serialised off-thread execution. <paramref name="tag"/> is passed unchanged
+    /// to the <c>onCompleted</c> callback so the caller can correlate the completion with the job.
     /// </summary>
-    public void Enqueue(TJob job) => _channel.Writer.TryWrite(job);
+    public void Enqueue(TJob job, TTag tag) => _channel.Writer.TryWrite((job, tag));
 
     async Task RunAsync() {
         try {
-            await foreach (var job in _channel.Reader.ReadAllAsync(cancellationToken)) {
+            await foreach (var (job, tag) in _channel.Reader.ReadAllAsync(cancellationToken)) {
                 Exception? error = null;
                 try {
                     await job.RunAsync(cancellationToken);
                 } catch (Exception ex) {
                     error = ex;
                 }
-                onCompleted(job, error);
+                onCompleted(job, tag, error);
             }
         } catch (OperationCanceledException) {
             // normal shutdown
@@ -72,8 +73,8 @@ sealed class JobPipeline<TJob>(Action<TJob, Exception?> onCompleted, Cancellatio
 /// </para>
 /// </summary>
 sealed class CompactionWorker(ChannelWriter<EngineMessage> actorMailbox, CancellationToken cancellationToken) : IAsyncDisposable {
-    readonly Channel<LsmStore<EventKey>.CompactionJob> _response =
-        Channel.CreateBounded<LsmStore<EventKey>.CompactionJob>(new BoundedChannelOptions(1) { SingleReader = true, SingleWriter = true });
+    readonly Channel<(LsmStore<EventKey>.CompactionJob Job, int Epoch)> _response =
+        Channel.CreateBounded<(LsmStore<EventKey>.CompactionJob, int)>(new BoundedChannelOptions(1) { SingleReader = true, SingleWriter = true });
 
     Task? _loop;
 
@@ -86,23 +87,23 @@ sealed class CompactionWorker(ChannelWriter<EngineMessage> actorMailbox, Cancell
     }
 
     /// <summary>
-    /// Delivers a ready compaction job to the waiting worker loop.
+    /// Delivers a ready compaction job to the waiting worker loop, tagged with the actor's current epoch.
     /// Called on the actor thread from <c>TryFulfillPendingPlanRequest</c>.
     /// </summary>
-    public void Respond(LsmStore<EventKey>.CompactionJob job) => _response.Writer.TryWrite(job);
+    public void Respond(LsmStore<EventKey>.CompactionJob job, int epoch) => _response.Writer.TryWrite((job, epoch));
 
     async Task RunAsync() {
         try {
             while (true) {
                 actorMailbox.TryWrite(new CompactionPlanRequest());
-                var job = await _response.Reader.ReadAsync(cancellationToken);
+                var (job, epoch) = await _response.Reader.ReadAsync(cancellationToken);
                 Exception? error = null;
                 try {
                     await job.RunAsync(cancellationToken);
                 } catch (Exception ex) {
                     error = ex;
                 }
-                actorMailbox.TryWrite(new CompactionCompleted(job, error));
+                actorMailbox.TryWrite(new CompactionCompleted(job, epoch, error));
             }
         } catch (OperationCanceledException) {
             // normal shutdown
