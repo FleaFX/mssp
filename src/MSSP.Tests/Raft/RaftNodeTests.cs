@@ -72,18 +72,17 @@ public class RaftNodeTests {
 
             await Task.WhenAll(n1.StartAsync(), n2.StartAsync(), n3.StartAsync());
             try {
-                // Drive n1 through an election without any real timer delays.
-                await n1.TriggerElectionTimerAsync(); // n1 → Candidate, sends VoteRequest to n2 and n3
-                await n2.WhenIdleAsync(); // n2 processes VoteRequestReceived, grants vote
-                await n3.WhenIdleAsync(); // n3 processes VoteRequestReceived, grants vote
-                await n1.WhenIdleAsync(); // n1 receives both votes, becomes Leader; sends no-op AppendEntries
+                // Force n1 into candidacy without waiting for the real election timer.
+                // TriggerElectionTimerAsync posts VoteRequests synchronously to n2 and n3's
+                // channels before returning, so the background actor loops of n2 and n3 pick
+                // them up without any test-side pumping.  Responses travel back via fire-and-
+                // forget tasks, so we wait for n1 to commit the no-op rather than stepping
+                // through individual node drains.
+                await n1.TriggerElectionTimerAsync();
 
-                // The no-op AppendEntries to n2 and n3 are in-flight (background tasks).
-                await n2.WhenIdleAsync(); // n2 processes the no-op AppendEntries, sends response
-                await n3.WhenIdleAsync(); // n3 processes the no-op AppendEntries, sends response
-                await n1.WhenIdleAsync(); // n1 processes the AppendEntries responses, commits no-op
+                var leader = await WaitForLeader([n1, n2, n3], TimeSpan.FromSeconds(5));
 
-                n1.IsLeader.Should().BeTrue();
+                leader.Should().Be(n1, "n1 was the only candidate");
                 n2.IsLeader.Should().BeFalse();
                 n3.IsLeader.Should().BeFalse();
             } finally {
