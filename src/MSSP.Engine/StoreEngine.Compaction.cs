@@ -5,7 +5,7 @@ namespace MSSP.Engine;
 sealed partial class StoreEngine {
     bool _compactionPlanPending;
 
-    ValueTask HandleCompactionPlanRequest(CompactionPlanRequest msg) {
+    ValueTask HandleCompactionPlanRequest() {
         if (store.PlanCompaction() is { } job)
             _compaction!.Respond(job);
         else
