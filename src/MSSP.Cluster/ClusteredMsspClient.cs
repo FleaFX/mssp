@@ -56,7 +56,7 @@ sealed class ClusteredMsspClient(RaftNode node, EmbeddedMsspClient local, RaftCl
         var grpcClient = GetOrCreateLeaderClient(leaderHint);
         var request = new AppendRequest { StreamId = streamId.Value, ExpectedRevision = (long)expectedRevision };
         foreach (var e in events)
-            request.Events.Add(new GrpcEventData { EventType = e.EventType, Data = ByteString.CopyFrom(e.Data.Span), Metadata = ByteString.CopyFrom(e.Metadata.Span) });
+            request.Events.Add(new GrpcEventData { EventType = e.EventType, Data = UnsafeByteOperations.UnsafeWrap(e.Data), Metadata = UnsafeByteOperations.UnsafeWrap(e.Metadata) });
         try {
             await grpcClient.AppendAsync(request, cancellationToken: cancellationToken);
         } catch (RpcException ex) when (ex.StatusCode == StatusCode.FailedPrecondition) {

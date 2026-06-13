@@ -1,3 +1,4 @@
+using Google.Protobuf;
 using Grpc.Net.Client;
 using MSSP.Cluster.Grpc;
 using MSSP.Raft;
@@ -72,12 +73,13 @@ sealed class RaftGrpcTransport : IRaftTransport, IDisposable {
             PrevLogTerm = request.PrevLogTerm,
             LeaderCommit = request.LeaderCommit
         };
-        grpcRequest.Entries.AddRange(request.Entries.Select(e => new GrpcLogEntry {
-            Term = e.Term,
-            Index = e.Index,
-            Type = (uint)e.Type,
-            Payload = Google.Protobuf.ByteString.CopyFrom(e.Payload.Span)
-        }));
+        foreach (var e in request.Entries)
+            grpcRequest.Entries.Add(new GrpcLogEntry {
+                Term = e.Term,
+                Index = e.Index,
+                Type = (uint)e.Type,
+                Payload = UnsafeByteOperations.UnsafeWrap(e.Payload)
+            });
         var response = await client.AppendEntriesAsync(grpcRequest,
             deadline: DateTime.UtcNow.Add(_rpcTimeout),
             cancellationToken: cancellationToken);
@@ -93,7 +95,7 @@ sealed class RaftGrpcTransport : IRaftTransport, IDisposable {
             LastIncludedIndex = request.LastIncludedIndex,
             LastIncludedTerm = request.LastIncludedTerm,
             Offset = request.Offset,
-            Data = Google.Protobuf.ByteString.CopyFrom(request.Data.Span),
+            Data = UnsafeByteOperations.UnsafeWrap(request.Data),
             Done = request.Done
         };
         var response = await client.InstallSnapshotAsync(grpcRequest,
