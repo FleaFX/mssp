@@ -69,6 +69,31 @@ sealed record ReloadSnapshotCommand(
 ) : EngineMessage;
 
 /// <summary>
+/// Posted by the background flush task when <see cref="Storage.LsmStore{TKey}.FlushJob.RunAsync"/> finishes.
+/// The actor loop calls <see cref="Storage.LsmStore{TKey}.FlushJob.CompleteAsync"/> on receipt.
+/// </summary>
+sealed record FlushCompleted(
+    LsmStore<EventKey>.FlushJob Job,
+    Exception? Error = null
+) : EngineMessage;
+
+/// <summary>
+/// Posted by the background compaction task when <see cref="Storage.LsmStore{TKey}.CompactionJob.RunAsync"/> finishes.
+/// The actor loop calls <see cref="Storage.LsmStore{TKey}.CompactionJob.CompleteAsync"/> on receipt.
+/// </summary>
+sealed record CompactionCompleted(
+    LsmStore<EventKey>.CompactionJob Job,
+    Exception? Error = null
+) : EngineMessage;
+
+/// <summary>
+/// Sent by <see cref="CompactionWorker"/> to request a new compaction plan.
+/// The actor responds immediately if work is available, otherwise holds the request until the
+/// next flush or compaction completes and calls <c>TryFulfillPendingPlanRequest</c>.
+/// </summary>
+sealed record CompactionPlanRequest : EngineMessage;
+
+/// <summary>
 /// Returned by <see cref="RegisterSubscriptionCommand"/>. Contains everything the subscriber
 /// needs to perform catch-up and then switch to the live channel.
 /// </summary>

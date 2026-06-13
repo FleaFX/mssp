@@ -9,7 +9,7 @@ sealed class DefaultSstAccess<TKey> : ISstAccess<TKey> where TKey : IKey<TKey> {
 
     /// <inheritdoc />
     public ISstReader<TKey> OpenReader(string sstPath) =>
-        new SstReader<TKey>(new FileStream(sstPath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096));
+        new SstReader<TKey>(new FileStream(sstPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 4096));
 
     /// <inheritdoc />
     public async ValueTask WriteAsync(IEnumerable<KeyValuePair<TKey, ReadOnlyMemory<byte>?>> entries, string sstPath, CancellationToken cancellationToken) {

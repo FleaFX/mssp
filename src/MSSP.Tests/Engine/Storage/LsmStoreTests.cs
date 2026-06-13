@@ -38,6 +38,31 @@ public class LsmStoreTests : IAsyncLifetime {
     static void CaptureWalRecord(List<ReadOnlyMemory<byte>> captured, StringKey key, Memory<byte> value) =>
         captured.Add(((ReadOnlyMemory<byte>)WalRecord.From(key, value)).ToArray());
 
+    /// <summary>
+    /// Replicates the engine behaviour of WriteAsync: flushes if the MemTable would overflow,
+    /// then runs any pending compaction cycles, then applies the entry.
+    /// </summary>
+    static async ValueTask WriteFlushingIfNeeded(LsmStore<StringKey> store, StringKey key, Memory<byte> value, CancellationToken ct) {
+        ReadOnlyMemory<byte> keyBytes = key;
+        if (await store.TryBeginFlushAsync(keyBytes.Length + value.Length, ct) is { } flushJob) {
+            await flushJob.RunAsync(ct);
+            await flushJob.CompleteAsync(ct);
+            await CompactCycleAsync(store, ct);
+        }
+        await store.WriteAsync(key, value, ct);
+    }
+
+    /// <summary>
+    /// Runs compaction levels until no level exceeds its target, mirroring the engine's
+    /// <c>MaybeStartCompaction</c> cascade triggered after each flush or compaction.
+    /// </summary>
+    static async ValueTask CompactCycleAsync(LsmStore<StringKey> store, CancellationToken ct) {
+        while (store.PlanCompaction() is { } plan) {
+            await plan.RunAsync(ct);
+            await plan.CompleteAsync(ct);
+        }
+    }
+
     public class OpenAsync : LsmStoreTests {
         [Fact]
         public void EmptyDirectory_StoreStartsEmpty() =>
@@ -65,11 +90,11 @@ public class LsmStoreTests : IAsyncLifetime {
             var captured = new List<ReadOnlyMemory<byte>>();
             using var lsm = await LsmStore<StringKey>.OpenAsync(LsmOptions(4), Empty(), TestContext.Current.CancellationToken);
             CaptureWalRecord(captured, new StringKey("a"), Bytes("1"));
-            await lsm.WriteAsync(new StringKey("a"), Bytes("1"), TestContext.Current.CancellationToken);
+            await WriteFlushingIfNeeded(lsm, new StringKey("a"), Bytes("1"), TestContext.Current.CancellationToken);
             CaptureWalRecord(captured, new StringKey("b"), Bytes("2"));
-            await lsm.WriteAsync(new StringKey("b"), Bytes("2"), TestContext.Current.CancellationToken);
+            await WriteFlushingIfNeeded(lsm, new StringKey("b"), Bytes("2"), TestContext.Current.CancellationToken);
             CaptureWalRecord(captured, new StringKey("c"), Bytes("3"));
-            await lsm.WriteAsync(new StringKey("c"), Bytes("3"), TestContext.Current.CancellationToken);
+            await WriteFlushingIfNeeded(lsm, new StringKey("c"), Bytes("3"), TestContext.Current.CancellationToken);
 
             // WAL has a,b,c; SST has a,b → RecoverAsync must apply only c, not duplicate a or b
             using var recovered = await LsmStore<StringKey>.OpenAsync(LsmOptions(4), Replay(captured), TestContext.Current.CancellationToken);
@@ -93,9 +118,9 @@ public class LsmStoreTests : IAsyncLifetime {
         public async Task FullMemTable_FlushesToSst() {
             // capacity 4: a+b fills MemTable; c triggers flush
             var tinyStore = await LsmStore<StringKey>.OpenAsync(LsmOptions(4), Empty(), TestContext.Current.CancellationToken);
-            await tinyStore.WriteAsync(new StringKey("a"), Bytes("1"), TestContext.Current.CancellationToken);
-            await tinyStore.WriteAsync(new StringKey("b"), Bytes("2"), TestContext.Current.CancellationToken);
-            await tinyStore.WriteAsync(new StringKey("c"), Bytes("3"), TestContext.Current.CancellationToken);
+            await WriteFlushingIfNeeded(tinyStore, new StringKey("a"), Bytes("1"), TestContext.Current.CancellationToken);
+            await WriteFlushingIfNeeded(tinyStore, new StringKey("b"), Bytes("2"), TestContext.Current.CancellationToken);
+            await WriteFlushingIfNeeded(tinyStore, new StringKey("c"), Bytes("3"), TestContext.Current.CancellationToken);
             tinyStore.Dispose();
 
             Directory.EnumerateFiles(_dataDir, "*.sst").Should().HaveCount(1);
@@ -138,9 +163,9 @@ public class LsmStoreTests : IAsyncLifetime {
         public async Task SpansSstAndMemTable_ReturnsAllEntriesInOrder() {
             // capacity 4: a+b fills MemTable; c triggers flush → a,b in SST, c in MemTable
             var crossStore = await LsmStore<StringKey>.OpenAsync(LsmOptions(4), Empty(), TestContext.Current.CancellationToken);
-            await crossStore.WriteAsync(new StringKey("a"), Bytes("1"), TestContext.Current.CancellationToken);
-            await crossStore.WriteAsync(new StringKey("b"), Bytes("2"), TestContext.Current.CancellationToken);
-            await crossStore.WriteAsync(new StringKey("c"), Bytes("3"), TestContext.Current.CancellationToken);
+            await WriteFlushingIfNeeded(crossStore, new StringKey("a"), Bytes("1"), TestContext.Current.CancellationToken);
+            await WriteFlushingIfNeeded(crossStore, new StringKey("b"), Bytes("2"), TestContext.Current.CancellationToken);
+            await WriteFlushingIfNeeded(crossStore, new StringKey("c"), Bytes("3"), TestContext.Current.CancellationToken);
 
             crossStore.ScanAllFrom(new StringKey(""))
                       .Select(e => e.Key.Value)
@@ -159,7 +184,7 @@ public class LsmStoreTests : IAsyncLifetime {
             // With large baseLevelSizeBytes, compaction won't be triggered
             await _store.WriteAsync(new StringKey("a"), Bytes("1"), TestContext.Current.CancellationToken);
 
-            await _store.CompactAsync(TestContext.Current.CancellationToken);
+            await CompactCycleAsync(_store, TestContext.Current.CancellationToken);
 
             Directory.EnumerateFiles(_dataDir, "*.sst").Should().BeEmpty();
             _store.ScanAllFrom(new StringKey("")).Select(e => e.Key.Value).Should().Equal("a");
@@ -169,11 +194,11 @@ public class LsmStoreTests : IAsyncLifetime {
         public async Task MergesMultipleSstFilesInL1IntoL2() {
             // With small baseLevelSizeBytes, multiple flushes to L1 will trigger compaction to L2
             var store = await LsmStore<StringKey>.OpenAsync(
-                Options(capacityBytes: 4, baseLevelSizeBytes: 50), 
+                Options(capacityBytes: 4, baseLevelSizeBytes: 50),
                 Empty(), TestContext.Current.CancellationToken);
-            
+
             for (int i = 0; i < 15; i++) {
-                await store.WriteAsync(new StringKey($"a{i}"), Bytes("v"), TestContext.Current.CancellationToken);
+                await WriteFlushingIfNeeded(store, new StringKey($"a{i}"), Bytes("v"), TestContext.Current.CancellationToken);
             }
             
             // Should have files in L2 after compaction
@@ -188,14 +213,14 @@ public class LsmStoreTests : IAsyncLifetime {
         [Fact]
         public async Task PreservesAllEntriesAfterCompaction() {
             var store = await LsmStore<StringKey>.OpenAsync(
-                Options(capacityBytes: 4, baseLevelSizeBytes: 50), 
+                Options(capacityBytes: 4, baseLevelSizeBytes: 50),
                 Empty(), TestContext.Current.CancellationToken);
-            
+
             for (int i = 0; i < 10; i++) {
-                await store.WriteAsync(new StringKey($"k{i}"), Bytes("v"), TestContext.Current.CancellationToken);
+                await WriteFlushingIfNeeded(store, new StringKey($"k{i}"), Bytes("v"), TestContext.Current.CancellationToken);
             }
 
-            await store.CompactAsync(TestContext.Current.CancellationToken);
+            await CompactCycleAsync(store, TestContext.Current.CancellationToken);
 
             store.ScanAllFrom(new StringKey(""))
                  .Select(e => e.Key.Value)
@@ -208,12 +233,12 @@ public class LsmStoreTests : IAsyncLifetime {
             // With small baseLevelSizeBytes, compaction will be triggered based on size
             // Write enough data to trigger L1 compaction to L2
             var store = await LsmStore<StringKey>.OpenAsync(
-                Options(capacityBytes: 4, baseLevelSizeBytes: 50), 
+                Options(capacityBytes: 4, baseLevelSizeBytes: 50),
                 Empty(), TestContext.Current.CancellationToken);
-            
+
             // Zero-pad keys so ordinal and numeric order agree: k00 < k01 < ... < k14
             for (int i = 0; i < 15; i++) {
-                await store.WriteAsync(new StringKey($"k{i:D2}"), Bytes("v"), TestContext.Current.CancellationToken);
+                await WriteFlushingIfNeeded(store, new StringKey($"k{i:D2}"), Bytes("v"), TestContext.Current.CancellationToken);
             }
 
             // With size-based compaction, we should have files in L2 after compaction
@@ -258,10 +283,13 @@ public class LsmStoreTests : IAsyncLifetime {
             await tinyStore.WriteAsync(new StringKey("a"), Bytes("1"), TestContext.Current.CancellationToken);
             await tinyStore.WriteAsync(new StringKey("b"), Bytes("2"), TestContext.Current.CancellationToken);
 
-            // Materialize snapshot before flush so we get a stable baseline
+            // Materialize snapshot with a and b before we flush
             var snapshot = tinyStore.ScanSnapshotFrom(new StringKey("")).ToList();
 
-            // Writing c triggers flush: a,b→SST, c→new MemTable
+            // Explicitly flush a,b → SST, then write c to the fresh MemTable
+            var job = await tinyStore.BeginFlushAsync(TestContext.Current.CancellationToken);
+            await job.RunAsync(TestContext.Current.CancellationToken);
+            await job.CompleteAsync(TestContext.Current.CancellationToken);
             await tinyStore.WriteAsync(new StringKey("c"), Bytes("3"), TestContext.Current.CancellationToken);
 
             // Full store now has a,b (SST) and c (MemTable)
@@ -269,7 +297,7 @@ public class LsmStoreTests : IAsyncLifetime {
                      .Select(e => e.Key.Value)
                      .Should().Equal("a", "b", "c");
 
-            // Snapshot was captured and materialized before the flush — contains only a and b
+            // Snapshot was materialized before the flush — contains only a and b
             snapshot.Select(e => e.Key.Value).Should().Equal("a", "b");
             tinyStore.Dispose();
         }
@@ -284,12 +312,12 @@ public class LsmStoreTests : IAsyncLifetime {
         public async Task Compaction_CreatesLevelNamedFiles() {
             // Use small capacity and baseLevelSizeBytes to trigger compaction
             var store = await LsmStore<StringKey>.OpenAsync(
-                MultiLevelOptions(capacityBytes: 8, baseLevelSizeBytes: 20), 
+                MultiLevelOptions(capacityBytes: 8, baseLevelSizeBytes: 20),
                 Empty(), TestContext.Current.CancellationToken);
-            
+
             // Write enough to trigger flush to L1 and then compaction to L2
             for (int i = 0; i < 10; i++) {
-                await store.WriteAsync(new StringKey($"k{i}"), Bytes("v"), TestContext.Current.CancellationToken);
+                await WriteFlushingIfNeeded(store, new StringKey($"k{i}"), Bytes("v"), TestContext.Current.CancellationToken);
             }
 
             var sstFiles = Directory.EnumerateFiles(_dataDir, "*.sst").ToList();
@@ -305,13 +333,13 @@ public class LsmStoreTests : IAsyncLifetime {
             // Use a small baseLevelSizeBytes that will be triggered by a few SST files
             // With capacity=4, each flush creates a small SST file
             var store = await LsmStore<StringKey>.OpenAsync(
-                MultiLevelOptions(capacityBytes: 4, baseLevelSizeBytes: 50), 
+                MultiLevelOptions(capacityBytes: 4, baseLevelSizeBytes: 50),
                 Empty(), TestContext.Current.CancellationToken);
-            
+
             // Write enough to create multiple SST files in L1 and trigger compaction to L2
             // Each flush creates one SST file in L1; when L1 size >= 50 bytes, compact to L2
             for (int i = 0; i < 15; i++) {
-                await store.WriteAsync(new StringKey($"k{i}"), Bytes("v"), TestContext.Current.CancellationToken);
+                await WriteFlushingIfNeeded(store, new StringKey($"k{i}"), Bytes("v"), TestContext.Current.CancellationToken);
             }
 
             // Should have L2 file after compaction
@@ -334,7 +362,7 @@ public class LsmStoreTests : IAsyncLifetime {
                 Empty(), TestContext.Current.CancellationToken);
 
             for (int i = 0; i < 15; i++) {
-                await store.WriteAsync(new StringKey($"k{i:D2}"), Bytes("v"), TestContext.Current.CancellationToken);
+                await WriteFlushingIfNeeded(store, new StringKey($"k{i:D2}"), Bytes("v"), TestContext.Current.CancellationToken);
             }
 
             // Should have files in multiple levels (L2 or L3) after cascade compaction
@@ -361,7 +389,7 @@ public class LsmStoreTests : IAsyncLifetime {
                 Empty(), TestContext.Current.CancellationToken);
 
             for (int i = 0; i < 100; i++) {
-                await store.WriteAsync(new StringKey($"k{i:D2}"), Bytes("v"), TestContext.Current.CancellationToken);
+                await WriteFlushingIfNeeded(store, new StringKey($"k{i:D2}"), Bytes("v"), TestContext.Current.CancellationToken);
             }
 
             // Should have files in L2, L3, or L4 (L1→L2→L3→L4 with multiplier=10)
@@ -380,13 +408,13 @@ public class LsmStoreTests : IAsyncLifetime {
         [Fact]
         public async Task Scan_ReturnsAllLevels_InOrder() {
             var store = await LsmStore<StringKey>.OpenAsync(MultiLevelOptions(), Empty(), TestContext.Current.CancellationToken);
-            
+
             // Write to create multiple levels
-            await store.WriteAsync(new StringKey("a"), Bytes("1"), TestContext.Current.CancellationToken);
-            await store.WriteAsync(new StringKey("b"), Bytes("2"), TestContext.Current.CancellationToken);
-            await store.WriteAsync(new StringKey("c"), Bytes("3"), TestContext.Current.CancellationToken);
-            await store.WriteAsync(new StringKey("d"), Bytes("4"), TestContext.Current.CancellationToken);
-            await store.WriteAsync(new StringKey("e"), Bytes("5"), TestContext.Current.CancellationToken);
+            await WriteFlushingIfNeeded(store, new StringKey("a"), Bytes("1"), TestContext.Current.CancellationToken);
+            await WriteFlushingIfNeeded(store, new StringKey("b"), Bytes("2"), TestContext.Current.CancellationToken);
+            await WriteFlushingIfNeeded(store, new StringKey("c"), Bytes("3"), TestContext.Current.CancellationToken);
+            await WriteFlushingIfNeeded(store, new StringKey("d"), Bytes("4"), TestContext.Current.CancellationToken);
+            await WriteFlushingIfNeeded(store, new StringKey("e"), Bytes("5"), TestContext.Current.CancellationToken);
 
             store.ScanAllFrom(new StringKey(""))
                  .Select(e => e.Key.Value)
@@ -398,21 +426,18 @@ public class LsmStoreTests : IAsyncLifetime {
         [Fact]
         public async Task ExistingFiles_WithoutLevelSuffix_DefaultToL1() {
             // First, create an LsmStore to get a valid SST file
-            // Use capacity that fits 2 entries, write exactly 2 to get 1 SST file
+            // Use capacity that fits 5 entries (10 bytes), write 6 to trigger a flush
             var tempStore = await LsmStore<StringKey>.OpenAsync(
-                MultiLevelOptions(capacityBytes: 10, baseLevelSizeBytes: long.MaxValue), 
+                MultiLevelOptions(capacityBytes: 10, baseLevelSizeBytes: long.MaxValue),
                 Empty(), TestContext.Current.CancellationToken);
             // entrySize = 2 bytes (1 byte key + 1 byte value), capacity=10
-            // Write 5 entries: Size = 10, next write triggers flush
+            // Write 5 entries: Size=10; 6th write triggers flush of a..e → SST, f in MemTable
             await tempStore.WriteAsync(new StringKey("a"), Bytes("1"), TestContext.Current.CancellationToken);
             await tempStore.WriteAsync(new StringKey("b"), Bytes("2"), TestContext.Current.CancellationToken);
             await tempStore.WriteAsync(new StringKey("c"), Bytes("3"), TestContext.Current.CancellationToken);
             await tempStore.WriteAsync(new StringKey("d"), Bytes("4"), TestContext.Current.CancellationToken);
             await tempStore.WriteAsync(new StringKey("e"), Bytes("5"), TestContext.Current.CancellationToken);
-            // Size is now 10 (5 entries x 2 bytes). Next write will trigger flush.
-            await tempStore.WriteAsync(new StringKey("f"), Bytes("6"), TestContext.Current.CancellationToken);
-            // Now Size = 12 > 10, so a, b, c, d, e are flushed to SST, f is in MemTable
-            // But we want all entries in SST, so write one more to trigger another flush
+            await WriteFlushingIfNeeded(tempStore, new StringKey("f"), Bytes("6"), TestContext.Current.CancellationToken);
             tempStore.Dispose();
             
             // Rename the file to remove the level suffix

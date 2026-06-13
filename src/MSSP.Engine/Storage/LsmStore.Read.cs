@@ -18,6 +18,10 @@ public sealed partial class LsmStore<TKey> {
                 }
             }
         }
+        // Sealed MemTables not yet written to SST (oldest first).
+        foreach (var sealedMemTable in _flushing)
+            foreach (var entry in sealedMemTable.ScanFrom(from))
+                yield return entry;
         foreach (var entry in _memTable.ScanFrom(from)) {
             yield return entry;
         }
@@ -32,6 +36,7 @@ public sealed partial class LsmStore<TKey> {
         for (var i = 0; i < _sstLevels.Count; i++) {
             sstLevels.Add(_sstLevels[i].ToList());
         }
+        var flushing = _flushing.ToList();
         var memTable = _memTable;
 
         // Scan from highest level to lowest: oldest data first, ascending key order.
@@ -43,6 +48,9 @@ public sealed partial class LsmStore<TKey> {
                 }
             }
         }
+        foreach (var sealedMemTable in flushing)
+            foreach (var entry in sealedMemTable.ScanFrom(from))
+                yield return entry;
         foreach (var entry in memTable.ScanFrom(from)) {
             yield return entry;
         }
@@ -65,7 +73,7 @@ public sealed partial class LsmStore<TKey> {
                     readers.Add(new SstReader<TKey>(stream));
                 }
             }
-            return new LsmStoreSnapshot<TKey>(readers, _memTable);
+            return new LsmStoreSnapshot<TKey>(readers, _flushing.ToList(), _memTable);
         } catch {
             foreach (var r in readers) r.Dispose();
             throw;

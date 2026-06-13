@@ -11,7 +11,7 @@ namespace MSSP.Engine;
 /// The actor loop processes both in order, so no external locking is required for writes.
 /// </para>
 /// </summary>
-sealed partial class StoreEngine(ILog<WalRecord> log, ILsmStore<EventKey> store, SubscriptionLog subscriptionLog, long startPosition) : IAsyncDisposable {
+sealed partial class StoreEngine(ILog<WalRecord> log, LsmStore<EventKey> store, SubscriptionLog subscriptionLog, long startPosition) : IAsyncDisposable {
 
     /// <summary>
     /// Tracks an in-flight append while its WAL records are being applied to the store.
@@ -27,6 +27,8 @@ sealed partial class StoreEngine(ILog<WalRecord> log, ILsmStore<EventKey> store,
     readonly CancellationTokenSource _cts = new();
     readonly SubscriptionBus _subscriptionBus = new();
 
+    JobPipeline<LsmStore<EventKey>.FlushJob>? _flush;
+    CompactionWorker? _compaction;
     ulong _currentPosition = (ulong)startPosition;
     long _nextPosition = startPosition;
     Task? _actorTask;
@@ -42,6 +44,8 @@ sealed partial class StoreEngine(ILog<WalRecord> log, ILsmStore<EventKey> store,
     /// Must be called once after construction and before any <see cref="AppendAsync"/> calls.
     /// </summary>
     public StoreEngine Start() {
+        _flush = new JobPipeline<LsmStore<EventKey>.FlushJob>((job, error) => _mailbox.Writer.TryWrite(new FlushCompleted(job, error)), _cts.Token).Start();
+        _compaction = new CompactionWorker(_mailbox.Writer, _cts.Token).Start();
         (_actorTask, _batchReaderTask) = (RunActorAsync(_cts.Token), RunCommittedBatchReaderAsync(_cts.Token));
         return this;
     }
@@ -63,6 +67,9 @@ sealed partial class StoreEngine(ILog<WalRecord> log, ILsmStore<EventKey> store,
                 await (message switch {
                     AppendCommand append => HandleAppendAsync(append, cancellationToken),
                     CommittedBatch batch => HandleCommittedBatchAsync(batch, cancellationToken),
+                    FlushCompleted fc => HandleFlushCompletedAsync(fc, cancellationToken),
+                    CompactionCompleted cc => HandleCompactionCompletedAsync(cc, cancellationToken),
+                    CompactionPlanRequest => HandleCompactionPlanRequest(),
                     CaptureSnapshotCommand snap => HandleCaptureSnapshot(snap),
                     OpenBackupStreamsCommand backup => HandleOpenBackupStreams(backup),
                     ReloadSnapshotCommand reload => HandleReloadSnapshot(reload, cancellationToken),
@@ -97,6 +104,8 @@ sealed partial class StoreEngine(ILog<WalRecord> log, ILsmStore<EventKey> store,
         while (_pending.TryDequeue(out var entry))
             entry.Reply.TrySetCanceled();
         _subscriptionBus.CompleteAll();
+        if (_flush is not null) await _flush.DisposeAsync();
+        if (_compaction is not null) await _compaction.DisposeAsync();
         subscriptionLog.Dispose();
         store.Dispose();
         _cts.Dispose();

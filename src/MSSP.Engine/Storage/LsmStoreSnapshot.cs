@@ -8,10 +8,12 @@ namespace MSSP.Engine.Storage;
 /// </summary>
 public sealed class LsmStoreSnapshot<TKey> : IDisposable where TKey : IKey<TKey> {
     readonly List<ISstReader<TKey>> _readers;
+    readonly IReadOnlyList<MemTable<TKey>> _flushing;
     readonly MemTable<TKey> _memTable;
 
-    internal LsmStoreSnapshot(List<ISstReader<TKey>> readers, MemTable<TKey> memTable) {
+    internal LsmStoreSnapshot(List<ISstReader<TKey>> readers, IReadOnlyList<MemTable<TKey>> flushing, MemTable<TKey> memTable) {
         _readers = readers;
+        _flushing = flushing;
         _memTable = memTable;
     }
 
@@ -22,6 +24,9 @@ public sealed class LsmStoreSnapshot<TKey> : IDisposable where TKey : IKey<TKey>
     public IEnumerable<KeyValuePair<TKey, ReadOnlyMemory<byte>?>> ScanFrom(TKey from) {
         foreach (var reader in _readers)
             foreach (var entry in reader.Scan(from))
+                yield return entry;
+        foreach (var sealedMemTable in _flushing)
+            foreach (var entry in sealedMemTable.ScanFrom(from))
                 yield return entry;
         foreach (var entry in _memTable.ScanFrom(from))
             yield return entry;

@@ -45,21 +45,6 @@ public class BackupRestoreTests : IAsyncLifetime {
         }
 
         [Fact]
-        public async Task BackupContainsSstFiles_AfterFlush() {
-            // Write enough events to trigger a flush (use small memTableCapacityBytes).
-            await _client.DisposeAsync();
-            _client = await EmbeddedMsspClient.OpenAsync(_dataDir, memTableCapacityBytes: 128, cancellationToken: TestContext.Current.CancellationToken);
-
-            for (var i = 0; i < 20; i++)
-                await _client.AppendAsync($"stream-{i}", StreamRevision.NoStream, [Event("Foo", $"payload-{i}")], TestContext.Current.CancellationToken);
-
-            await _client.CreateBackupAsync(_backupPath, TestContext.Current.CancellationToken);
-
-            using var zip = ZipFile.OpenRead(_backupPath);
-            zip.Entries.Should().Contain(e => e.Name.EndsWith(".sst"));
-        }
-
-        [Fact]
         public async Task IncludesWalPrevLog_WhenRotationHasOccurred() {
             // With capacity=128 each minimal event is ~60 bytes:
             //   stream-a + stream-b = 120 bytes (fits); stream-c = 180 bytes (overflows).

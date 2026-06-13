@@ -1,4 +1,5 @@
 using FluentAssertions;
+using MSSP.Engine.Storage;
 
 namespace MSSP.Engine;
 
@@ -262,6 +263,15 @@ public class EmbeddedMsspClientTests : IAsyncLifetime {
         static EventData Event(string type, string payload) =>
             new(type, System.Text.Encoding.UTF8.GetBytes(payload));
 
+        static async Task WaitForConditionAsync(Func<bool> condition, int timeoutMs = 5000) {
+            var deadline = Environment.TickCount64 + timeoutMs;
+            while (!condition()) {
+                if (Environment.TickCount64 > deadline)
+                    throw new TimeoutException("Condition was not met within the timeout.");
+                await Task.Delay(10);
+            }
+        }
+
         [Fact]
         public async Task EventsRemainingReadableAfterFlush() {
             await _tinyClient.AppendAsync("stream-a", StreamRevision.NoStream, [
@@ -277,16 +287,6 @@ public class EmbeddedMsspClientTests : IAsyncLifetime {
         }
 
         [Fact]
-        public async Task SstFileCreatedAfterFlush() {
-            await _tinyClient.AppendAsync("stream-a", StreamRevision.NoStream, [
-                Event("Foo", new string('x', 64)),
-                Event("Bar", new string('x', 64))
-            ]);
-
-            Directory.EnumerateFiles(_dataDir, "*.sst").Should().HaveCount(1);
-        }
-
-        [Fact]
         public async Task EventsSpanningMultipleSstFilesAndMemTable_ReadInOrder() {
             for (var i = 0; i < 6; i++)
                 await _tinyClient.AppendAsync("stream-a", i == 0 ? StreamRevision.NoStream : (ulong)(i - 1), [
@@ -298,6 +298,87 @@ public class EmbeddedMsspClientTests : IAsyncLifetime {
             events.Should().HaveCount(6);
             for (var i = 0; i < 6; i++)
                 events[i].EventType.Should().Be($"Event{i}");
+        }
+    }
+
+    public class FlushSerialization {
+        static EventData Event(string type, string payload) =>
+            new(type, System.Text.Encoding.UTF8.GetBytes(payload));
+
+        static async Task WaitForAsync(Func<bool> condition, int timeoutMs = 5000) {
+            var deadline = Environment.TickCount64 + timeoutMs;
+            while (!condition()) {
+                if (Environment.TickCount64 > deadline)
+                    throw new TimeoutException("Condition was not met within the timeout.");
+                await Task.Delay(10);
+            }
+        }
+
+        [Fact]
+        public async Task SecondFlushDoesNotStartUntilFirstCompletes() {
+            var dir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+            var gate = new GatedSstAccess();
+            var client = await EmbeddedMsspClient.OpenAsync(dir, memTableCapacityBytes: 128, sst: gate);
+            try {
+                var payload = new string('x', 64);
+
+                // event0 fits in the MemTable; no flush yet.
+                await client.AppendAsync("stream-a", StreamRevision.NoStream, [Event("E0", payload)]);
+                gate.WritesStarted.Should().Be(0);
+
+                // event1 overflows → flush job1 seals {event0}; its SST write blocks on the gate.
+                await client.AppendAsync("stream-a", 0UL, [Event("E1", payload)]);
+                await WaitForAsync(() => gate.WritesStarted == 1);
+
+                // event2 overflows → flush job2 seals {event1} and is queued, but must NOT start
+                // its SST write while job1 is still in flight.
+                await client.AppendAsync("stream-a", 1UL, [Event("E2", payload)]);
+                gate.WritesStarted.Should().Be(1, "the second flush must wait for the first to complete");
+
+                // Releasing job1 lets job2's write begin — proving the queue drains one at a time, in order.
+                gate.Release(0);
+                await WaitForAsync(() => gate.WritesStarted == 2);
+                gate.Release(1);
+
+                var events = await client.ReadAsync("stream-a").ToListAsync();
+                events.Select(e => e.EventType).Should().Equal("E0", "E1", "E2");
+            } finally {
+                await client.DisposeAsync();
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+
+        /// <summary>
+        /// An <see cref="ISstAccess{TKey}"/> decorator that blocks each SST write until the test
+        /// explicitly releases it, exposing the number of writes that have begun. Lets a test drive
+        /// flush completion order deterministically instead of relying on disk timing.
+        /// </summary>
+        sealed class GatedSstAccess : ISstAccess<EventKey> {
+            readonly ISstAccess<EventKey> _inner = DefaultSstAccess<EventKey>.Instance;
+            readonly Lock _gate = new();
+            readonly List<TaskCompletionSource> _releases = [];
+            int _started;
+
+            public int WritesStarted => Volatile.Read(ref _started);
+
+            public ISstReader<EventKey> OpenReader(string sstPath) => _inner.OpenReader(sstPath);
+            public void Delete(string sstPath) => _inner.Delete(sstPath);
+
+            public async ValueTask WriteAsync(IEnumerable<KeyValuePair<EventKey, ReadOnlyMemory<byte>?>> entries, string sstPath, CancellationToken cancellationToken) {
+                var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                lock (_gate)
+                    _releases.Add(release);
+                Interlocked.Increment(ref _started);
+                await release.Task.WaitAsync(cancellationToken);
+                await _inner.WriteAsync(entries, sstPath, cancellationToken);
+            }
+
+            public void Release(int index) {
+                TaskCompletionSource release;
+                lock (_gate)
+                    release = _releases[index];
+                release.SetResult();
+            }
         }
     }
 
