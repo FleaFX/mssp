@@ -172,6 +172,28 @@ public class LsmStoreTests : IAsyncLifetime {
                       .Should().Equal("a", "b", "c");
             crossStore.Dispose();
         }
+
+        [Fact]
+        public async Task SealedMemTable_VisibleDuringFlushWindow() {
+            // capacity 4: a+b fills MemTable; TryBeginFlushAsync seals it without completing the job.
+            var store = await LsmStore<StringKey>.OpenAsync(LsmOptions(4), Empty(), TestContext.Current.CancellationToken);
+
+            await store.WriteAsync(new StringKey("a"), Bytes("1"), TestContext.Current.CancellationToken);
+            await store.WriteAsync(new StringKey("b"), Bytes("2"), TestContext.Current.CancellationToken);
+
+            var flushJob = await store.TryBeginFlushAsync(2, TestContext.Current.CancellationToken);
+            flushJob.Should().NotBeNull("a+b fills capacity so sealing must trigger");
+
+            await store.WriteAsync(new StringKey("c"), Bytes("3"), TestContext.Current.CancellationToken);
+
+            store.ScanAllFrom(new StringKey(""))
+                 .Select(e => e.Key.Value)
+                 .Should().BeEquivalentTo(["a", "b", "c"]);
+
+            await flushJob!.RunAsync(TestContext.Current.CancellationToken);
+            await flushJob.CompleteAsync(TestContext.Current.CancellationToken);
+            store.Dispose();
+        }
     }
 
     public class CompactAsyncTests : LsmStoreTests {
@@ -250,6 +272,38 @@ public class LsmStoreTests : IAsyncLifetime {
             store.ScanAllFrom(new StringKey(""))
                  .Select(e => e.Key.Value)
                  .Should().Equal(Enumerable.Range(0, 15).Select(i => $"k{i:D2}"));
+            store.Dispose();
+        }
+
+        [Fact]
+        public async Task CompleteAsync_OnlyRemovesPlannedSourceFiles() {
+            // capacity 4: a+b fills MemTable and triggers flush A.
+            // A compaction is planned for flush A's SST while flush B is then written.
+            // After compaction completes, flush B's SST must still be present and all data readable.
+            // baseLevelSizeBytes: 1 ensures any SST file exceeds the threshold so PlanCompaction returns a job.
+            var store = await LsmStore<StringKey>.OpenAsync(Options(4, 1L), Empty(), TestContext.Current.CancellationToken);
+
+            await store.WriteAsync(new StringKey("a"), Bytes("1"), TestContext.Current.CancellationToken);
+            await store.WriteAsync(new StringKey("b"), Bytes("2"), TestContext.Current.CancellationToken);
+            var flushA = await store.BeginFlushAsync(TestContext.Current.CancellationToken);
+            await flushA.RunAsync(TestContext.Current.CancellationToken);
+            await flushA.CompleteAsync(TestContext.Current.CancellationToken);
+
+            var compactionJob = store.PlanCompaction();
+            compactionJob.Should().NotBeNull();
+
+            await store.WriteAsync(new StringKey("c"), Bytes("3"), TestContext.Current.CancellationToken);
+            await store.WriteAsync(new StringKey("d"), Bytes("4"), TestContext.Current.CancellationToken);
+            var flushB = await store.BeginFlushAsync(TestContext.Current.CancellationToken);
+            await flushB.RunAsync(TestContext.Current.CancellationToken);
+            await flushB.CompleteAsync(TestContext.Current.CancellationToken);
+
+            await compactionJob!.RunAsync(TestContext.Current.CancellationToken);
+            await compactionJob.CompleteAsync(TestContext.Current.CancellationToken);
+
+            store.ScanAllFrom(new StringKey(""))
+                 .Select(e => e.Key.Value)
+                 .Should().BeEquivalentTo(["a", "b", "c", "d"]);
             store.Dispose();
         }
     }

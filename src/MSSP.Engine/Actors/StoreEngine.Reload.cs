@@ -13,6 +13,7 @@ sealed partial class StoreEngine {
 
     async ValueTask HandleReloadSnapshot(ReloadSnapshotCommand cmd, CancellationToken ct) {
         try {
+            _epoch++;
             await store.ReloadAsync(cmd.StagingDirectory, ct);
 
             _currentPosition = subscriptionLog.GetLastPosition().Value;

@@ -7,7 +7,7 @@ sealed partial class StoreEngine {
 
     ValueTask HandleCompactionPlanRequest() {
         if (store.PlanCompaction() is { } job)
-            _compaction!.Respond(job);
+            _compaction!.Respond(job, _epoch);
         else
             _compactionPlanPending = true;
         return ValueTask.CompletedTask;
@@ -17,12 +17,13 @@ sealed partial class StoreEngine {
         if (!_compactionPlanPending) return;
         if (store.PlanCompaction() is not { } job) return;
         _compactionPlanPending = false;
-        _compaction!.Respond(job);
+        _compaction!.Respond(job, _epoch);
     }
 
     async ValueTask HandleCompactionCompletedAsync(CompactionCompleted msg, CancellationToken cancellationToken) {
         if (msg.Error is OperationCanceledException) return;
         if (msg.Error is not null) ExceptionDispatchInfo.Capture(msg.Error).Throw();
+        if (msg.Epoch != _epoch) { msg.Job.Abandon(); return; }
         await msg.Job.CompleteAsync(cancellationToken);
         TryFulfillPendingPlanRequest();
     }

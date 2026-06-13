@@ -27,8 +27,9 @@ sealed partial class StoreEngine(ILog<WalRecord> log, LsmStore<EventKey> store, 
     readonly CancellationTokenSource _cts = new();
     readonly SubscriptionBus _subscriptionBus = new();
 
-    JobPipeline<LsmStore<EventKey>.FlushJob>? _flush;
+    JobPipeline<LsmStore<EventKey>.FlushJob, int>? _flush;
     CompactionWorker? _compaction;
+    int _epoch;
     ulong _currentPosition = (ulong)startPosition;
     long _nextPosition = startPosition;
     Task? _actorTask;
@@ -44,7 +45,7 @@ sealed partial class StoreEngine(ILog<WalRecord> log, LsmStore<EventKey> store, 
     /// Must be called once after construction and before any <see cref="AppendAsync"/> calls.
     /// </summary>
     public StoreEngine Start() {
-        _flush = new JobPipeline<LsmStore<EventKey>.FlushJob>((job, error) => _mailbox.Writer.TryWrite(new FlushCompleted(job, error)), _cts.Token).Start();
+        _flush = new JobPipeline<LsmStore<EventKey>.FlushJob, int>((job, epoch, error) => _mailbox.Writer.TryWrite(new FlushCompleted(job, epoch, error)), _cts.Token).Start();
         _compaction = new CompactionWorker(_mailbox.Writer, _cts.Token).Start();
         (_actorTask, _batchReaderTask) = (RunActorAsync(_cts.Token), RunCommittedBatchReaderAsync(_cts.Token));
         return this;

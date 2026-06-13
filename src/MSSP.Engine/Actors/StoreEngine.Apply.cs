@@ -23,7 +23,7 @@ sealed partial class StoreEngine {
                 : 0UL;
 
             if (await store.TryBeginFlushAsync(keyLen + value.Length, cancellationToken) is { } flushJob) {
-                _flush!.Enqueue(flushJob);
+                _flush!.Enqueue(flushJob, _epoch);
             }
             await store.WriteAsync(key, value, cancellationToken);
 
@@ -48,6 +48,7 @@ sealed partial class StoreEngine {
     async ValueTask HandleFlushCompletedAsync(FlushCompleted msg, CancellationToken cancellationToken) {
         if (msg.Error is OperationCanceledException) return;
         if (msg.Error is not null) ExceptionDispatchInfo.Capture(msg.Error).Throw();
+        if (msg.Epoch != _epoch) { msg.Job.Abandon(); return; }
         await msg.Job.CompleteAsync(cancellationToken);
         TryFulfillPendingPlanRequest();
     }

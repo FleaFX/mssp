@@ -74,6 +74,7 @@ sealed record ReloadSnapshotCommand(
 /// </summary>
 sealed record FlushCompleted(
     LsmStore<EventKey>.FlushJob Job,
+    int Epoch = 0,
     Exception? Error = null
 ) : EngineMessage;
 
@@ -83,6 +84,7 @@ sealed record FlushCompleted(
 /// </summary>
 sealed record CompactionCompleted(
     LsmStore<EventKey>.CompactionJob Job,
+    int Epoch = 0,
     Exception? Error = null
 ) : EngineMessage;
 
