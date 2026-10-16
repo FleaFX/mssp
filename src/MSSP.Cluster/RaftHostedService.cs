@@ -12,11 +12,15 @@ namespace MSSP.Cluster;
 /// <see cref="SegmentedRaftLog"/>, <see cref="RaftLog"/>, <see cref="RaftLogStateMachine"/>,
 /// <see cref="LsmStore{TKey}"/>, <see cref="RaftGrpcTransport"/>, and <see cref="RaftNode"/>.
 /// </summary>
+/// <remarks>
+/// Under a host, the node starts in <see cref="StartingAsync"/>, before any hosted service starts,
+/// and stops in <see cref="StoppedAsync"/>, after every hosted service has stopped.
+/// </remarks>
 sealed class RaftHostedService(
     MsspOptions msspOptions,
     MsspClusterOptions clusterOptions,
     IMeterFactory? meterFactory = null
-) : IHostedService, IAsyncDisposable {
+) : IHostedLifecycleService, IAsyncDisposable {
     SegmentedRaftLog? _raftLog;
     RaftLog? _log;
     RaftLogStateMachine? _stateMachine;
@@ -30,30 +34,34 @@ sealed class RaftHostedService(
     CancellationTokenSource? _metricsCts;
     Task? _metricsTask;
     bool _disposed;
+    bool _hostManaged;
 
     /// <summary>
     /// Gets the running <see cref="RaftNode"/>.
     /// </summary>
-    /// <exception cref="InvalidOperationException">Thrown if accessed before <see cref="StartAsync"/> completes.</exception>
+    /// <exception cref="InvalidOperationException">Thrown while the node is not running: before the host has started it, or after the host has stopped it.</exception>
     public RaftNode Node =>
         _node ?? throw new InvalidOperationException("Raft node is not available before the host has started.");
 
     /// <summary>
     /// Gets the local <see cref="EmbeddedMsspClient"/> for this cluster node.
     /// </summary>
-    /// <exception cref="InvalidOperationException">Thrown if accessed before <see cref="StartAsync"/> completes.</exception>
+    /// <exception cref="InvalidOperationException">Thrown while the node is not running: before the host has started it, or after the host has stopped it.</exception>
     public EmbeddedMsspClient Local =>
         _local ?? throw new InvalidOperationException("Local client is not available before the host has started.");
 
     /// <summary>
     /// Gets the <see cref="IMsspClient"/> for this cluster node.
     /// </summary>
-    /// <exception cref="InvalidOperationException">Thrown if accessed before <see cref="StartAsync"/> completes.</exception>
+    /// <exception cref="InvalidOperationException">Thrown while the node is not running: before the host has started it, or after the host has stopped it.</exception>
     public ClusteredMsspClient Client =>
         _client ?? throw new InvalidOperationException("Client is not available before the host has started.");
 
-    /// <inheritdoc/>
-    public async Task StartAsync(CancellationToken cancellationToken) {
+    /// <summary>
+    /// Opens the stores and starts the Raft node, unless the node is already running.
+    /// </summary>
+    async Task OpenAsync(CancellationToken cancellationToken) {
+        if (_node is not null) return;
         var dataDir = msspOptions.DataDirectory;
         var checkpointIndex = await RaftLogStateMachine.ReadCheckpointIndexAsync(dataDir, cancellationToken);
 
@@ -166,7 +174,37 @@ sealed class RaftHostedService(
     }
 
     /// <inheritdoc/>
-    public async Task StopAsync(CancellationToken cancellationToken) {
+    public Task StartingAsync(CancellationToken cancellationToken) {
+        _hostManaged = true;
+        return OpenAsync(cancellationToken);
+    }
+
+    /// <inheritdoc/>
+    public Task StartAsync(CancellationToken cancellationToken) =>
+        OpenAsync(cancellationToken);
+
+    /// <inheritdoc/>
+    public Task StartedAsync(CancellationToken cancellationToken) =>
+        Task.CompletedTask;
+
+    /// <inheritdoc/>
+    public Task StoppingAsync(CancellationToken cancellationToken) =>
+        Task.CompletedTask;
+
+    /// <inheritdoc/>
+    public Task StopAsync(CancellationToken cancellationToken) =>
+        // Under a host, StoppedAsync stops the node, after every other hosted service has stopped.
+        _hostManaged ? Task.CompletedTask : CloseAsync(cancellationToken);
+
+    /// <inheritdoc/>
+    public Task StoppedAsync(CancellationToken cancellationToken) =>
+        CloseAsync(cancellationToken);
+
+    /// <summary>
+    /// Stops the Raft node and disposes every resource, unless that already happened.
+    /// </summary>
+    async Task CloseAsync(CancellationToken cancellationToken) {
+        if (_disposed) return;
         if (_node is not null)
             await _node.StopAsync(cancellationToken);
         await DisposeAsync();
