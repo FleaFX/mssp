@@ -10,7 +10,10 @@ namespace MSSP.Engine;
 public static class MsspServiceCollectionExtensions {
     /// <summary>
     /// Registers the embedded MSSP event store as a singleton <see cref="IMsspClient"/>.
-    /// The store is opened when the host starts and closed when it stops.
+    /// The client can be resolved at any time, also in the constructor of a hosted service;
+    /// a call made while the store is not open throws <see cref="InvalidOperationException"/>.
+    /// The store opens when the host starts, before any hosted service starts, and closes after
+    /// every hosted service has stopped, whatever order the services were registered in.
     /// </summary>
     /// <param name="services">
     /// The <see cref="IServiceCollection"/> to add the services to.
@@ -26,7 +29,10 @@ public static class MsspServiceCollectionExtensions {
             sp.GetRequiredService<MsspOptions>(),
             sp.GetService<IMeterFactory>()));
         services.AddSingleton<EmbeddedMsspClient>(sp => sp.GetRequiredService<MsspHostedService>().Client);
-        services.AddSingleton<IMsspClient>(sp => sp.GetRequiredService<EmbeddedMsspClient>());
+        services.AddSingleton<IMsspClient>(sp => {
+            var hostedService = sp.GetRequiredService<MsspHostedService>();
+            return new HostedMsspClient(() => hostedService.Client);
+        });
         var hostedServiceDescriptor = ServiceDescriptor.Singleton<IHostedService>(
             sp => sp.GetRequiredService<MsspHostedService>());
         services.Add(hostedServiceDescriptor);

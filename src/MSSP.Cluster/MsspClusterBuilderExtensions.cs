@@ -42,7 +42,10 @@ public static class MsspClusterBuilderExtensions {
             sp.GetRequiredService<MsspClusterOptions>(),
             sp.GetService<IMeterFactory>()));
         builder.Services.AddSingleton<EmbeddedMsspClient>(sp => sp.GetRequiredService<RaftHostedService>().Local);
-        builder.Services.AddSingleton<IMsspClient>(sp => sp.GetRequiredService<RaftHostedService>().Client);
+        builder.Services.AddSingleton<IMsspClient>(sp => {
+            var raftService = sp.GetRequiredService<RaftHostedService>();
+            return new HostedMsspClient(() => raftService.Client);
+        });
         builder.Services.AddHostedService(sp => sp.GetRequiredService<RaftHostedService>());
 
         return builder;
